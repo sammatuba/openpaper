@@ -1,0 +1,23 @@
+# Server + jobs images only; see cloudbuild.yaml for the full set.
+substitutions:
+  _REGION: asia-southeast1
+  _REPO: openpaper
+  _TAG: latest
+  _PUBLIC_URL: unused
+options:
+  logging: CLOUD_LOGGING_ONLY
+timeout: 1800s
+steps:
+  - id: server
+    name: gcr.io/cloud-builders/docker
+    waitFor: ['-']
+    dir: server
+    args: [build, -t, '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/server:${_TAG}', .]
+  - id: jobs
+    name: gcr.io/cloud-builders/docker
+    waitFor: ['-']
+    dir: jobs
+    args: [build, -t, '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/jobs:${_TAG}', .]
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/server:${_TAG}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/jobs:${_TAG}

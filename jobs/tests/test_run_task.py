@@ -67,8 +67,14 @@ class RunTask(unittest.TestCase):
                 json={"task": "test_echo", "task_id": "y", "kwargs": {"value": "v"}},
                 headers={"Authorization": "Bearer s"},
             )
+            allowed_custom = self.client.post(
+                "/tasks/run",
+                json={"task": "test_echo", "task_id": "z", "kwargs": {"value": "v"}},
+                headers={"Authorization": "Bearer some-oidc-token", "X-Jobs-Secret": "s"},
+            )
         self.assertEqual(denied.status_code, 401)
         self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(allowed_custom.status_code, 200)
 
 
 if __name__ == "__main__":

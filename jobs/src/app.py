@@ -68,7 +68,11 @@ RUNNABLE_TASKS = frozenset(
 
 
 @app.post("/tasks/run")
-def run_task(request: RunTaskRequest, authorization: Optional[str] = Header(default=None)):
+def run_task(
+    request: RunTaskRequest,
+    authorization: Optional[str] = Header(default=None),
+    x_jobs_secret: Optional[str] = Header(default=None),
+):
     """
     Execute one Celery task in this process (TASK_BACKEND=cloudtasks).
 
@@ -80,11 +84,14 @@ def run_task(request: RunTaskRequest, authorization: Optional[str] = Header(defa
     repeat the LLM spend on a PDF that already failed. Crashes (OOM, timeout)
     surface as a non-2xx and Cloud Tasks retries per the queue's policy.
 
-    Auth: Cloud Run IAM (OIDC token from the queue's service account) plus the
-    shared JOBS_INTERNAL_SECRET when set.
+    Auth: Cloud Run IAM (OIDC token from the queue's service account, in
+    Authorization) plus the shared JOBS_INTERNAL_SECRET when set, carried in
+    X-Jobs-Secret because Cloud Tasks overwrites Authorization. A bearer form
+    is accepted for calls that do not go through Cloud Run.
     """
     secret = os.getenv("JOBS_INTERNAL_SECRET", "")
-    if secret and authorization != f"Bearer {secret}":
+    presented = x_jobs_secret or (authorization or "").removeprefix("Bearer ")
+    if secret and presented != secret:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     if request.task not in RUNNABLE_TASKS:

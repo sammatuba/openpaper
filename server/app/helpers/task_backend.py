@@ -107,7 +107,9 @@ class CloudTasksBackend:
         body = {"task": task_name, "task_id": task_id, "kwargs": kwargs}
         headers = {"Content-Type": "application/json"}
         if self.internal_secret:
-            headers["Authorization"] = f"Bearer {self.internal_secret}"
+            # Not Authorization: Cloud Tasks overwrites that header with the
+            # OIDC token, and Cloud Run's front end consumes it.
+            headers["X-Jobs-Secret"] = self.internal_secret
 
         http_request: Dict[str, Any] = {
             "httpMethod": "POST",

@@ -411,7 +411,9 @@ def periodic_zotero_sync(self):
     resp = requests.post(
         url,
         timeout=120,
-        headers={"Authorization": f"Bearer {secret}"},
+        # Both forms: Authorization for a direct server, X-Jobs-Secret when the
+        # server sits behind Cloud Run, which owns the Authorization header.
+        headers={"Authorization": f"Bearer {secret}", "X-Jobs-Secret": secret},
     )
     resp.raise_for_status()
     result = resp.json()

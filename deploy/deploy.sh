@@ -5,7 +5,7 @@
 #   deploy/deploy.sh secrets-init    prompt for every secret not yet in Secret Manager
 #   deploy/deploy.sh secret-set NAME prompt for one secret (or pipe it on stdin) and add a version
 #   deploy/deploy.sh secrets-status  which secrets exist and when they were last changed
-#   deploy/deploy.sh build       build all images with Cloud Build
+#   deploy/deploy.sh build [backend]   build all images with Cloud Build (backend: server + jobs only)
 #   deploy/deploy.sh migrate     run alembic migrations as a Cloud Run job
 #   deploy/deploy.sh deploy      deploy the web and jobs services
 #   deploy/deploy.sh schedule    nightly backup + daily Zotero sync (Cloud Scheduler)
@@ -212,8 +212,11 @@ cmd_secrets_status() {
 cmd_build() {
   require_login
   gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
-  log "cloud build → $IMAGE_BASE/*:$TAG"
-  gcloud builds submit "$root" --config="$here/cloudbuild.yaml" \
+  # `build backend` rebuilds only server + jobs (the client build is the slow one).
+  local config="$here/cloudbuild.yaml"
+  [[ "${1:-}" == backend ]] && config="$here/cloudbuild.backend.yaml"
+  log "cloud build ($(basename "$config")) → $IMAGE_BASE/*:$TAG"
+  gcloud builds submit "$root" --config="$config" \
     --substitutions="_REGION=${REGION},_REPO=${REPO},_TAG=${TAG},_PUBLIC_URL=$(public_url)"
 }
 
@@ -289,7 +292,7 @@ cmd_schedule() {
   gcloud scheduler jobs "$verb" http openpaper-zotero-sync --location="$REGION" \
     --schedule="0 3 * * *" --time-zone="Asia/Manila" --http-method=POST \
     --uri="$(public_url)/api/webhooks/internal/zotero-sync-all?threshold_seconds=86400" \
-    "${header_flag}=Authorization=Bearer ${secret}" --attempt-deadline=180s \
+    "${header_flag}=X-Jobs-Secret=${secret}" --attempt-deadline=180s \
     >/dev/null 2> >(sed "s/${secret}/<redacted>/g" >&2)
   wait
   echo "scheduled: backup 02:30, Zotero sync 03:00 (Asia/Manila)"
@@ -305,7 +308,7 @@ case "${1:-}" in
   secrets-init)   cmd_secrets_init ;;
   secret-set)     shift; cmd_secret_set "$@" ;;
   secrets-status) cmd_secrets_status ;;
-  build)     cmd_build ;;
+  build)     cmd_build "${2:-}" ;;
   migrate)   cmd_migrate ;;
   deploy)    cmd_deploy ;;
   schedule)  cmd_schedule ;;

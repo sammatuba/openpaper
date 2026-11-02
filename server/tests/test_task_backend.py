@@ -68,7 +68,8 @@ class CloudTasksPayload(unittest.TestCase):
         http = task["httpRequest"]
         self.assertEqual(http["httpMethod"], "POST")
         self.assertEqual(http["url"], CLOUD_TASKS_ENV["CLOUD_TASKS_TARGET_URL"])
-        self.assertEqual(http["headers"]["Authorization"], "Bearer s3cret")
+        self.assertEqual(http["headers"]["X-Jobs-Secret"], "s3cret")
+        self.assertNotIn("Authorization", http["headers"])
         self.assertEqual(
             http["oidcToken"], {"serviceAccountEmail": CLOUD_TASKS_ENV["CLOUD_TASKS_SERVICE_ACCOUNT"]}
         )

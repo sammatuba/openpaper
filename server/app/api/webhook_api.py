@@ -1088,7 +1088,13 @@ async def trigger_zotero_sync_all(
     (per-user errors, final summary) are logged here on the server.
     """
     secret = os.getenv("JOBS_INTERNAL_SECRET", "")
-    if secret and request.headers.get("Authorization") != f"Bearer {secret}":
+    # X-Jobs-Secret is the Cloud Run form: there the Authorization header is
+    # owned by the platform (OIDC), so the shared secret travels separately.
+    presented = (
+        request.headers.get("X-Jobs-Secret")
+        or (request.headers.get("Authorization") or "").removeprefix("Bearer ")
+    )
+    if secret and presented != secret:
         raise HTTPException(status_code=403, detail="Forbidden")
 
     threshold_seconds = int(
