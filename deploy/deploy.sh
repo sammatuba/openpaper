@@ -282,11 +282,16 @@ cmd_schedule() {
     --oauth-service-account-email="$RUNTIME_SA" >/dev/null
   log "zotero sync (daily)"
   local secret; secret="$(gcloud secrets versions access latest --secret=JOBS_INTERNAL_SECRET)"
-  verb=create; gcloud scheduler jobs describe openpaper-zotero-sync --location="$REGION" >/dev/null 2>&1 && verb=update
+  # The header value must be an argument; gcloud echoes arguments in error
+  # messages, so stderr is filtered through a mask.
+  local header_flag=--headers
+  verb=create; gcloud scheduler jobs describe openpaper-zotero-sync --location="$REGION" >/dev/null 2>&1 && { verb=update; header_flag=--update-headers; }
   gcloud scheduler jobs "$verb" http openpaper-zotero-sync --location="$REGION" \
     --schedule="0 3 * * *" --time-zone="Asia/Manila" --http-method=POST \
     --uri="$(public_url)/api/webhooks/internal/zotero-sync-all?threshold_seconds=86400" \
-    --headers="Authorization=Bearer ${secret}" --attempt-deadline=180s >/dev/null
+    "${header_flag}=Authorization=Bearer ${secret}" --attempt-deadline=180s \
+    >/dev/null 2> >(sed "s/${secret}/<redacted>/g" >&2)
+  wait
   echo "scheduled: backup 02:30, Zotero sync 03:00 (Asia/Manila)"
 }
 
