@@ -63,5 +63,6 @@
 - Remote MCP server (streamable HTTP) on the server exposing `search_papers`, `get_paper`, `list_annotations`, `add_note`, guarded by a bearer token; add it in ChatGPT Developer Mode as a custom connector. Spec written when P3 is verified.
 
 ## Open items
-- Whether anything fetches the stored `file_url` (`https://CLOUDFLARE_BUCKET_NAME/key`) directly rather than presigning; decides if the R2 bucket needs a public dev URL.
+- ~~Whether anything fetches the stored `file_url` directly.~~ Closed 2026-11-03: every paper/file URL the API returns comes from `get_cached_presigned_url*` (paper_api.py), so the R2 bucket stays private; `R2_PUBLIC_HOST` only shapes the stored key prefix.
 - Whether the jobs → server webhook should also carry `JOBS_INTERNAL_SECRET` (currently matched by unguessable job + task ids).
+- Not yet exercised against the real APIs: the Cloud Run service YAML (multi-container, sidecar probes), the Cloud Build run, a Cloud Tasks round trip, R2 presigned GET with the `when_required` checksum setting. All land in P3.

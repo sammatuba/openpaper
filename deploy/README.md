@@ -32,19 +32,27 @@ off by default so upstream merges stay clean:
 
 ## One-time operator steps
 
+The public URL is deterministic (`https://openpaper-<project-number>.<region>.run.app`),
+so the Google OAuth client can be created before anything is deployed.
+
 1. **gcloud, personal account.** Keep the work configuration untouched:
    ```bash
    gcloud config configurations create personal
    gcloud auth login          # jansammat26@gmail.com
    gcloud billing accounts list
    ```
-2. **Neon.** New project, region `aws-ap-southeast-1` (Singapore), Postgres 17+.
-   Copy both connection strings: the pooled one (`-pooler` host) for the app,
-   the direct one for backups.
-3. **Cloudflare R2.** Create bucket `openpaper-papers`. Create an R2 API token
-   with Object Read & Write on that bucket; note the Account ID. Set the bucket
-   CORS policy (Settings → CORS) to the client origin printed by
-   `deploy.sh url` (exact origin, no trailing slash):
+2. **Fill `deploy/personal.env`** from `personal.env.example` with the GCP
+   values and `ALLOWED_EMAILS`; secrets can wait. Then:
+   ```bash
+   deploy/deploy.sh bootstrap   # project, billing, APIs, registry, SA, queue
+   deploy/deploy.sh oauth-uri   # the redirect URI for step 3
+   deploy/deploy.sh url         # the origin for the R2 CORS rule in step 4
+   ```
+3. **Google OAuth** in the new project: APIs & Services → OAuth consent screen
+   (External, Testing, add your Gmail as a test user) → Credentials → OAuth
+   client (Web application) with the redirect URI from step 2.
+4. **Cloudflare R2.** Create bucket `openpaper-papers`, an R2 API token with
+   Object Read & Write on it, note the Account ID. Bucket Settings → CORS:
    ```json
    [{"AllowedOrigins": ["https://openpaper-NNNN.asia-southeast1.run.app"],
      "AllowedMethods": ["GET", "HEAD", "PUT"],
@@ -52,21 +60,18 @@ off by default so upstream merges stay clean:
      "ExposeHeaders": ["Content-Length", "Content-Range", "Accept-Ranges", "ETag"],
      "MaxAgeSeconds": 3000}]
    ```
-4. **Gemini API key** from AI Studio.
-5. **Fill `deploy/personal.env`** from `personal.env.example`. Generate
-   `JOBS_INTERNAL_SECRET` and `ADMIN_SECRET_KEY` with `openssl rand -hex 32`.
-6. **First deploy** (Google OAuth values can be empty for now):
+5. **Neon.** New project, region `aws-ap-southeast-1` (Singapore). Copy the
+   pooled connection string (`-pooler` host) for `DATABASE_URL` and the direct
+   one for `DATABASE_URL_DIRECT`.
+6. **Gemini API key** from AI Studio.
+7. **Finish `personal.env`** with every secret (`openssl rand -hex 32` for
+   `JOBS_INTERNAL_SECRET` and `ADMIN_SECRET_KEY`), then:
    ```bash
-   deploy/deploy.sh all
+   deploy/deploy.sh secrets && deploy/deploy.sh build && deploy/deploy.sh migrate \
+     && deploy/deploy.sh deploy && deploy/deploy.sh schedule
    ```
-7. **Google OAuth.** In the personal project: APIs & Services → OAuth consent
-   screen (External, Testing, add your Gmail as a test user), then Credentials
-   → OAuth client (Web application) with redirect URI
-   `https://<service-url>/api/auth/google/callback` (printed by `deploy.sh deploy`).
-   Put the client id and secret in `personal.env`, then:
-   ```bash
-   deploy/deploy.sh secrets && deploy/deploy.sh deploy
-   ```
+   (`deploy/deploy.sh all` runs the same sequence including bootstrap.)
+8. Open the URL, sign in with the allow-listed Gmail, upload a PDF.
 
 ## Day to day
 
@@ -104,6 +109,21 @@ Rollback: Cloud Run keeps revisions; `gcloud run services update-traffic openpap
 | Neon free tier (0.5 GB) | $0 |
 | R2 (10 GB free, no egress) | $0 |
 | Gemini Flash | usage; a few dollars at heavy reading |
+
+## Troubleshooting
+
+- `services replace` complains about a missing secret: `deploy.sh secrets`
+  creates every referenced secret (placeholder `unset` when empty); rerun it.
+- `builds submit` permission errors: new projects build as the compute default
+  service account; bootstrap grants it `roles/cloudbuild.builds.builder`.
+  Re-run bootstrap if the project predates that.
+- PDF viewer says `NetworkError`: the R2 CORS origin must match the service
+  URL exactly (scheme, host, no port, no trailing slash).
+- PDF viewer 403 on the file: the app presigns by object key, so the bucket
+  stays private. If a stored `file_url` is ever fetched directly instead,
+  enable the bucket's public dev URL and set `R2_PUBLIC_HOST` to its host.
+- Cancelling an upload returns `CANCEL_ERROR`: the runtime SA needs
+  `roles/cloudtasks.taskDeleter` (bootstrap grants it).
 
 ## Local development is unchanged
 

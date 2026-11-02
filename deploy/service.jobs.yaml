@@ -23,7 +23,8 @@ spec:
       containers:
         - name: jobs
           image: ${IMAGE_BASE}/jobs:${TAG}
-          command: ["uv", "run", "uvicorn", "src.app:app", "--host", "0.0.0.0", "--port", "8080", "--timeout-keep-alive", "75"]
+          # The image's venv directly: `uv run` would try to sync/cache as appuser.
+          command: ["/app/.venv/bin/uvicorn", "src.app:app", "--host", "0.0.0.0", "--port", "8080", "--timeout-keep-alive", "75"]
           ports:
             - name: http1
               containerPort: 8080
@@ -48,6 +49,12 @@ spec:
               value: ${R2_ENDPOINT}
             - name: AWS_REGION
               value: auto
+            # botocore >= 1.36 sends CRC32 request checksums by default; R2
+            # wants them only when required (Cloudflare R2 S3 compatibility notes).
+            - name: AWS_REQUEST_CHECKSUM_CALCULATION
+              value: when_required
+            - name: AWS_RESPONSE_CHECKSUM_VALIDATION
+              value: when_required
             - name: S3_BUCKET_NAME
               value: ${R2_BUCKET}
             - name: CLOUDFLARE_BUCKET_NAME

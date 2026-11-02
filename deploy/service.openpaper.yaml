@@ -54,8 +54,6 @@ spec:
             periodSeconds: 3
             failureThreshold: 60
           env:
-            - name: PORT
-              value: "8000"
             - name: WEB_CONCURRENCY
               value: "1"
             - name: DEBUG
@@ -92,6 +90,12 @@ spec:
               value: ${R2_ENDPOINT}
             - name: AWS_REGION
               value: auto
+            # botocore >= 1.36 sends CRC32 request checksums by default; R2
+            # wants them only when required (Cloudflare R2 S3 compatibility notes).
+            - name: AWS_REQUEST_CHECKSUM_CALCULATION
+              value: when_required
+            - name: AWS_RESPONSE_CHECKSUM_VALIDATION
+              value: when_required
             - name: S3_BUCKET_NAME
               value: ${R2_BUCKET}
             - name: CLOUDFLARE_BUCKET_NAME

@@ -9,6 +9,7 @@
 #   deploy/deploy.sh schedule    nightly backup + daily Zotero sync (Cloud Scheduler)
 #   deploy/deploy.sh all         bootstrap → secrets → build → migrate → deploy → schedule
 #   deploy/deploy.sh url         print the public URL (deterministic, known before deploy)
+#   deploy/deploy.sh oauth-uri   print the Google OAuth redirect URI (needs only bootstrap)
 #   deploy/deploy.sh backup-now  run the backup job once
 #   deploy/deploy.sh logs [svc]  tail recent logs
 #
@@ -69,7 +70,7 @@ cmd_bootstrap() {
   log "service account $RUNTIME_SA"
   gcloud iam service-accounts describe "$RUNTIME_SA" >/dev/null 2>&1 || \
     gcloud iam service-accounts create "$SA_NAME" --display-name="Open Paper runtime"
-  for role in roles/secretmanager.secretAccessor roles/cloudtasks.enqueuer roles/run.invoker roles/logging.logWriter; do
+  for role in roles/secretmanager.secretAccessor roles/cloudtasks.enqueuer roles/cloudtasks.taskDeleter roles/run.invoker roles/logging.logWriter; do
     gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:${RUNTIME_SA}" --role="$role" --condition=None >/dev/null
   done
   # The server enqueues tasks that carry an OIDC token for this same account.
@@ -77,7 +78,7 @@ cmd_bootstrap() {
     --member="serviceAccount:${RUNTIME_SA}" --role=roles/iam.serviceAccountUser >/dev/null
   # Cloud Build pushes images and needs the registry.
   local build_sa="$(project_number)-compute@developer.gserviceaccount.com"
-  for role in roles/artifactregistry.writer roles/logging.logWriter roles/storage.objectViewer; do
+  for role in roles/cloudbuild.builds.builder roles/artifactregistry.writer roles/logging.logWriter roles/storage.objectViewer; do
     gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:${build_sa}" --role="$role" --condition=None >/dev/null
   done
   log "cloud tasks queue $QUEUE"
@@ -90,14 +91,21 @@ cmd_bootstrap() {
   log "public URL will be: $(public_url)"
 }
 
+SECRET_NAMES=(DATABASE_URL DATABASE_URL_DIRECT GEMINI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
+              R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY JOBS_INTERNAL_SECRET ADMIN_SECRET_KEY)
+
 cmd_secrets() {
   require_login
   gcloud config set project "$PROJECT_ID" >/dev/null
   local name value
-  for name in DATABASE_URL DATABASE_URL_DIRECT GEMINI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET \
-              R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY JOBS_INTERNAL_SECRET ADMIN_SECRET_KEY; do
+  for name in "${SECRET_NAMES[@]}"; do
     value="${!name:-}"
-    if [[ -z "$value" ]]; then echo "skip $name (empty)"; continue; fi
+    # Every secret the services reference must exist or `services replace`
+    # fails; an empty value gets a placeholder you replace later.
+    if [[ -z "$value" ]]; then
+      if [[ "$name" == DATABASE_URL_DIRECT ]]; then value="${DATABASE_URL:-unset}"; else value=unset; fi
+      echo "warning: $name is empty in personal.env; storing placeholder"
+    fi
     if ! gcloud secrets describe "$name" >/dev/null 2>&1; then
       gcloud secrets create "$name" --replication-policy=automatic >/dev/null
     fi
@@ -133,12 +141,21 @@ cmd_migrate() {
   gcloud run jobs execute openpaper-migrate --region="$REGION" --wait
 }
 
+require_secrets() {
+  local missing=() name
+  for name in "$@"; do
+    gcloud secrets describe "$name" >/dev/null 2>&1 || missing+=("$name")
+  done
+  (( ${#missing[@]} == 0 )) || { echo "missing secrets: ${missing[*]} — run deploy/deploy.sh secrets"; exit 1; }
+}
+
 render() { envsubst '${PROJECT_ID} ${REGION} ${TAG} ${QUEUE} ${RUNTIME_SA} ${IMAGE_BASE} ${R2_ENDPOINT} ${R2_BUCKET} ${R2_PUBLIC_HOST} ${ALLOWED_EMAILS} ${PUBLIC_URL} ${JOBS_URL}' < "$1"; }
 
 cmd_deploy() {
   require_login
   gcloud config set project "$PROJECT_ID" >/dev/null
   PUBLIC_URL="$(public_url)"; JOBS_URL="$(jobs_url)"; export PUBLIC_URL JOBS_URL
+  require_secrets "${SECRET_NAMES[@]}"
   local tmp; tmp="$(mktemp -d)"
   log "jobs service"
   render "$here/service.jobs.yaml" > "$tmp/jobs.yaml"
@@ -159,13 +176,14 @@ cmd_deploy() {
 cmd_schedule() {
   require_login
   gcloud config set project "$PROJECT_ID" >/dev/null
+  require_secrets DATABASE_URL DATABASE_URL_DIRECT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY JOBS_INTERNAL_SECRET
   local verb
   log "backup job"
   verb=create; gcloud run jobs describe openpaper-backup --region="$REGION" >/dev/null 2>&1 && verb=update
   gcloud run jobs "$verb" openpaper-backup --region="$REGION" \
     --image="${IMAGE_BASE}/backup:${TAG}" --service-account="$RUNTIME_SA" \
     --set-secrets=DATABASE_URL=DATABASE_URL:latest,DATABASE_URL_DIRECT=DATABASE_URL_DIRECT:latest,AWS_ACCESS_KEY_ID=R2_ACCESS_KEY_ID:latest,AWS_SECRET_ACCESS_KEY=R2_SECRET_ACCESS_KEY:latest \
-    --set-env-vars="AWS_ENDPOINT_URL_S3=${R2_ENDPOINT},AWS_ENDPOINT_URL=${R2_ENDPOINT},AWS_DEFAULT_REGION=auto,S3_BUCKET_NAME=${R2_BUCKET},BACKUP_KEEP_DAYS=14" \
+    --set-env-vars="AWS_ENDPOINT_URL_S3=${R2_ENDPOINT},AWS_ENDPOINT_URL=${R2_ENDPOINT},AWS_DEFAULT_REGION=auto,AWS_REQUEST_CHECKSUM_CALCULATION=when_required,AWS_RESPONSE_CHECKSUM_VALIDATION=when_required,S3_BUCKET_NAME=${R2_BUCKET},BACKUP_KEEP_DAYS=14" \
     --memory=512Mi --max-retries=1 --task-timeout=20m >/dev/null
   local backup_uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/openpaper-backup:run"
   verb=create; gcloud scheduler jobs describe openpaper-backup-nightly --location="$REGION" >/dev/null 2>&1 && verb=update
@@ -195,6 +213,7 @@ case "${1:-}" in
   deploy)    cmd_deploy ;;
   schedule)  cmd_schedule ;;
   all)       cmd_bootstrap; cmd_secrets; cmd_build; cmd_migrate; cmd_deploy; cmd_schedule ;;
+  oauth-uri) require_login; gcloud config set project "$PROJECT_ID" >/dev/null; echo "$(public_url)/api/auth/google/callback" ;;
   url)       require_login; gcloud config set project "$PROJECT_ID" >/dev/null; public_url ;;
   backup-now) require_login; gcloud run jobs execute openpaper-backup --region="$REGION" --wait ;;
   logs)      cmd_logs "${2:-openpaper}" ;;

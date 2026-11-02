@@ -16,7 +16,9 @@ import {
 } from "@/components/ui/sheet";
 
 const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
-const stripePromise = loadStripe(STRIPE_PUBLISHABLE_KEY || '');
+// Without a key (self-hosted build) Stripe.js is never loaded; the checkout
+// sheet then shows the server's error instead of throwing at import.
+const stripePromise = STRIPE_PUBLISHABLE_KEY ? loadStripe(STRIPE_PUBLISHABLE_KEY) : Promise.resolve(null);
 
 interface CheckoutSheetProps {
     open: boolean;

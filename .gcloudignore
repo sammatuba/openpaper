@@ -1,0 +1,16 @@
+# Uploaded to Cloud Build by deploy/deploy.sh build; keep it to what the images need.
+.git
+.gcloudignore
+demo.gif
+docker/seed/fixture.dump
+server/evals/seed_data/*.pdf
+server/lr_research_diagram.png
+**/node_modules
+**/.next
+**/.venv
+**/__pycache__
+**/.env
+**/.env.*
+!**/.env.example
+deploy/personal.env
+docs/

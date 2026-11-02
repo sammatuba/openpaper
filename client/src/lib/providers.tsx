@@ -12,6 +12,8 @@ import { useIsDarkMode } from "@/hooks/useDarkMode"
 // Note: This provider does not work wherever adblock is enabled.
 export function PostHogProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
+        // A build without a PostHog key (self-hosted) sends nothing.
+        if (!process.env.NEXT_PUBLIC_POSTHOG_KEY) return
         posthog.init(process.env.NEXT_PUBLIC_POSTHOG_KEY as string, {
             api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
             person_profiles: 'identified_only', // or 'always' to create profiles for anonymous users as well
