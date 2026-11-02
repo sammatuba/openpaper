@@ -278,13 +278,13 @@ cmd_schedule() {
   local backup_uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/openpaper-backup:run"
   verb=create; gcloud scheduler jobs describe openpaper-backup-nightly --location="$REGION" >/dev/null 2>&1 && verb=update
   gcloud scheduler jobs "$verb" http openpaper-backup-nightly --location="$REGION" \
-    --schedule="30 18 * * *" --time-zone="Asia/Manila" --http-method=POST --uri="$backup_uri" \
+    --schedule="30 2 * * *" --time-zone="Asia/Manila" --http-method=POST --uri="$backup_uri" \
     --oauth-service-account-email="$RUNTIME_SA" >/dev/null
   log "zotero sync (daily)"
   local secret; secret="$(gcloud secrets versions access latest --secret=JOBS_INTERNAL_SECRET)"
   verb=create; gcloud scheduler jobs describe openpaper-zotero-sync --location="$REGION" >/dev/null 2>&1 && verb=update
   gcloud scheduler jobs "$verb" http openpaper-zotero-sync --location="$REGION" \
-    --schedule="0 19 * * *" --time-zone="Asia/Manila" --http-method=POST \
+    --schedule="0 3 * * *" --time-zone="Asia/Manila" --http-method=POST \
     --uri="$(public_url)/api/webhooks/internal/zotero-sync-all?threshold_seconds=86400" \
     --headers="Authorization=Bearer ${secret}" --attempt-deadline=180s >/dev/null
   echo "scheduled: backup 02:30, Zotero sync 03:00 (Asia/Manila)"
