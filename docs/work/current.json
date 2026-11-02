@@ -1,6 +1,6 @@
 {
   "intent": "docs/work/INTENT-personal-cloud-run-deploy.md",
-  "phase": "P3: redeploying server+jobs with X-Jobs-Secret, then first sign-in",
+  "phase": "P3: live; awaiting first sign-in and upload",
   "branch": "feat/cloud-run-personal",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,7 +8,7 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "After backend build: deploy.sh deploy; run scheduler job openpaper-zotero-sync and expect 200; operator signs in and uploads a PDF.",
+  "next_action": "Operator signs in at https://openpaper-1061746501640.asia-southeast1.run.app and uploads a PDF. Then verify Cloud Tasks round trip in jobs logs, PDF render, chat. Then re-run backup-now after the image rebuild.",
   "blocked_on": "operator browser sign-in",
   "updated": "2026-11-03",
   "done": [
@@ -17,6 +17,9 @@
     "migrate job: alembic head 9b8653fb667e on Neon",
     "secrets: DATABASE_URL, DATABASE_URL_DIRECT, GCS_HMAC_* set",
     "all 9 secrets set",
-    "deploy: openpaper + openpaper-jobs live; /api/health 200 via Caddy, client 200, jobs 403 anon / 200 with identity token"
+    "deploy: openpaper + openpaper-jobs live; /api/health 200 via Caddy, client 200, jobs 403 anon / 200 with identity token",
+    "X-Jobs-Secret rollout; scheduler \u2192 server 200",
+    "services pinned by digest (revision openpaper-00002)",
+    "backup job: dump + upload to gs://openpaper-sammatuba-papers/backups/ OK; prune step fixed, image rebuilding"
   ]
 }
