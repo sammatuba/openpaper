@@ -32,17 +32,17 @@ source "$config_file"; set +a
 export CLOUDSDK_ACTIVE_CONFIG_NAME="${GCLOUD_CONFIGURATION:-personal}"
 export CLOUDSDK_CORE_DISABLE_PROMPTS=1
 
-: "${PROJECT_ID:?}" "${REGION:?}" "${R2_BUCKET:?}" "${ALLOWED_EMAILS:?}"
+: "${PROJECT_ID:?}" "${REGION:?}" "${GCS_BUCKET:?}" "${ALLOWED_EMAILS:?}"
 TAG="${TAG:-latest}"
 REPO=openpaper
 QUEUE=openpaper-jobs
 SA_NAME=openpaper-runtime
 RUNTIME_SA="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 IMAGE_BASE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}"
-R2_ENDPOINT="https://${R2_ACCOUNT_ID:-unset}.r2.cloudflarestorage.com"
-R2_PUBLIC_HOST="${R2_PUBLIC_HOST:-${R2_ACCOUNT_ID:-unset}.r2.cloudflarestorage.com/${R2_BUCKET}}"
-need_r2() { [[ -n "${R2_ACCOUNT_ID:-}" ]] || { echo "set R2_ACCOUNT_ID in deploy/config.env (Cloudflare dashboard → R2)"; exit 1; }; }
-export PROJECT_ID REGION TAG QUEUE RUNTIME_SA IMAGE_BASE R2_ENDPOINT R2_BUCKET R2_PUBLIC_HOST ALLOWED_EMAILS
+S3_ENDPOINT="https://storage.googleapis.com"
+# Host written into stored object URLs; the app presigns by key, so this only shapes the prefix.
+STORAGE_PUBLIC_HOST="storage.googleapis.com/${GCS_BUCKET}"
+export PROJECT_ID REGION TAG QUEUE RUNTIME_SA IMAGE_BASE S3_ENDPOINT GCS_BUCKET STORAGE_PUBLIC_HOST ALLOWED_EMAILS
 
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 
@@ -98,11 +98,41 @@ cmd_bootstrap() {
   # reports its own failure and must not be re-run (LLM spend).
   gcloud tasks queues update "$QUEUE" --location="$REGION" \
     --max-attempts=2 --max-concurrent-dispatches=2 --max-dispatches-per-second=5 >/dev/null
+  log "bucket gs://$GCS_BUCKET"
+  if ! gcloud storage buckets describe "gs://$GCS_BUCKET" >/dev/null 2>&1; then
+    gcloud storage buckets create "gs://$GCS_BUCKET" --location="$REGION" \
+      --uniform-bucket-level-access --public-access-prevention >/dev/null
+  fi
+  gcloud storage buckets add-iam-policy-binding "gs://$GCS_BUCKET" \
+    --member="serviceAccount:${RUNTIME_SA}" --role=roles/storage.objectAdmin >/dev/null
+  # The browser fetches PDFs with presigned URLs (range requests), so the
+  # bucket must allow the app's exact origin.
+  local cors; cors="$(mktemp)"
+  cat > "$cors" <<JSON
+[{"origin": ["$(public_url)"], "method": ["GET", "HEAD", "PUT"],
+  "responseHeader": ["Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Range"],
+  "maxAgeSeconds": 3000}]
+JSON
+  gcloud storage buckets update "gs://$GCS_BUCKET" --cors-file="$cors" >/dev/null; rm -f "$cors"
+  # boto3 reaches GCS through the S3 interop API with an HMAC key for the
+  # runtime SA. The secret is shown once by the API; it goes straight into
+  # Secret Manager and is never printed.
+  if ! secret_exists GCS_HMAC_SECRET || [[ "$(gcloud secrets versions access latest --secret=GCS_HMAC_SECRET)" == unset ]]; then
+    log "HMAC key for $RUNTIME_SA"
+    local key; key="$(gcloud storage hmac create "$RUNTIME_SA" --format=json)"
+    push_secret GCS_HMAC_ACCESS_ID "$(printf '%s' "$key" | python3 -c 'import json,sys; print(json.load(sys.stdin)["metadata"]["accessId"])')"
+    push_secret GCS_HMAC_SECRET "$(printf '%s' "$key" | python3 -c 'import json,sys; print(json.load(sys.stdin)["secret"])')"
+    unset key
+  else
+    echo "have   GCS_HMAC_* "
+  fi
   log "public URL will be: $(public_url)"
 }
 
+# Prompted by secrets-init. GCS_HMAC_* are created by bootstrap, not prompted.
 SECRET_NAMES=(DATABASE_URL DATABASE_URL_DIRECT GEMINI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
-              R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY JOBS_INTERNAL_SECRET ADMIN_SECRET_KEY)
+              JOBS_INTERNAL_SECRET ADMIN_SECRET_KEY)
+ALL_SECRETS=("${SECRET_NAMES[@]}" GCS_HMAC_ACCESS_ID GCS_HMAC_SECRET)
 # Generated locally when left blank at the prompt; never need to be known.
 GENERATED_SECRETS=(JOBS_INTERNAL_SECRET ADMIN_SECRET_KEY)
 
@@ -112,7 +142,6 @@ secret_hint() {
     DATABASE_URL_DIRECT) echo "Neon direct connection string (no -pooler); blank = same as DATABASE_URL" ;;
     GEMINI_API_KEY) echo "Google AI Studio API key" ;;
     GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET) echo "OAuth web client in the personal project; blank = placeholder until created" ;;
-    R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY) echo "Cloudflare R2 API token (Object Read & Write on the bucket)" ;;
     JOBS_INTERNAL_SECRET|ADMIN_SECRET_KEY) echo "blank = generate 32 random bytes" ;;
   esac
 }
@@ -171,7 +200,7 @@ cmd_secrets_status() {
   require_login
   gcloud config set project "$PROJECT_ID" >/dev/null
   local name state
-  for name in "${SECRET_NAMES[@]}"; do
+  for name in "${ALL_SECRETS[@]}"; do
     if ! secret_exists "$name"; then state="MISSING"
     elif [[ "$(gcloud secrets versions access latest --secret="$name")" == unset ]]; then state="placeholder"
     else state="set $(gcloud secrets versions describe latest --secret="$name" --format='value(createTime)' 2>/dev/null)"
@@ -210,14 +239,13 @@ require_secrets() {
   (( ${#missing[@]} == 0 )) || { echo "missing secrets: ${missing[*]} — run deploy/deploy.sh secrets-init"; exit 1; }
 }
 
-render() { envsubst '${PROJECT_ID} ${REGION} ${TAG} ${QUEUE} ${RUNTIME_SA} ${IMAGE_BASE} ${R2_ENDPOINT} ${R2_BUCKET} ${R2_PUBLIC_HOST} ${ALLOWED_EMAILS} ${PUBLIC_URL} ${JOBS_URL}' < "$1"; }
+render() { envsubst '${PROJECT_ID} ${REGION} ${TAG} ${QUEUE} ${RUNTIME_SA} ${IMAGE_BASE} ${S3_ENDPOINT} ${GCS_BUCKET} ${STORAGE_PUBLIC_HOST} ${ALLOWED_EMAILS} ${PUBLIC_URL} ${JOBS_URL}' < "$1"; }
 
 cmd_deploy() {
   require_login
-  need_r2
   gcloud config set project "$PROJECT_ID" >/dev/null
   PUBLIC_URL="$(public_url)"; JOBS_URL="$(jobs_url)"; export PUBLIC_URL JOBS_URL
-  require_secrets "${SECRET_NAMES[@]}"
+  require_secrets "${ALL_SECRETS[@]}"
   local tmp; tmp="$(mktemp -d)"
   log "jobs service"
   render "$here/service.jobs.yaml" > "$tmp/jobs.yaml"
@@ -237,16 +265,15 @@ cmd_deploy() {
 
 cmd_schedule() {
   require_login
-  need_r2
   gcloud config set project "$PROJECT_ID" >/dev/null
-  require_secrets DATABASE_URL DATABASE_URL_DIRECT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY JOBS_INTERNAL_SECRET
+  require_secrets DATABASE_URL DATABASE_URL_DIRECT GCS_HMAC_ACCESS_ID GCS_HMAC_SECRET JOBS_INTERNAL_SECRET
   local verb
   log "backup job"
   verb=create; gcloud run jobs describe openpaper-backup --region="$REGION" >/dev/null 2>&1 && verb=update
   gcloud run jobs "$verb" openpaper-backup --region="$REGION" \
     --image="${IMAGE_BASE}/backup:${TAG}" --service-account="$RUNTIME_SA" \
-    --set-secrets=DATABASE_URL=DATABASE_URL:latest,DATABASE_URL_DIRECT=DATABASE_URL_DIRECT:latest,AWS_ACCESS_KEY_ID=R2_ACCESS_KEY_ID:latest,AWS_SECRET_ACCESS_KEY=R2_SECRET_ACCESS_KEY:latest \
-    --set-env-vars="AWS_ENDPOINT_URL_S3=${R2_ENDPOINT},AWS_ENDPOINT_URL=${R2_ENDPOINT},AWS_DEFAULT_REGION=auto,AWS_REQUEST_CHECKSUM_CALCULATION=when_required,AWS_RESPONSE_CHECKSUM_VALIDATION=when_required,S3_BUCKET_NAME=${R2_BUCKET},BACKUP_KEEP_DAYS=14" \
+    --set-secrets=DATABASE_URL=DATABASE_URL:latest,DATABASE_URL_DIRECT=DATABASE_URL_DIRECT:latest,AWS_ACCESS_KEY_ID=GCS_HMAC_ACCESS_ID:latest,AWS_SECRET_ACCESS_KEY=GCS_HMAC_SECRET:latest \
+    --set-env-vars="AWS_ENDPOINT_URL_S3=${S3_ENDPOINT},AWS_ENDPOINT_URL=${S3_ENDPOINT},AWS_DEFAULT_REGION=auto,AWS_REQUEST_CHECKSUM_CALCULATION=when_required,AWS_RESPONSE_CHECKSUM_VALIDATION=when_required,S3_BUCKET_NAME=${GCS_BUCKET},BACKUP_KEEP_DAYS=14" \
     --memory=512Mi --max-retries=1 --task-timeout=20m >/dev/null
   local backup_uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/openpaper-backup:run"
   verb=create; gcloud scheduler jobs describe openpaper-backup-nightly --location="$REGION" >/dev/null 2>&1 && verb=update

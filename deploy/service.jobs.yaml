@@ -46,19 +46,19 @@ spec:
             - name: DEBUG
               value: "False"
             - name: AWS_ENDPOINT_URL_S3
-              value: ${R2_ENDPOINT}
+              value: ${S3_ENDPOINT}
             - name: AWS_REGION
               value: auto
-            # botocore >= 1.36 sends CRC32 request checksums by default; R2
-            # wants them only when required (Cloudflare R2 S3 compatibility notes).
+            # botocore >= 1.36 sends CRC32 request checksums by default; the GCS
+            # S3 interop API does not accept them, so send only when required.
             - name: AWS_REQUEST_CHECKSUM_CALCULATION
               value: when_required
             - name: AWS_RESPONSE_CHECKSUM_VALIDATION
               value: when_required
             - name: S3_BUCKET_NAME
-              value: ${R2_BUCKET}
+              value: ${GCS_BUCKET}
             - name: CLOUDFLARE_BUCKET_NAME
-              value: ${R2_PUBLIC_HOST}
+              value: ${STORAGE_PUBLIC_HOST}
             - name: GEMINI_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -73,12 +73,12 @@ spec:
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: R2_ACCESS_KEY_ID
+                  name: GCS_HMAC_ACCESS_ID
                   key: latest
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: R2_SECRET_ACCESS_KEY
+                  name: GCS_HMAC_SECRET
                   key: latest
             - name: JOBS_INTERNAL_SECRET
               valueFrom:

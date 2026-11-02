@@ -9,8 +9,8 @@
 |---|---|---|
 | Hosting | Cloud Run, scale to zero, personal GCP account `jansammat26@gmail.com` (billing exists) | single VM + compose |
 | Async jobs | switchable task backend: `TASK_BACKEND=celery` (upstream) or `cloudtasks` (Cloud Tasks → jobs HTTP runner, Cloud Scheduler for Zotero sync) | always-on Celery worker |
-| Database | Neon free tier Postgres, Singapore region, pooled connection string; nightly `pg_dump` to R2 | SQLite (schema is Postgres-native: tsvector, pg_trgm, JSONB, ARRAY, UUID), Cloud SQL |
-| Object storage | Cloudflare R2 via `AWS_ENDPOINT_URL_S3`, private bucket, presigned URLs, CORS for the client origin | GCS |
+| Database | Neon free tier Postgres, Singapore region, pooled connection string; nightly `pg_dump` to the GCS bucket | SQLite (schema is Postgres-native: tsvector, pg_trgm, JSONB, ARRAY, UUID), Cloud SQL |
+| Object storage | GCS bucket (private, `asia-southeast1`) via boto3 S3 interop + HMAC key, presigned URLs, CORS for the client origin. Changed from R2 on 2026-11-03: with the hostname on run.app, R2 only added a vendor and a manual token flow | Cloudflare R2 |
 | Hostname | free `*.run.app`, no domain | Cloudflare Tunnel / own domain |
 | LLM | Gemini only; OpenAI, Anthropic, E2B optional (`LLM_FALLBACK_PROVIDER=` empty) | buying four keys |
 | "Connect ChatGPT" | expose the workbench as a remote MCP connector for ChatGPT (last phase) | OpenAI API key |
@@ -48,7 +48,7 @@
 ### P2 Operator actions (console/manual, in this order)
 1. `! gcloud config configurations create personal` then `! gcloud auth login` as `jansammat26@gmail.com`.
 2. Neon: project in `aws-ap-southeast-1`, copy the pooled connection string.
-3. Cloudflare: account, R2 bucket `openpaper-papers`, S3 API token (Object Read & Write), note account id.
+3. ~~Cloudflare R2~~ replaced by GCS; bootstrap creates bucket, CORS and HMAC key.
 4. Gemini API key (AI Studio).
 5. After the first deploy prints the service URL: OAuth consent screen (External, Testing, own Gmail as test user) and an OAuth web client with redirect `https://<service-url>/api/auth/google/callback`.
 
@@ -66,4 +66,4 @@
 ## Open items
 - ~~Whether anything fetches the stored `file_url` directly.~~ Closed 2026-11-03: every paper/file URL the API returns comes from `get_cached_presigned_url*` (paper_api.py), so the R2 bucket stays private; `R2_PUBLIC_HOST` only shapes the stored key prefix.
 - Whether the jobs → server webhook should also carry `JOBS_INTERNAL_SECRET` (currently matched by unguessable job + task ids).
-- Not yet exercised against the real APIs: the Cloud Run service YAML (multi-container, sidecar probes), the Cloud Build run, a Cloud Tasks round trip, R2 presigned GET with the `when_required` checksum setting. All land in P3.
+- Not yet exercised against the real APIs: the Cloud Run service YAML (multi-container, sidecar probes), the Cloud Build run, a Cloud Tasks round trip, GCS S3-interop presigned GET with the `when_required` checksum setting and region `auto`. All land in P3.
