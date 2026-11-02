@@ -22,7 +22,7 @@ spec:
       timeoutSeconds: 1800
       containers:
         - name: jobs
-          image: ${IMAGE_BASE}/jobs:${TAG}
+          image: ${IMAGE_JOBS}
           # The image's venv directly: `uv run` would try to sync/cache as appuser.
           command: ["/app/.venv/bin/uvicorn", "src.app:app", "--host", "0.0.0.0", "--port", "8080", "--timeout-keep-alive", "75"]
           ports:

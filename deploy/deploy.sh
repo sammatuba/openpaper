@@ -242,13 +242,24 @@ require_secrets() {
   (( ${#missing[@]} == 0 )) || { echo "missing secrets: ${missing[*]} — run deploy/deploy.sh secrets-init"; exit 1; }
 }
 
-render() { envsubst '${PROJECT_ID} ${REGION} ${TAG} ${QUEUE} ${RUNTIME_SA} ${IMAGE_BASE} ${S3_ENDPOINT} ${GCS_BUCKET} ${STORAGE_PUBLIC_HOST} ${ALLOWED_EMAILS} ${PUBLIC_URL} ${JOBS_URL}' < "$1"; }
+image_digest() {  # name -> image@sha256:... for the current TAG
+  local digest
+  digest="$(gcloud artifacts docker images describe "${IMAGE_BASE}/$1:${TAG}" --format='value(image_summary.digest)')"
+  [[ -n "$digest" ]] || { echo "no image ${IMAGE_BASE}/$1:${TAG}; run deploy.sh build"; exit 1; }
+  echo "${IMAGE_BASE}/$1@${digest}"
+}
+
+render() { envsubst '${PROJECT_ID} ${REGION} ${TAG} ${QUEUE} ${RUNTIME_SA} ${IMAGE_BASE} ${IMAGE_CADDY} ${IMAGE_CLIENT} ${IMAGE_SERVER} ${IMAGE_JOBS} ${S3_ENDPOINT} ${GCS_BUCKET} ${STORAGE_PUBLIC_HOST} ${ALLOWED_EMAILS} ${PUBLIC_URL} ${JOBS_URL}' < "$1"; }
 
 cmd_deploy() {
   require_login
   gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
   PUBLIC_URL="$(public_url)"; JOBS_URL="$(jobs_url)"; export PUBLIC_URL JOBS_URL
   require_secrets "${ALL_SECRETS[@]}"
+  # Pin by digest so a rebuilt tag always produces a new revision.
+  IMAGE_CADDY="$(image_digest caddy)"; IMAGE_CLIENT="$(image_digest client)"
+  IMAGE_SERVER="$(image_digest server)"; IMAGE_JOBS="$(image_digest jobs)"
+  export IMAGE_CADDY IMAGE_CLIENT IMAGE_SERVER IMAGE_JOBS
   local tmp; tmp="$(mktemp -d)"
   log "jobs service"
   render "$here/service.jobs.yaml" > "$tmp/jobs.yaml"
