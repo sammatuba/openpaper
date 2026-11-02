@@ -2,7 +2,7 @@
   "intent": "docs/work/INTENT-personal-cloud-run-deploy.md",
   "phase": "P2 operator actions",
   "branch": "feat/cloud-run-personal",
-  "next_action": "Operator: gcloud personal configuration + login, Neon project, R2 bucket + token, Gemini key, fill deploy/personal.env. Then `deploy/deploy.sh all`, create the Google OAuth client with the printed redirect URI, `deploy.sh secrets && deploy.sh deploy`.",
+  "next_action": "Operator: gcloud personal configuration + login, Neon project, R2 bucket + token, Gemini key, bootstrap, create the Google OAuth client with the printed redirect URI, `deploy.sh secrets-init` (prompted, straight to Secret Manager), then build/migrate/deploy/schedule.",
   "blocked_on": "operator login to jansammat26@gmail.com and the third-party accounts listed in P2",
   "updated": "2026-11-02"
 }

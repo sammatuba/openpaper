@@ -27,6 +27,7 @@
 - Cloud Tasks dispatch deadline 30 min; jobs service request timeout 30 min, concurrency 1, 2 GiB.
 - Work gcloud configuration (`jmatuba@mabuhayenergy.com`, `core-staging-platform`) is never touched; a separate `personal` configuration is used.
 - No cloud resource is created before the operator has logged in to the personal account.
+- **No local env files.** Secrets exist only in Secret Manager (operator ruling 2026-11-03): entered at a prompt or piped on stdin by `deploy.sh secret-set` / `secrets-init`, resolved by Cloud Run and the jobs at deploy time, read by the scheduler setup from Secret Manager. `deploy/config.env` is committed and holds only non-secret settings.
 
 ## Phases and acceptance checks
 

@@ -96,5 +96,3 @@ build_*tex.sh
 !/.agents/skills/meos-wrapup/SKILL.md
 # MEOS-SKILLS:END
 
-# Personal deploy secrets
-deploy/personal.env

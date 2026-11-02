@@ -30,6 +30,34 @@ off by default so upstream merges stay clean:
 | `--build-arg NEXT_PUBLIC_API_URL=...` | client image for a different origin, no PostHog/Stripe keys. |
 | `AWS_ENDPOINT_URL_S3` | boto3 talks to R2 (no code change; botocore honours it). |
 
+## Secrets
+
+No secret is ever written to a local file. `deploy/config.env` (committed)
+holds only non-secret settings. Secret values are typed once at a prompt, or
+piped on stdin, and go straight into Secret Manager:
+
+```bash
+deploy/deploy.sh secrets-init                 # prompts for every secret not yet set
+deploy/deploy.sh secret-set GEMINI_API_KEY    # rotate one
+pbpaste | deploy/deploy.sh secret-set DATABASE_URL   # or pipe it
+deploy/deploy.sh secrets-status
+```
+
+Cloud Run resolves them at deploy time (`secretKeyRef`, always `latest`), the
+migrate and backup jobs the same way, and the Zotero scheduler job reads
+`JOBS_INTERNAL_SECRET` from Secret Manager when it is (re)created. The runtime
+service account has `secretmanager.secretAccessor`; your user account only
+needs it to add versions. Rotating a secret is `secret-set` then `deploy`.
+
+| Secret | Source |
+|---|---|
+| `DATABASE_URL` | Neon pooled connection string |
+| `DATABASE_URL_DIRECT` | Neon direct string (backups); blank copies `DATABASE_URL` |
+| `GEMINI_API_KEY` | Google AI Studio |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | OAuth web client in the personal project |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Cloudflare R2 API token |
+| `JOBS_INTERNAL_SECRET`, `ADMIN_SECRET_KEY` | generated at the prompt when left blank |
+
 ## One-time operator steps
 
 The public URL is deterministic (`https://openpaper-<project-number>.<region>.run.app`),
@@ -39,12 +67,10 @@ so the Google OAuth client can be created before anything is deployed.
    ```bash
    gcloud config configurations create personal
    gcloud auth login          # jansammat26@gmail.com
-   gcloud billing accounts list
    ```
-2. **Fill `deploy/personal.env`** from `personal.env.example` with the GCP
-   values and `ALLOWED_EMAILS`; secrets can wait. Then:
+2. **Check `deploy/config.env`** (project id, region, allowed emails), then:
    ```bash
-   deploy/deploy.sh bootstrap   # project, billing, APIs, registry, SA, queue
+   deploy/deploy.sh bootstrap   # project, billing (prompts), APIs, registry, SA, queue
    deploy/deploy.sh oauth-uri   # the redirect URI for step 3
    deploy/deploy.sh url         # the origin for the R2 CORS rule in step 4
    ```
@@ -52,7 +78,8 @@ so the Google OAuth client can be created before anything is deployed.
    (External, Testing, add your Gmail as a test user) → Credentials → OAuth
    client (Web application) with the redirect URI from step 2.
 4. **Cloudflare R2.** Create bucket `openpaper-papers`, an R2 API token with
-   Object Read & Write on it, note the Account ID. Bucket Settings → CORS:
+   Object Read & Write on it; put the Account ID in `deploy/config.env`.
+   Bucket Settings → CORS:
    ```json
    [{"AllowedOrigins": ["https://openpaper-NNNN.asia-southeast1.run.app"],
      "AllowedMethods": ["GET", "HEAD", "PUT"],
@@ -60,17 +87,14 @@ so the Google OAuth client can be created before anything is deployed.
      "ExposeHeaders": ["Content-Length", "Content-Range", "Accept-Ranges", "ETag"],
      "MaxAgeSeconds": 3000}]
    ```
-5. **Neon.** New project, region `aws-ap-southeast-1` (Singapore). Copy the
-   pooled connection string (`-pooler` host) for `DATABASE_URL` and the direct
-   one for `DATABASE_URL_DIRECT`.
+5. **Neon.** New project, region `aws-ap-southeast-1` (Singapore). Keep the
+   pooled and direct connection strings at hand for the prompt.
 6. **Gemini API key** from AI Studio.
-7. **Finish `personal.env`** with every secret (`openssl rand -hex 32` for
-   `JOBS_INTERNAL_SECRET` and `ADMIN_SECRET_KEY`), then:
+7. **Enter secrets, then ship:**
    ```bash
-   deploy/deploy.sh secrets && deploy/deploy.sh build && deploy/deploy.sh migrate \
-     && deploy/deploy.sh deploy && deploy/deploy.sh schedule
+   deploy/deploy.sh secrets-init
+   deploy/deploy.sh build && deploy/deploy.sh migrate && deploy/deploy.sh deploy && deploy/deploy.sh schedule
    ```
-   (`deploy/deploy.sh all` runs the same sequence including bootstrap.)
 8. Open the URL, sign in with the allow-listed Gmail, upload a PDF.
 
 ## Day to day
@@ -112,8 +136,8 @@ Rollback: Cloud Run keeps revisions; `gcloud run services update-traffic openpap
 
 ## Troubleshooting
 
-- `services replace` complains about a missing secret: `deploy.sh secrets`
-  creates every referenced secret (placeholder `unset` when empty); rerun it.
+- `services replace` complains about a missing secret: `deploy.sh secrets-init`
+  creates every referenced secret (placeholder `unset` when left blank); rerun it.
 - `builds submit` permission errors: new projects build as the compute default
   service account; bootstrap grants it `roles/cloudbuild.builds.builder`.
   Re-run bootstrap if the project predates that.

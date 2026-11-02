@@ -12,5 +12,4 @@ server/lr_research_diagram.png
 **/.env
 **/.env.*
 !**/.env.example
-deploy/personal.env
 docs/

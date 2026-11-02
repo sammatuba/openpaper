@@ -2,40 +2,46 @@
 # Personal Cloud Run deploy for Open Paper. Idempotent: every step can be rerun.
 #
 #   deploy/deploy.sh bootstrap   project, billing, APIs, registry, service account, queue
-#   deploy/deploy.sh secrets     push secrets from deploy/personal.env to Secret Manager
+#   deploy/deploy.sh secrets-init    prompt for every secret not yet in Secret Manager
+#   deploy/deploy.sh secret-set NAME prompt for one secret (or pipe it on stdin) and add a version
+#   deploy/deploy.sh secrets-status  which secrets exist and when they were last changed
 #   deploy/deploy.sh build       build all images with Cloud Build
 #   deploy/deploy.sh migrate     run alembic migrations as a Cloud Run job
 #   deploy/deploy.sh deploy      deploy the web and jobs services
 #   deploy/deploy.sh schedule    nightly backup + daily Zotero sync (Cloud Scheduler)
-#   deploy/deploy.sh all         bootstrap → secrets → build → migrate → deploy → schedule
+#   deploy/deploy.sh all         bootstrap → secrets-init → build → migrate → deploy → schedule
 #   deploy/deploy.sh url         print the public URL (deterministic, known before deploy)
 #   deploy/deploy.sh oauth-uri   print the Google OAuth redirect URI (needs only bootstrap)
 #   deploy/deploy.sh backup-now  run the backup job once
 #   deploy/deploy.sh logs [svc]  tail recent logs
 #
+# Secrets are never written to disk here: they go from the prompt (or stdin)
+# straight into Secret Manager, and Cloud Run / Cloud Run jobs / Scheduler
+# read them from there. deploy/config.env holds only non-secret settings.
 # Uses its own gcloud configuration (GCLOUD_CONFIGURATION) so the work
 # configuration is never touched.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"
-env_file="$here/personal.env"
-[[ -f "$env_file" ]] || { echo "missing $env_file (copy personal.env.example)"; exit 1; }
+config_file="$here/config.env"
+[[ -f "$config_file" ]] || { echo "missing $config_file"; exit 1; }
 set -a; # shellcheck disable=SC1090
-source "$env_file"; set +a
+source "$config_file"; set +a
 
 export CLOUDSDK_ACTIVE_CONFIG_NAME="${GCLOUD_CONFIGURATION:-personal}"
 export CLOUDSDK_CORE_DISABLE_PROMPTS=1
 
-: "${PROJECT_ID:?}" "${REGION:?}" "${R2_ACCOUNT_ID:?}" "${R2_BUCKET:?}" "${ALLOWED_EMAILS:?}"
+: "${PROJECT_ID:?}" "${REGION:?}" "${R2_BUCKET:?}" "${ALLOWED_EMAILS:?}"
 TAG="${TAG:-latest}"
 REPO=openpaper
 QUEUE=openpaper-jobs
 SA_NAME=openpaper-runtime
 RUNTIME_SA="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 IMAGE_BASE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}"
-R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
-R2_PUBLIC_HOST="${R2_PUBLIC_HOST:-${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${R2_BUCKET}}"
+R2_ENDPOINT="https://${R2_ACCOUNT_ID:-unset}.r2.cloudflarestorage.com"
+R2_PUBLIC_HOST="${R2_PUBLIC_HOST:-${R2_ACCOUNT_ID:-unset}.r2.cloudflarestorage.com/${R2_BUCKET}}"
+need_r2() { [[ -n "${R2_ACCOUNT_ID:-}" ]] || { echo "set R2_ACCOUNT_ID in deploy/config.env (Cloudflare dashboard → R2)"; exit 1; }; }
 export PROJECT_ID REGION TAG QUEUE RUNTIME_SA IMAGE_BASE R2_ENDPOINT R2_BUCKET R2_PUBLIC_HOST ALLOWED_EMAILS
 
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
@@ -58,7 +64,11 @@ cmd_bootstrap() {
     gcloud projects create "$PROJECT_ID" --name="Open Paper personal"
   fi
   gcloud config set project "$PROJECT_ID" >/dev/null
-  if [[ -n "${BILLING_ACCOUNT:-}" ]]; then
+  if [[ -z "$(gcloud billing projects describe "$PROJECT_ID" --format='value(billingAccountName)' 2>/dev/null)" ]]; then
+    if [[ -z "${BILLING_ACCOUNT:-}" ]]; then
+      gcloud billing accounts list
+      read -rp "Billing account id to link (XXXXXX-XXXXXX-XXXXXX): " BILLING_ACCOUNT
+    fi
     gcloud billing projects link "$PROJECT_ID" --billing-account="$BILLING_ACCOUNT" >/dev/null
   fi
   log "APIs"
@@ -93,29 +103,80 @@ cmd_bootstrap() {
 
 SECRET_NAMES=(DATABASE_URL DATABASE_URL_DIRECT GEMINI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
               R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY JOBS_INTERNAL_SECRET ADMIN_SECRET_KEY)
+# Generated locally when left blank at the prompt; never need to be known.
+GENERATED_SECRETS=(JOBS_INTERNAL_SECRET ADMIN_SECRET_KEY)
 
-cmd_secrets() {
+secret_hint() {
+  case "$1" in
+    DATABASE_URL) echo "Neon pooled connection string (host contains -pooler), with ?sslmode=require" ;;
+    DATABASE_URL_DIRECT) echo "Neon direct connection string (no -pooler); blank = same as DATABASE_URL" ;;
+    GEMINI_API_KEY) echo "Google AI Studio API key" ;;
+    GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET) echo "OAuth web client in the personal project; blank = placeholder until created" ;;
+    R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY) echo "Cloudflare R2 API token (Object Read & Write on the bucket)" ;;
+    JOBS_INTERNAL_SECRET|ADMIN_SECRET_KEY) echo "blank = generate 32 random bytes" ;;
+  esac
+}
+
+secret_exists() { gcloud secrets describe "$1" >/dev/null 2>&1; }
+
+# Add a version to NAME from stdin (no echo, no file). Creates the secret if needed.
+push_secret() {
+  local name="$1" value="$2"
+  secret_exists "$name" || gcloud secrets create "$name" --replication-policy=automatic >/dev/null
+  printf '%s' "$value" | gcloud secrets versions add "$name" --data-file=- >/dev/null
+  echo "stored $name"
+}
+
+read_secret_value() {
+  local name="$1" value=""
+  if [[ -t 0 ]]; then
+    printf '%s  (%s)\n' "$name" "$(secret_hint "$name")" >&2
+    read -rsp "  value: " value; echo >&2
+  else
+    IFS= read -r value || true
+  fi
+  if [[ -z "$value" ]]; then
+    for g in "${GENERATED_SECRETS[@]}"; do
+      [[ "$name" == "$g" ]] && value="$(openssl rand -hex 32)" && echo "  generated" >&2
+    done
+  fi
+  if [[ -z "$value" && "$name" == DATABASE_URL_DIRECT ]] && secret_exists DATABASE_URL; then
+    value="$(gcloud secrets versions access latest --secret=DATABASE_URL)"
+  fi
+  [[ -n "$value" ]] || value=unset   # every referenced secret must exist for `services replace`
+  printf '%s' "$value"
+}
+
+cmd_secrets_init() {
   require_login
   gcloud config set project "$PROJECT_ID" >/dev/null
-  local name value
+  local name
   for name in "${SECRET_NAMES[@]}"; do
-    value="${!name:-}"
-    # Every secret the services reference must exist or `services replace`
-    # fails; an empty value gets a placeholder you replace later.
-    if [[ -z "$value" ]]; then
-      if [[ "$name" == DATABASE_URL_DIRECT ]]; then value="${DATABASE_URL:-unset}"; else value=unset; fi
-      echo "warning: $name is empty in personal.env; storing placeholder"
+    if secret_exists "$name" && [[ "$(gcloud secrets versions access latest --secret="$name")" != unset ]]; then
+      echo "have   $name"; continue
     fi
-    if ! gcloud secrets describe "$name" >/dev/null 2>&1; then
-      gcloud secrets create "$name" --replication-policy=automatic >/dev/null
+    push_secret "$name" "$(read_secret_value "$name")"
+  done
+}
+
+cmd_secret_set() {
+  require_login
+  gcloud config set project "$PROJECT_ID" >/dev/null
+  (( $# >= 1 )) || { echo "usage: deploy.sh secret-set NAME [NAME...]   (value prompted, or piped on stdin for one NAME)"; exit 1; }
+  local name
+  for name in "$@"; do push_secret "$name" "$(read_secret_value "$name")"; done
+}
+
+cmd_secrets_status() {
+  require_login
+  gcloud config set project "$PROJECT_ID" >/dev/null
+  local name state
+  for name in "${SECRET_NAMES[@]}"; do
+    if ! secret_exists "$name"; then state="MISSING"
+    elif [[ "$(gcloud secrets versions access latest --secret="$name")" == unset ]]; then state="placeholder"
+    else state="set $(gcloud secrets versions describe latest --secret="$name" --format='value(createTime)' 2>/dev/null)"
     fi
-    # Only add a version when the value changed.
-    if [[ "$(gcloud secrets versions access latest --secret="$name" 2>/dev/null || true)" != "$value" ]]; then
-      printf '%s' "$value" | gcloud secrets versions add "$name" --data-file=- >/dev/null
-      echo "updated $name"
-    else
-      echo "unchanged $name"
-    fi
+    printf '%-22s %s\n' "$name" "$state"
   done
 }
 
@@ -146,13 +207,14 @@ require_secrets() {
   for name in "$@"; do
     gcloud secrets describe "$name" >/dev/null 2>&1 || missing+=("$name")
   done
-  (( ${#missing[@]} == 0 )) || { echo "missing secrets: ${missing[*]} — run deploy/deploy.sh secrets"; exit 1; }
+  (( ${#missing[@]} == 0 )) || { echo "missing secrets: ${missing[*]} — run deploy/deploy.sh secrets-init"; exit 1; }
 }
 
 render() { envsubst '${PROJECT_ID} ${REGION} ${TAG} ${QUEUE} ${RUNTIME_SA} ${IMAGE_BASE} ${R2_ENDPOINT} ${R2_BUCKET} ${R2_PUBLIC_HOST} ${ALLOWED_EMAILS} ${PUBLIC_URL} ${JOBS_URL}' < "$1"; }
 
 cmd_deploy() {
   require_login
+  need_r2
   gcloud config set project "$PROJECT_ID" >/dev/null
   PUBLIC_URL="$(public_url)"; JOBS_URL="$(jobs_url)"; export PUBLIC_URL JOBS_URL
   require_secrets "${SECRET_NAMES[@]}"
@@ -175,6 +237,7 @@ cmd_deploy() {
 
 cmd_schedule() {
   require_login
+  need_r2
   gcloud config set project "$PROJECT_ID" >/dev/null
   require_secrets DATABASE_URL DATABASE_URL_DIRECT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY JOBS_INTERNAL_SECRET
   local verb
@@ -207,15 +270,17 @@ cmd_logs() {
 
 case "${1:-}" in
   bootstrap) cmd_bootstrap ;;
-  secrets)   cmd_secrets ;;
+  secrets-init)   cmd_secrets_init ;;
+  secret-set)     shift; cmd_secret_set "$@" ;;
+  secrets-status) cmd_secrets_status ;;
   build)     cmd_build ;;
   migrate)   cmd_migrate ;;
   deploy)    cmd_deploy ;;
   schedule)  cmd_schedule ;;
-  all)       cmd_bootstrap; cmd_secrets; cmd_build; cmd_migrate; cmd_deploy; cmd_schedule ;;
+  all)       cmd_bootstrap; cmd_secrets_init; cmd_build; cmd_migrate; cmd_deploy; cmd_schedule ;;
   oauth-uri) require_login; gcloud config set project "$PROJECT_ID" >/dev/null; echo "$(public_url)/api/auth/google/callback" ;;
   url)       require_login; gcloud config set project "$PROJECT_ID" >/dev/null; public_url ;;
   backup-now) require_login; gcloud run jobs execute openpaper-backup --region="$REGION" --wait ;;
   logs)      cmd_logs "${2:-openpaper}" ;;
-  *) sed -n '2,16p' "$0"; exit 1 ;;
+  *) sed -n '2,20p' "$0"; exit 1 ;;
 esac
