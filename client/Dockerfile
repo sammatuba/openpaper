@@ -9,14 +9,17 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 
 
-# Set as environment variable for build time
-# These are set early as they might be needed by package scripts during install
-ENV NEXT_PUBLIC_API_URL=https://api.openpaper.ai
-ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_51O33aTCUG3OIDR6rhzcP0aDTftZyC07Iyf59NG8dAjPCLcmKyv0ADqSfO9CUYz5ugF7GI91JcyM6rIwp56Ehp41V00MYxGF8d7
-
-# womp womp add posthog env vars
-ENV NEXT_PUBLIC_POSTHOG_KEY=phc_i84JqfidoQncsSmusoeZF9oshYHV2SebGZkKMVtF8AG
-ENV NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+# Build-time public config. Defaults are the hosted service's values so an
+# argument-less build is unchanged; a self-hosted build passes its own with
+# --build-arg (NEXT_PUBLIC_* is inlined by `next build`, so it must be here).
+ARG NEXT_PUBLIC_API_URL=https://api.openpaper.ai
+ARG NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_51O33aTCUG3OIDR6rhzcP0aDTftZyC07Iyf59NG8dAjPCLcmKyv0ADqSfO9CUYz5ugF7GI91JcyM6rIwp56Ehp41V00MYxGF8d7
+ARG NEXT_PUBLIC_POSTHOG_KEY=phc_i84JqfidoQncsSmusoeZF9oshYHV2SebGZkKMVtF8AG
+ARG NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_POSTHOG_KEY=$NEXT_PUBLIC_POSTHOG_KEY
+ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
 
 
 # Copy package.json and yarn.lock to the working directory
@@ -45,13 +48,18 @@ COPY . .
 # This will only run if the code (above) or dependencies (further above) changed.
 RUN yarn build
 
-# Upload source maps to PostHog, then delete them from the build
+# Upload source maps to PostHog, then delete them from the build. Skipped
+# when the build has no PostHog secrets (self-hosted builds).
 RUN --mount=type=secret,id=POSTHOG_ENV_ID \
     --mount=type=secret,id=POSTHOG_CLI_TOKEN \
-    export POSTHOG_CLI_ENV_ID="$(cat /run/secrets/POSTHOG_ENV_ID)" && \
-    export POSTHOG_CLI_TOKEN="$(cat /run/secrets/POSTHOG_CLI_TOKEN)" && \
-    posthog-cli sourcemap inject --directory .next && \
-    posthog-cli sourcemap upload --directory .next && \
+    if [ -s /run/secrets/POSTHOG_ENV_ID ] && [ -s /run/secrets/POSTHOG_CLI_TOKEN ]; then \
+      export POSTHOG_CLI_ENV_ID="$(cat /run/secrets/POSTHOG_ENV_ID)" && \
+      export POSTHOG_CLI_TOKEN="$(cat /run/secrets/POSTHOG_CLI_TOKEN)" && \
+      posthog-cli sourcemap inject --directory .next && \
+      posthog-cli sourcemap upload --directory .next; \
+    else \
+      echo "No PostHog secrets: skipping source map upload"; \
+    fi && \
     find .next -name '*.map' -delete
 
 
@@ -65,10 +73,14 @@ WORKDIR /app
 
 # Set production environment variables
 ENV NODE_ENV=production
-# Ensure NEXT_PUBLIC_API_URL is also available in the production stage if needed by the start command or runtime
-ENV NEXT_PUBLIC_API_URL=https://api.openpaper.ai
-ENV NEXT_PUBLIC_POSTHOG_KEY=phc_i84JqfidoQncsSmusoeZF9oshYHV2SebGZkKMVtF8AG
-ENV NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+# ARGs do not cross stages; redeclare so the runtime sees the same values
+# the bundle was built with.
+ARG NEXT_PUBLIC_API_URL=https://api.openpaper.ai
+ARG NEXT_PUBLIC_POSTHOG_KEY=phc_i84JqfidoQncsSmusoeZF9oshYHV2SebGZkKMVtF8AG
+ARG NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_POSTHOG_KEY=$NEXT_PUBLIC_POSTHOG_KEY
+ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
 
 
 # Copy the built application from the base image

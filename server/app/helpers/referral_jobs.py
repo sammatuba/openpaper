@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from app.helpers.celery_config import get_celery_broker_url, get_webhook_base_url
+from app.helpers.task_backend import CloudTasksBackend, uses_cloud_tasks
 from celery import Celery
 from dotenv import load_dotenv
 
@@ -27,6 +28,24 @@ def schedule_referral_settlement(
     """
     webhook_base_url = get_webhook_base_url(webhook_base_url)
     celery_broker_url = get_celery_broker_url(celery_broker_url)
+
+    if uses_cloud_tasks():
+        # Cloud Tasks schedules the push itself (scheduleTime), so the
+        # delayed callback needs no worker holding an ETA.
+        try:
+            return CloudTasksBackend().send_task(
+                "delayed_referral_settlement_callback",
+                {
+                    "webhook_url": f"{webhook_base_url}/api/webhooks/internal/referral-settle/{referral_id}"
+                },
+                eta=eta,
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to schedule referral settlement for {referral_id}: {e}",
+                exc_info=True,
+            )
+            return None
 
     try:
         celery_app = Celery("openpaper_tasks", broker=celery_broker_url)

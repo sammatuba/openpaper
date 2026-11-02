@@ -33,14 +33,16 @@
 ### P0 MEOS (done)
 - [x] `meos.sh install . --runtime claude`, registered in `../estate.json`, committed `8aee8bb8`.
 
-### P1 Code: run anywhere cheaply (branch `feat/cloud-run-personal`)
+### P1 Code: run anywhere cheaply (branch `feat/cloud-run-personal`) (done)
 1. `server/app/llm/base.py`, `unit_conversion.py`, `compute_agent.py`: providers and E2B initialise only when their key is set; missing E2B degrades chart conversion with a logged warning instead of failing import.
 2. `server/app/auth`: `ALLOWED_EMAILS` gate (comma-separated, case-insensitive). Rejected sign-in returns 403 with a plain message.
 3. `server/gunicorn.config.py`: `WEB_CONCURRENCY` override.
 4. Task backend: `server/app/helpers/pdf_jobs.py` + `referral_jobs.py` dispatch through a `TaskBackend` with `celery` and `cloudtasks` implementations; `jobs/src/app.py` gains `POST /tasks/run` (OIDC-protected via Cloud Tasks service account, or shared `JOBS_INTERNAL_SECRET`) that runs the named task eagerly. Referral task is a no-op in cloudtasks mode.
 5. `client/Dockerfile`: `ARG NEXT_PUBLIC_API_URL`; drop the hard-coded Stripe and PostHog values; sourcemap upload stage only when secrets are provided.
 6. `deploy/` directory: `Caddyfile`, `cloudbuild.yaml` (three images → Artifact Registry), `service.yaml` (multi-container service), `jobs-service.yaml`, `migrate-job.yaml`, `backup-job.yaml` (pg_dump → R2), `deploy.sh` (idempotent: enable APIs, queue, scheduler, secrets, deploy), `README.md`.
-- Checks: `uv run pytest` in server and jobs still pass with defaults; server boots with only `GEMINI_API_KEY` + `DATABASE_URL` + R2 vars; `TASK_BACKEND=cloudtasks` unit test shows the dispatch posts the expected payload; `TASK_BACKEND` unset behaves byte-identically to upstream.
+7. Found while doing 1: `STRIPE_API_KEY` (subscription config) and `FIRECRAWL_API_KEY` (scrape tool) also raised at import; both made lazy. The jobs service reads `GOOGLE_API_KEY`, not `GEMINI_API_KEY`; the deploy maps the same secret onto both. Without Stripe every user is on the Basic plan (10 papers, 2 projects), which would block the corpus import, so `SELF_HOSTED_PLAN=researcher` forces a plan without billing.
+- Checks (run 2026-11-02): server `unittest discover` 336 tests OK under the CI env and under a Gemini-only env; `from app.main import app` succeeds with only `GEMINI_API_KEY` set (providers: gemini, fallback: none); jobs suite 4 tests OK (runner executes a task under the server's id, failures return 200, unknown task 404, shared secret enforced); `TASK_BACKEND` unset leaves `JobsClient.cloud_tasks` None and the Celery path untouched.
+- Status: **done**, committed on `feat/cloud-run-personal`. Not yet exercised: a Cloud Build of the client image and a real Cloud Tasks round trip (P3).
 
 ### P2 Operator actions (console/manual, in this order)
 1. `! gcloud config configurations create personal` then `! gcloud auth login` as `jansammat26@gmail.com`.

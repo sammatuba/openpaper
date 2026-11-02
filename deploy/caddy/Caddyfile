@@ -1,0 +1,29 @@
+# Ingress for the single Cloud Run service: one origin for the Next.js client
+# and the FastAPI server, so the httponly session cookie is first-party.
+# (`run.app` is on the Public Suffix List; two services would be cross-site.)
+{
+	auto_https off
+	admin off
+}
+
+:{$PORT:8080} {
+	encode zstd gzip
+
+	@server path /api/* /docs /docs/* /openapi.json /redoc /admin /admin/*
+	handle @server {
+		reverse_proxy localhost:8000 {
+			# Chat answers stream; never buffer.
+			flush_interval -1
+			transport http {
+				response_header_timeout 0
+				read_timeout 0
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy localhost:3000 {
+			flush_interval -1
+		}
+	}
+}

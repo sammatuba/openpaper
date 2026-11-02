@@ -7,6 +7,7 @@ based on their subscription plan.
 """
 
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, Optional
@@ -60,11 +61,28 @@ SUBSCRIPTION_LIMITS = {
 }
 
 
+def _self_hosted_plan() -> Optional[SubscriptionPlan]:
+    """SELF_HOSTED_PLAN grants every user a plan without Stripe (a personal
+    instance has no billing). Unset keeps the subscription lookup."""
+    value = (os.getenv("SELF_HOSTED_PLAN") or "").strip().lower()
+    if not value:
+        return None
+    try:
+        return SubscriptionPlan(value)
+    except ValueError:
+        logger.warning(f"SELF_HOSTED_PLAN={value!r} is not a plan; ignoring")
+        return None
+
+
 def get_user_subscription_plan(db: Session, user: CurrentUser) -> SubscriptionPlan:
     """
     Get the user's current subscription plan.
     Returns BASIC if no active subscription is found.
     """
+    forced = _self_hosted_plan()
+    if forced is not None:
+        return forced
+
     subscription = subscription_crud.get_by_user_id(db, user.id)
 
     if not subscription:

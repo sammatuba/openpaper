@@ -25,6 +25,7 @@ from app.helpers.celery_config import (
     get_webhook_base_url,
 )
 from app.helpers.s3 import s3_service
+from app.helpers.task_backend import CloudTasksBackend, uses_cloud_tasks
 from app.schemas.responses import DataTableSchema
 from app.schemas.user import CurrentUser
 from celery import Celery
@@ -58,6 +59,11 @@ class JobsClient:
         self.webhook_base_url = get_webhook_base_url(webhook_base_url)
         self.celery_broker_url = get_celery_broker_url(celery_broker_url)
         self.celery_api_url = get_celery_api_url(celery_api_url)
+        # TASK_BACKEND=cloudtasks replaces the broker with Cloud Tasks pushes;
+        # see app/helpers/task_backend.py. Default is the Celery broker.
+        self.cloud_tasks: Optional[CloudTasksBackend] = (
+            CloudTasksBackend() if uses_cloud_tasks() else None
+        )
 
     def submit_pdf_processing_job(
         self,
@@ -93,6 +99,16 @@ class JobsClient:
         print(
             f"DEBUG: Submitting PDF job - S3 Object Key: {s3_object_key}, Job ID: {job_id}"
         )
+
+        if self.cloud_tasks is not None:
+            return self.cloud_tasks.send_task(
+                "upload_and_process_file",
+                {
+                    "s3_object_key": s3_object_key,
+                    "webhook_url": f"{self.webhook_base_url}/api/webhooks/paper-processing/{job_id}",
+                    "skip_metadata_extraction": skip_metadata_extraction,
+                },
+            )
 
         # Connect to Celery broker directly to submit task
         try:
@@ -173,6 +189,15 @@ class JobsClient:
 
         print(f"DEBUG: Submitting Data Table job - Job ID: {job_id}")
 
+        if self.cloud_tasks is not None:
+            return self.cloud_tasks.send_task(
+                "process_data_table",
+                {
+                    "data_table": data_table.model_dump(),
+                    "webhook_url": f"{self.webhook_base_url}/api/webhooks/data-table-processing/{job_id}",
+                },
+            )
+
         # Connect to Celery broker directly to submit task
         try:
             # Create Celery app instance (this connects to the broker, not the worker code)
@@ -224,6 +249,9 @@ class JobsClient:
         Returns:
             Dict containing task status information
         """
+        if self.cloud_tasks is not None:
+            return self.cloud_tasks.task_status(task_id)
+
         try:
             # Make HTTP request to the Celery API service
             response = requests.get(
@@ -267,6 +295,12 @@ class JobsClient:
         Returns:
             Dict containing cancellation result
         """
+        if self.cloud_tasks is not None:
+            try:
+                return self.cloud_tasks.cancel_task(task_id)
+            except Exception as e:
+                return {"task_id": task_id, "status": "CANCEL_ERROR", "error": str(e)}
+
         try:
             response = requests.delete(
                 f"{self.celery_api_url}/task/{task_id}", timeout=10

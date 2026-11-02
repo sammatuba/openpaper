@@ -6,7 +6,11 @@ import stripe
 
 STRIPE_API_KEY = os.getenv("STRIPE_API_KEY")
 if not STRIPE_API_KEY:
-    raise ValueError("STRIPE_API_KEY environment variable is not set")
+    # Billing is optional for a self-hosted instance: the server starts and
+    # the subscription endpoints fail only when called.
+    logging.getLogger(__name__).warning(
+        "STRIPE_API_KEY is not set; subscription endpoints are disabled."
+    )
 
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 

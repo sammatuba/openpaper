@@ -39,6 +39,21 @@ def _fallback_provider_from_env() -> Optional[LLMProvider]:
     return LLMProvider(value.lower()) if value else None
 
 
+_PROVIDER_KEY_ENV = {
+    LLMProvider.GEMINI: "GEMINI_API_KEY",
+    LLMProvider.OPENAI: "OPENAI_API_KEY",
+    LLMProvider.ANTHROPIC: "ANTHROPIC_API_KEY",
+}
+
+
+def _provider_configured(provider: LLMProvider) -> bool:
+    """True when the provider's API key is set. The default provider is
+    always initialized (and fails loudly without its key); the others are
+    optional so a personal deployment can run on one provider."""
+    env_var = _PROVIDER_KEY_ENV.get(provider)
+    return bool(env_var and os.getenv(env_var))
+
+
 class BaseLLMClient:
     """Unified LLM client that supports multiple providers"""
 
@@ -47,9 +62,24 @@ class BaseLLMClient:
         self.fallback_provider = _fallback_provider_from_env()
         self._providers: Dict[LLMProvider, BaseLLMProvider] = {}
 
-        # Initialize all providers to ensure they are ready for use
+        # Initialize every provider that has a key. The default provider is
+        # initialized regardless so a missing key fails at startup, not on
+        # the first chat turn.
         for provider in LLMProvider:
+            if provider != self.default_provider and not _provider_configured(provider):
+                logger.warning(
+                    f"LLM provider {provider.value} has no API key set; "
+                    "it will not be offered as a model option."
+                )
+                continue
             self._initialize_provider(provider)
+
+        if self.fallback_provider and self.fallback_provider not in self._providers:
+            logger.warning(
+                f"LLM_FALLBACK_PROVIDER={self.fallback_provider.value} is not "
+                "configured; chat fallback is disabled."
+            )
+            self.fallback_provider = None
 
     def get_chat_model_options(
         self, exclude: Optional[List[LLMProvider]] = None

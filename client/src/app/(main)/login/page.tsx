@@ -88,6 +88,9 @@ function LoginContent() {
 				case 'login_expired':
 					setError('That sign-in link took too long to complete. Please try again.');
 					break;
+				case 'not_allowed':
+					setError('This Open Paper instance is private. Sign-in is limited to approved accounts.');
+					break;
 				case 'login_cancelled':
 					setError('Sign-in was cancelled. Please try again when you’re ready.');
 					break;

@@ -42,12 +42,20 @@ logger = logging.getLogger(__name__)
 # without the sandbox — so a server without a key would accept chart requests
 # and fail them one by one, minutes apart, at the last step. Better to refuse
 # to start.
+# Checked when a conversion is requested rather than at import, so a
+# deployment without the sandbox still serves everything else; the chart
+# path reports the missing key as a ConversionError (excluded points).
 E2B_API_KEY = os.getenv("E2B_DEV_API_KEY") or os.getenv("E2B_API_KEY")
-if not E2B_API_KEY:
-    raise ValueError(
-        "E2B_DEV_API_KEY or E2B_API_KEY environment variable is not set. "
-        "Model-authored unit conversions only run in the sandbox."
-    )
+
+
+def _require_e2b_api_key() -> str:
+    api_key = os.getenv("E2B_DEV_API_KEY") or os.getenv("E2B_API_KEY") or E2B_API_KEY
+    if not api_key:
+        raise ConversionError(
+            "E2B_DEV_API_KEY or E2B_API_KEY environment variable is not set. "
+            "Model-authored unit conversions only run in the sandbox."
+        )
+    return api_key
 
 CONVERSIONS_PATH = "/home/user/conversions.json"
 CONVERTED_PATH = "/home/user/converted.json"
@@ -160,7 +168,7 @@ def run_unit_conversions(
         return {}, {}
 
     payload = [request._asdict() for request in requests]
-    sandbox = Sandbox.create(api_key=E2B_API_KEY, timeout=120)
+    sandbox = Sandbox.create(api_key=_require_e2b_api_key(), timeout=120)
     try:
         sandbox.files.write(CONVERSIONS_PATH, json.dumps(payload))
         execution = sandbox.run_code(HARNESS, timeout=60)

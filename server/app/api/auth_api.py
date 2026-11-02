@@ -12,6 +12,7 @@ from app.auth.email import email_auth_client
 from app.auth.google import GoogleTokenError, google_auth_client
 from app.auth.utils import (
     clear_session_cookie,
+    is_email_allowed,
     is_verification_code_valid,
     normalize_email,
     set_session_cookie,
@@ -318,6 +319,10 @@ async def google_callback(
                 detail="Failed to get user info",
             )
 
+        if not is_email_allowed(user_info.email):
+            logger.warning(f"Rejected Google sign-in for non-allowlisted email: {user_info.email}")
+            return _login_error_redirect("not_allowed")
+
         # Check if user exists with a different provider
         existing_user = user_crud.get_by_email_and_provider(
             db, email=user_info.email, provider="google"
@@ -552,6 +557,13 @@ async def email_signin(
             return AuthResponse(
                 success=False,
                 message="Please enter a valid email address.",
+            )
+
+        if not is_email_allowed(email):
+            logger.warning(f"Rejected email sign-in for non-allowlisted email: {email}")
+            return AuthResponse(
+                success=False,
+                message="This Open Paper instance is private. Sign-in is limited to approved accounts.",
             )
 
         # Check if user exists with email auth provider

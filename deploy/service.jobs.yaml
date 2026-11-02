@@ -1,0 +1,83 @@
+# PDF processing. Not publicly invokable: Cloud Tasks calls it with an OIDC
+# token for the runtime service account. One task per instance, 30 minutes
+# to match the Cloud Tasks dispatch deadline.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: openpaper-jobs
+  labels:
+    app: openpaper
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "2"
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      serviceAccountName: ${RUNTIME_SA}
+      containerConcurrency: 1
+      timeoutSeconds: 1800
+      containers:
+        - name: jobs
+          image: ${IMAGE_BASE}/jobs:${TAG}
+          command: ["uv", "run", "uvicorn", "src.app:app", "--host", "0.0.0.0", "--port", "8080", "--timeout-keep-alive", "75"]
+          ports:
+            - name: http1
+              containerPort: 8080
+          resources:
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 3
+            failureThreshold: 60
+          env:
+            - name: TASK_BACKEND
+              value: cloudtasks
+            - name: WEBHOOK_BASE_URL
+              value: ${PUBLIC_URL}
+            - name: DEBUG
+              value: "False"
+            - name: AWS_ENDPOINT_URL_S3
+              value: ${R2_ENDPOINT}
+            - name: AWS_REGION
+              value: auto
+            - name: S3_BUCKET_NAME
+              value: ${R2_BUCKET}
+            - name: CLOUDFLARE_BUCKET_NAME
+              value: ${R2_PUBLIC_HOST}
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: GEMINI_API_KEY
+                  key: latest
+            # jobs/src/llm_client.py reads GOOGLE_API_KEY; same key.
+            - name: GOOGLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: GEMINI_API_KEY
+                  key: latest
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: R2_ACCESS_KEY_ID
+                  key: latest
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: R2_SECRET_ACCESS_KEY
+                  key: latest
+            - name: JOBS_INTERNAL_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: JOBS_INTERNAL_SECRET
+                  key: latest
+  traffic:
+    - percent: 100
+      latestRevision: true

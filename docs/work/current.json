@@ -1,8 +1,8 @@
 {
   "intent": "docs/work/INTENT-personal-cloud-run-deploy.md",
-  "phase": "P1 code changes",
+  "phase": "P2 operator actions",
   "branch": "feat/cloud-run-personal",
-  "next_action": "Implement P1 items 1-6 on feat/cloud-run-personal, run server+jobs tests, then hand P2 operator actions to the user.",
-  "blocked_on": "P3 waits for the operator's gcloud login to jansammat26@gmail.com",
+  "next_action": "Operator: gcloud personal configuration + login, Neon project, R2 bucket + token, Gemini key, fill deploy/personal.env. Then `deploy/deploy.sh all`, create the Google OAuth client with the printed redirect URI, `deploy.sh secrets && deploy.sh deploy`.",
+  "blocked_on": "operator login to jansammat26@gmail.com and the third-party accounts listed in P2",
   "updated": "2026-11-02"
 }

@@ -2,10 +2,11 @@
 FastAPI application for the Celery PDF processing service.
 Provides endpoints for submitting tasks and checking status.
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
 import logging
+import os
 
 from src.celery_app import celery_app
 from src.logging_config import configure_logging
@@ -46,6 +47,58 @@ class TaskStatus(BaseModel):
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "pdf-processing"}
+
+
+class RunTaskRequest(BaseModel):
+    task: str
+    task_id: str
+    kwargs: Dict[str, Any] = {}
+
+
+# The tasks Cloud Tasks may push. health_check is excluded because its body
+# inspects worker state that does not exist in this mode.
+RUNNABLE_TASKS = frozenset(
+    {
+        "upload_and_process_file",
+        "process_data_table",
+        "periodic_zotero_sync",
+        "delayed_referral_settlement_callback",
+    }
+)
+
+
+@app.post("/tasks/run")
+def run_task(request: RunTaskRequest, authorization: Optional[str] = Header(default=None)):
+    """
+    Execute one Celery task in this process (TASK_BACKEND=cloudtasks).
+
+    Cloud Tasks pushes here instead of a broker delivering to a worker. The
+    task runs with Celery's eager `apply`, so `self.request.id` is the id the
+    server stored on the job and `update_state` works against the memory
+    result backend. The task reports its own outcome to the server by webhook,
+    including failures, so a handled failure returns 200: a retry would only
+    repeat the LLM spend on a PDF that already failed. Crashes (OOM, timeout)
+    surface as a non-2xx and Cloud Tasks retries per the queue's policy.
+
+    Auth: Cloud Run IAM (OIDC token from the queue's service account) plus the
+    shared JOBS_INTERNAL_SECRET when set.
+    """
+    secret = os.getenv("JOBS_INTERNAL_SECRET", "")
+    if secret and authorization != f"Bearer {secret}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if request.task not in RUNNABLE_TASKS:
+        raise HTTPException(status_code=404, detail=f"Unknown task: {request.task}")
+    task = celery_app.tasks.get(request.task)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task not registered: {request.task}")
+
+    logger.info(f"Running {request.task} as {request.task_id} (pushed)")
+    result = task.apply(kwargs=request.kwargs, task_id=request.task_id, throw=False)
+    if result.failed():
+        logger.error(f"Task {request.task_id} failed: {result.result!r}")
+        return {"task_id": request.task_id, "status": "failed", "error": str(result.result)}
+    return {"task_id": request.task_id, "status": "completed"}
 
 @app.get("/task/{task_id}/status", response_model=TaskStatus)
 async def get_task_status(task_id: str):

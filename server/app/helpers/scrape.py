@@ -3,10 +3,20 @@ import os
 from firecrawl import FirecrawlApp
 
 FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
-if not FIRECRAWL_API_KEY:
-    raise ValueError("FIRECRAWL_API_KEY environment variable is not set.")
 
-firecrawl_app = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
+# Built on first use so a deployment without Firecrawl still starts; the web
+# tool then fails only the scrape it was asked for.
+_firecrawl_app: FirecrawlApp | None = None
+
+
+def _get_firecrawl_app() -> FirecrawlApp:
+    global _firecrawl_app
+    if _firecrawl_app is None:
+        api_key = os.getenv("FIRECRAWL_API_KEY") or FIRECRAWL_API_KEY
+        if not api_key:
+            raise ValueError("FIRECRAWL_API_KEY environment variable is not set.")
+        _firecrawl_app = FirecrawlApp(api_key=api_key)
+    return _firecrawl_app
 
 
 def scrape_web_page(url: str) -> str:
@@ -22,7 +32,7 @@ def scrape_web_page(url: str) -> str:
     try:
         # firecrawl-py 4.x: scrape() returns a Document (with .markdown) on
         # success and raises on failure. There is no .error attribute.
-        document = firecrawl_app.scrape(url, formats=["markdown"])
+        document = _get_firecrawl_app().scrape(url, formats=["markdown"])
         if document.markdown:
             return document.markdown
         raise Exception(f"Failed to scrape {url}: no markdown content returned")

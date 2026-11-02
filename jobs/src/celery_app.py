@@ -23,6 +23,13 @@ def configure_celery_logging(**_kwargs):
 BROKER_URL = os.getenv("CELERY_BROKER_URL", "pyamqp://guest@localhost:5672//")
 BACKEND_URL = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
 
+# TASK_BACKEND=cloudtasks: tasks arrive over HTTP (src/app.py POST /tasks/run)
+# and run eagerly in this process, so progress updates land in a per-process
+# memory backend instead of Redis, and the broker is never contacted.
+TASK_BACKEND = (os.getenv("TASK_BACKEND") or "celery").strip().lower()
+if TASK_BACKEND == "cloudtasks":
+    BACKEND_URL = "cache+memory://"
+
 # Create Celery instance
 celery_app = Celery(
     "openpaper_tasks",

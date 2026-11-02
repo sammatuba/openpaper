@@ -11,7 +11,9 @@ bind = f"0.0.0.0:{port}"
 
 # Number of worker processes
 # Recommended: (2 * number of CPU cores) + 1
-workers = (multiprocessing.cpu_count() * 2) + 1
+# WEB_CONCURRENCY overrides it: on Cloud Run cpu_count() reports the host's
+# cores, not the instance's vCPU, so the formula over-forks and OOMs.
+workers = int(os.getenv("WEB_CONCURRENCY") or (multiprocessing.cpu_count() * 2) + 1)
 
 # Worker class for ASGI applications (FastAPI)
 worker_class = "uvicorn.workers.UvicornWorker"

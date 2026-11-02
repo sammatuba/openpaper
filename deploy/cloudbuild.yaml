@@ -1,0 +1,52 @@
+# Builds every image for the personal Cloud Run deploy. Run by deploy/deploy.sh
+# build, which supplies the substitutions. Builds run in parallel.
+substitutions:
+  _REGION: asia-southeast1
+  _REPO: openpaper
+  _TAG: latest
+  _PUBLIC_URL: https://example.run.app
+options:
+  logging: CLOUD_LOGGING_ONLY
+  env:
+    - DOCKER_BUILDKIT=1
+timeout: 2400s
+steps:
+  - id: client
+    name: gcr.io/cloud-builders/docker
+    waitFor: ['-']
+    dir: client
+    args:
+      - build
+      - --build-arg=NEXT_PUBLIC_API_URL=${_PUBLIC_URL}
+      - --build-arg=NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
+      - --build-arg=NEXT_PUBLIC_POSTHOG_KEY=
+      - --build-arg=NEXT_PUBLIC_POSTHOG_HOST=
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/client:${_TAG}
+      - .
+  - id: server
+    name: gcr.io/cloud-builders/docker
+    waitFor: ['-']
+    dir: server
+    args: [build, -t, '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/server:${_TAG}', .]
+  - id: jobs
+    name: gcr.io/cloud-builders/docker
+    waitFor: ['-']
+    dir: jobs
+    args: [build, -t, '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/jobs:${_TAG}', .]
+  - id: caddy
+    name: gcr.io/cloud-builders/docker
+    waitFor: ['-']
+    dir: deploy/caddy
+    args: [build, -t, '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/caddy:${_TAG}', .]
+  - id: backup
+    name: gcr.io/cloud-builders/docker
+    waitFor: ['-']
+    dir: deploy/backup
+    args: [build, -t, '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backup:${_TAG}', .]
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/client:${_TAG}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/server:${_TAG}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/jobs:${_TAG}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/caddy:${_TAG}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backup:${_TAG}

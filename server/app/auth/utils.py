@@ -15,6 +15,22 @@ load_dotenv()
 SESSION_COOKIE_DOMAIN = os.getenv("SESSION_COOKIE_DOMAIN", None)
 SECURE_COOKIES = os.getenv("SECURE_COOKIES", "false").lower() == "true"
 
+
+def allowed_emails() -> Optional[frozenset[str]]:
+    """ALLOWED_EMAILS restricts sign-in to a comma-separated list of addresses
+    (case-insensitive). Unset or empty means open sign-up, as upstream. Read
+    per call so a deployment can change it without a code reload."""
+    raw = os.getenv("ALLOWED_EMAILS", "")
+    emails = frozenset(e.strip().lower() for e in raw.split(",") if e.strip())
+    return emails or None
+
+
+def is_email_allowed(email: Optional[str]) -> bool:
+    allowed = allowed_emails()
+    if allowed is None:
+        return True
+    return bool(email) and email.strip().lower() in allowed
+
 _email_validator = TypeAdapter(EmailStr)
 
 
