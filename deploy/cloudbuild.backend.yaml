@@ -1,4 +1,4 @@
-# Server + jobs images only; see cloudbuild.yaml for the full set.
+# Server, jobs and backup images (everything but the slow client build); see cloudbuild.yaml for the full set.
 substitutions:
   _REGION: asia-southeast1
   _REPO: openpaper
@@ -19,6 +19,12 @@ steps:
     waitFor: ['-']
     dir: jobs
     args: [build, -t, '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/jobs:${_TAG}', .]
+  - id: backup
+    name: gcr.io/cloud-builders/docker
+    waitFor: ['-']
+    dir: deploy/backup
+    args: [build, -t, '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backup:${_TAG}', .]
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/server:${_TAG}
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/jobs:${_TAG}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backup:${_TAG}

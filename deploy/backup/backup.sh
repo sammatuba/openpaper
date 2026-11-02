@@ -17,7 +17,8 @@ echo "dump size ${size} bytes"
 aws s3 cp "$out" "s3://${bucket}/backups/openpaper-${stamp}.dump"
 echo "uploaded backups/openpaper-${stamp}.dump"
 
-cutoff="$(date -u -d "-${keep_days} days" +%Y%m%dT%H%M%SZ 2>/dev/null || date -u -v-"${keep_days}"d +%Y%m%dT%H%M%SZ)"
+# busybox date: no "-14 days" syntax, but @epoch works everywhere.
+cutoff="$(date -u -d "@$(( $(date -u +%s) - keep_days * 86400 ))" +%Y%m%dT%H%M%SZ)"
 aws s3 ls "s3://${bucket}/backups/" | awk '{print $4}' | while read -r name; do
   [ -n "$name" ] || continue
   s="${name#openpaper-}"; s="${s%.dump}"
