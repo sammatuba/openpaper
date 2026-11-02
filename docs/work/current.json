@@ -1,8 +1,9 @@
 {
   "intent": "docs/work/INTENT-personal-cloud-run-deploy.md",
-  "phase": "P2 operator actions",
+  "phase": "P3 provision and deploy",
   "branch": "feat/cloud-run-personal",
-  "next_action": "Operator: gcloud personal configuration + login, Neon project, R2 bucket + token, Gemini key, bootstrap, create the Google OAuth client with the printed redirect URI, `deploy.sh secrets-init` (prompted, straight to Secret Manager), then build/migrate/deploy/schedule.",
-  "blocked_on": "operator login to jansammat26@gmail.com and the third-party accounts listed in P2",
-  "updated": "2026-11-02"
+  "gcp": {"project": "openpaper-sammatuba", "number": "1061746501640", "region": "asia-southeast1", "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"},
+  "next_action": "Operator: Google OAuth client (redirect https://openpaper-1061746501640.asia-southeast1.run.app/api/auth/google/callback), R2 bucket + token + CORS, Neon project (Singapore), Gemini key; set R2_ACCOUNT_ID in deploy/config.env; run `! deploy/deploy.sh secrets-init`. Then migrate, deploy, schedule.",
+  "blocked_on": "operator console steps and secrets-init (interactive)",
+  "updated": "2026-11-03"
 }
