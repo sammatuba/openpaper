@@ -63,7 +63,7 @@ cmd_bootstrap() {
   if ! gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
     gcloud projects create "$PROJECT_ID" --name="Open Paper personal"
   fi
-  gcloud config set project "$PROJECT_ID" >/dev/null
+  gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
   if [[ -z "$(gcloud billing projects describe "$PROJECT_ID" --format='value(billingAccountName)' 2>/dev/null)" ]]; then
     if [[ -z "${BILLING_ACCOUNT:-}" ]]; then
       gcloud billing accounts list
@@ -178,7 +178,7 @@ read_secret_value() {
 
 cmd_secrets_init() {
   require_login
-  gcloud config set project "$PROJECT_ID" >/dev/null
+  gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
   local name
   for name in "${SECRET_NAMES[@]}"; do
     if secret_exists "$name" && [[ "$(gcloud secrets versions access latest --secret="$name")" != unset ]]; then
@@ -190,7 +190,7 @@ cmd_secrets_init() {
 
 cmd_secret_set() {
   require_login
-  gcloud config set project "$PROJECT_ID" >/dev/null
+  gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
   (( $# >= 1 )) || { echo "usage: deploy.sh secret-set NAME [NAME...]   (value prompted, or piped on stdin for one NAME)"; exit 1; }
   local name
   for name in "$@"; do push_secret "$name" "$(read_secret_value "$name")"; done
@@ -198,7 +198,7 @@ cmd_secret_set() {
 
 cmd_secrets_status() {
   require_login
-  gcloud config set project "$PROJECT_ID" >/dev/null
+  gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
   local name state
   for name in "${ALL_SECRETS[@]}"; do
     if ! secret_exists "$name"; then state="MISSING"
@@ -211,7 +211,7 @@ cmd_secrets_status() {
 
 cmd_build() {
   require_login
-  gcloud config set project "$PROJECT_ID" >/dev/null
+  gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
   log "cloud build → $IMAGE_BASE/*:$TAG"
   gcloud builds submit "$root" --config="$here/cloudbuild.yaml" \
     --substitutions="_REGION=${REGION},_REPO=${REPO},_TAG=${TAG},_PUBLIC_URL=$(public_url)"
@@ -219,7 +219,7 @@ cmd_build() {
 
 cmd_migrate() {
   require_login
-  gcloud config set project "$PROJECT_ID" >/dev/null
+  gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
   log "migrations"
   local verb=create
   gcloud run jobs describe openpaper-migrate --region="$REGION" >/dev/null 2>&1 && verb=update
@@ -243,7 +243,7 @@ render() { envsubst '${PROJECT_ID} ${REGION} ${TAG} ${QUEUE} ${RUNTIME_SA} ${IMA
 
 cmd_deploy() {
   require_login
-  gcloud config set project "$PROJECT_ID" >/dev/null
+  gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
   PUBLIC_URL="$(public_url)"; JOBS_URL="$(jobs_url)"; export PUBLIC_URL JOBS_URL
   require_secrets "${ALL_SECRETS[@]}"
   local tmp; tmp="$(mktemp -d)"
@@ -265,7 +265,7 @@ cmd_deploy() {
 
 cmd_schedule() {
   require_login
-  gcloud config set project "$PROJECT_ID" >/dev/null
+  gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
   require_secrets DATABASE_URL DATABASE_URL_DIRECT GCS_HMAC_ACCESS_ID GCS_HMAC_SECRET JOBS_INTERNAL_SECRET
   local verb
   log "backup job"
@@ -305,8 +305,8 @@ case "${1:-}" in
   deploy)    cmd_deploy ;;
   schedule)  cmd_schedule ;;
   all)       cmd_bootstrap; cmd_secrets_init; cmd_build; cmd_migrate; cmd_deploy; cmd_schedule ;;
-  oauth-uri) require_login; gcloud config set project "$PROJECT_ID" >/dev/null; echo "$(public_url)/api/auth/google/callback" ;;
-  url)       require_login; gcloud config set project "$PROJECT_ID" >/dev/null; public_url ;;
+  oauth-uri) require_login; gcloud config set project "$PROJECT_ID" >/dev/null 2>&1; echo "$(public_url)/api/auth/google/callback" ;;
+  url)       require_login; gcloud config set project "$PROJECT_ID" >/dev/null 2>&1; public_url ;;
   backup-now) require_login; gcloud run jobs execute openpaper-backup --region="$REGION" --wait ;;
   logs)      cmd_logs "${2:-openpaper}" ;;
   *) sed -n '2,20p' "$0"; exit 1 ;;
