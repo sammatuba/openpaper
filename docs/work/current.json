@@ -1,0 +1,8 @@
+{
+  "intent": "docs/work/INTENT-personal-cloud-run-deploy.md",
+  "phase": "P1 code changes",
+  "branch": "feat/cloud-run-personal",
+  "next_action": "Implement P1 items 1-6 on feat/cloud-run-personal, run server+jobs tests, then hand P2 operator actions to the user.",
+  "blocked_on": "P3 waits for the operator's gcloud login to jansammat26@gmail.com",
+  "updated": "2026-11-02"
+}
