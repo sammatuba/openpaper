@@ -66,4 +66,5 @@
 ## Open items
 - ~~Whether anything fetches the stored `file_url` directly.~~ Closed 2026-11-03: every paper/file URL the API returns comes from `get_cached_presigned_url*` (paper_api.py), so the R2 bucket stays private; `R2_PUBLIC_HOST` only shapes the stored key prefix.
 - Whether the jobs → server webhook should also carry `JOBS_INTERNAL_SECRET` (currently matched by unguessable job + task ids).
+- Found in P3 (2026-11-03): a shared secret in `Authorization` never arrives on Cloud Run paths (Cloud Tasks replaces it with OIDC; a Scheduler-set bearer was rejected 403 by the server). Moved to `X-Jobs-Secret` in the task push, the runner, the internal Zotero endpoint, the periodic task and the scheduler job; bearer still accepted for local runs. The leaked-in-terminal first value of `JOBS_INTERNAL_SECRET` was rotated and version 1 disabled.
 - Not yet exercised against the real APIs: the Cloud Run service YAML (multi-container, sidecar probes), the Cloud Build run, a Cloud Tasks round trip, GCS S3-interop presigned GET with the `when_required` checksum setting and region `auto`. All land in P3.

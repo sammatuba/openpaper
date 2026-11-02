@@ -137,6 +137,11 @@ Rollback: Cloud Run keeps revisions; `gcloud run services update-traffic openpap
 - PDF viewer 403 on the file: the app presigns by object key with the HMAC
   key, so the bucket stays private. Check `secrets-status` shows both
   `GCS_HMAC_*` set and that the runtime SA has `storage.objectAdmin`.
+- Internal calls return 403: the shared secret travels in the `X-Jobs-Secret`
+  header, never in `Authorization`. Cloud Tasks overwrites `Authorization` with
+  its OIDC token and Cloud Scheduler does not deliver a user-set bearer; the
+  server and the jobs runner accept either header, the Cloud Run path uses the
+  custom one.
 - Cancelling an upload returns `CANCEL_ERROR`: the runtime SA needs
   `roles/cloudtasks.taskDeleter` (bootstrap grants it).
 
