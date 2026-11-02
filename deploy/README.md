@@ -39,7 +39,7 @@ piped on stdin, and go straight into Secret Manager:
 ```bash
 deploy/deploy.sh secrets-init                 # prompts for every secret not yet set
 deploy/deploy.sh secret-set GEMINI_API_KEY    # rotate one
-pbpaste | deploy/deploy.sh secret-set DATABASE_URL   # or pipe it
+powershell.exe -c Get-Clipboard | tr -d '\r\n' | deploy/deploy.sh secret-set DATABASE_URL   # or pipe it (WSL clipboard)
 deploy/deploy.sh secrets-status
 ```
 
