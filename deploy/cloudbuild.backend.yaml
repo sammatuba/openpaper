@@ -6,6 +6,7 @@ substitutions:
   _PUBLIC_URL: unused
 options:
   logging: CLOUD_LOGGING_ONLY
+  substitutionOption: ALLOW_LOOSE   # _PUBLIC_URL is passed but only the client build uses it
 timeout: 1800s
 steps:
   - id: server
