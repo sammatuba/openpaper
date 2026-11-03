@@ -9,6 +9,9 @@ import logging
 import os
 
 from src.celery_app import celery_app
+# Register the tasks /tasks/run executes. Celery's include= only loads them at
+# worker boot, and under Cloud Tasks this process is uvicorn alone.
+import src.tasks  # noqa: F401,E402
 from src.logging_config import configure_logging
 
 # Configure logging
