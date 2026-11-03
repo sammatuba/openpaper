@@ -2,6 +2,13 @@
 
 Date: 2026-11-03. Implementation and live checks tracked separately.
 
+## Publication (2026-11-04 Manila)
+
+Implementation commit `0a1cffe77bf844691f08897fd18361f2016b8a08` was pushed to
+the feature branch and fast-forward merged/pushed to `origin/master`.
+The final portable handoff is [HANDOFF-research-ecosystem.md](HANDOFF-research-ecosystem.md).
+Earlier references to uncommitted changes describe the state before publication.
+
 ## MEOS wrapup (2026-11-04 Manila)
 
 The live pointer and local checkpoint now describe the deployed stack and completed
