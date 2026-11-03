@@ -8,7 +8,7 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Operator signs in at https://openpaper-1061746501640.asia-southeast1.run.app and uploads a PDF. Then verify Cloud Tasks round trip in jobs logs, PDF render, chat. Then re-run backup-now after the image rebuild.",
+  "next_action": "Operator signs in at https://openpaper-1061746501640.asia-southeast1.run.app and uploads a PDF; then verify Cloud Tasks round trip, PDF render, chat. Then P4 corpus import.",
   "blocked_on": "operator browser sign-in",
   "updated": "2026-11-03",
   "done": [
@@ -20,6 +20,6 @@
     "deploy: openpaper + openpaper-jobs live; /api/health 200 via Caddy, client 200, jobs 403 anon / 200 with identity token",
     "X-Jobs-Secret rollout; scheduler \u2192 server 200",
     "services pinned by digest (revision openpaper-00002)",
-    "backup job: dump + upload to gs://openpaper-sammatuba-papers/backups/ OK; prune step fixed, image rebuilding"
+    "backup job verified end to end: dump, upload to gs://openpaper-sammatuba-papers/backups/, prune (14 days)"
   ]
 }
