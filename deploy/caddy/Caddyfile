@@ -12,6 +12,10 @@
 	@server path /api/* /docs /docs/* /openapi.json /redoc /admin /admin/*
 	handle @server {
 		reverse_proxy localhost:8000 {
+			# Cloud Run terminates TLS and Caddy does not trust its
+			# X-Forwarded-Proto, so it would send "http" and FastAPI would build
+			# http:// redirects (e.g. /upload -> /upload/), which browsers block.
+			header_up X-Forwarded-Proto https
 			# Chat answers stream; never buffer.
 			flush_interval -1
 			transport http {
@@ -23,6 +27,7 @@
 
 	handle {
 		reverse_proxy localhost:3000 {
+			header_up X-Forwarded-Proto https
 			flush_interval -1
 		}
 	}
