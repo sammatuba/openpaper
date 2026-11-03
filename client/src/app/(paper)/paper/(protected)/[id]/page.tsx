@@ -12,6 +12,7 @@ import {
     Highlighter,
     Lightbulb,
     MessageCircle,
+    NotebookPen,
 } from 'lucide-react';
 import { toast } from "sonner";
 
@@ -59,11 +60,18 @@ const AudioTool = {
     icon: AudioLines,
 }
 
+const NotesTool = {
+    name: "Notes",
+    label: "Paper notes",
+    icon: NotebookPen,
+}
+
 const PaperToolset = {
     nav: [
         ChatTool,
         OverviewTool,
         AnnotationsTool,
+        NotesTool,
         AudioTool,
     ],
 }
@@ -612,7 +620,7 @@ export default function PaperView() {
         return (
             <div className="flex flex-col w-full h-[calc(100vh-64px)]">
                 <div className="flex-grow overflow-auto min-h-0">
-                    {mobileView === 'reader' ? (
+                    {mobileView === 'reader' && (
                         <div className="w-full h-full">
                             {paperData.file_url && (
                                 <PdfHighlighterViewer
@@ -651,8 +659,8 @@ export default function PaperView() {
                                 />
                             )}
                         </div>
-                    ) : (
-                        <div className="w-full h-full">
+                    )}
+                        <div className={mobileView === 'panel' ? 'w-full h-full' : 'hidden'}>
                             <div
                                 className="flex flex-row h-full relative"
                             >
@@ -681,7 +689,6 @@ export default function PaperView() {
                                 )}
                             </div>
                         </div>
-                    )}
                 </div>
                 <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800">
                     <div className="flex justify-around items-center h-16">

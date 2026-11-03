@@ -32,6 +32,7 @@ import { ChatHistorySkeleton } from '@/components/ChatHistorySkeleton';
 import { Button } from '@/components/ui/button';
 import { AnnotationsView } from '@/components/AnnotationsView';
 import { AudioOverviewPanel } from '@/components/AudioOverview';
+import { PaperNotes } from '@/components/PaperNotes';
 import PaperMetadata from '@/components/PaperMetadata';
 import { ChatMessageActions } from '@/components/ChatMessageActions';
 import { AnimatedMarkdown, CopyableTable } from '@/components/AnimatedMarkdown';
@@ -780,9 +781,12 @@ export function SidePanelContent({
 
     return (
         <>
+            <div className={rightSideFunction === 'Notes' ? 'flex-grow h-full overflow-hidden pr-[60px]' : 'hidden'}>
+                <PaperNotes key={id} paperId={id} active={rightSideFunction === 'Notes'} />
+            </div>
             {
                 rightSideFunction !== 'Read' && (
-                    <div className="flex-grow h-full overflow-hidden pr-[60px]">
+                    <div className={rightSideFunction === 'Notes' ? 'hidden' : 'flex-grow h-full overflow-hidden pr-[60px]'}>
                         {
                             rightSideFunction === 'Annotations' && user && (
                                 <div className={`flex flex-col ${heightClass} overflow-y-auto`}>

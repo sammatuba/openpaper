@@ -5,6 +5,7 @@
 #   deploy/deploy.sh secrets-init    prompt for every secret not yet in Secret Manager
 #   deploy/deploy.sh secret-set NAME prompt for one secret (or pipe it on stdin) and add a version
 #   deploy/deploy.sh secrets-status  which secrets exist and when they were last changed
+#   deploy/deploy.sh mcp-secrets-init generate the two MCP keys if absent
 #   deploy/deploy.sh build [backend]   build all images with Cloud Build (backend: server + jobs only)
 #   deploy/deploy.sh migrate     run alembic migrations as a Cloud Run job
 #   deploy/deploy.sh deploy      deploy the web and jobs services
@@ -54,7 +55,15 @@ require_login() {
 }
 
 project_number() { gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)'; }
-public_url() { echo "https://openpaper-$(project_number).${REGION}.run.app"; }
+internal_url() { echo "https://openpaper-$(project_number).${REGION}.run.app"; }
+public_url() {
+  if [[ -n "${PUBLIC_ORIGIN:-}" ]]; then
+    [[ "$PUBLIC_ORIGIN" =~ ^https://[a-zA-Z0-9.-]+$ ]] || { echo "PUBLIC_ORIGIN must be an HTTPS origin without a path or trailing slash" >&2; return 1; }
+    echo "$PUBLIC_ORIGIN"
+  else
+    internal_url
+  fi
+}
 jobs_url() { echo "https://openpaper-jobs-$(project_number).${REGION}.run.app"; }
 
 cmd_bootstrap() {
@@ -96,10 +105,9 @@ cmd_bootstrap() {
   log "cloud tasks queue $QUEUE"
   gcloud tasks queues describe "$QUEUE" --location="$REGION" >/dev/null 2>&1 || \
     gcloud tasks queues create "$QUEUE" --location="$REGION"
-  # One retry covers an instance crash; a PDF that fails deterministically
-  # reports its own failure and must not be re-run (LLM spend).
+  # Persisted outcomes let retries redeliver without repeating successful inference.
   gcloud tasks queues update "$QUEUE" --location="$REGION" \
-    --max-attempts=2 --max-concurrent-dispatches=2 --max-dispatches-per-second=5 >/dev/null
+    --max-attempts=100 --max-retry-duration=86400s --min-backoff=10s --max-backoff=600s --max-doublings=5 --max-concurrent-dispatches=2 --max-dispatches-per-second=5 >/dev/null
   log "bucket gs://$GCS_BUCKET"
   if ! gcloud storage buckets describe "gs://$GCS_BUCKET" >/dev/null 2>&1; then
     gcloud storage buckets create "gs://$GCS_BUCKET" --location="$REGION" \
@@ -142,6 +150,7 @@ secret_hint() {
   case "$1" in
     DATABASE_URL) echo "Neon pooled connection string (host contains -pooler), with ?sslmode=require" ;;
     DATABASE_URL_DIRECT) echo "Neon direct connection string (no -pooler); blank = same as DATABASE_URL" ;;
+    EXA_API_KEY) echo "optional Exa API key; leave unset to disable" ;;
     GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET) echo "OAuth web client in the personal project; blank = placeholder until created" ;;
     JOBS_INTERNAL_SECRET|ADMIN_SECRET_KEY) echo "blank = generate 32 random bytes" ;;
   esac
@@ -189,6 +198,31 @@ cmd_secrets_init() {
   done
 }
 
+# Generate distinct MCP keys directly in memory and Secret Manager, only if absent.
+cmd_mcp_secrets_init() {
+  require_login
+  gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
+  local name value
+  for name in MCP_JWT_SIGNING_KEY MCP_STORAGE_ENCRYPTION_KEY; do
+    if secret_exists "$name"; then
+      value="$(gcloud secrets versions access latest --secret="$name")"
+      [[ -n "$value" && "$value" != unset ]] || { echo "$name exists without a valid key; fix it explicitly" >&2; return 1; }
+      unset value
+      echo "have   $name"
+      continue
+    fi
+    if [[ "$name" == MCP_JWT_SIGNING_KEY ]]; then
+      value="$(openssl rand -hex 32)"
+    else
+      value="$(openssl rand -base64 32)"
+      value="${value//+/-}"
+      value="${value//\//_}"
+    fi
+    push_secret "$name" "$value"
+    unset value
+  done
+}
+
 cmd_secret_set() {
   require_login
   gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
@@ -201,7 +235,7 @@ cmd_secrets_status() {
   require_login
   gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
   local name state
-  for name in "${ALL_SECRETS[@]}"; do
+  for name in "${ALL_SECRETS[@]}" EXA_API_KEY; do
     if ! secret_exists "$name"; then state="MISSING"
     elif [[ "$(gcloud secrets versions access latest --secret="$name")" == unset ]]; then state="placeholder"
     else state="set $(gcloud secrets versions describe latest --secret="$name" --format='value(createTime)' 2>/dev/null)"
@@ -250,12 +284,26 @@ image_digest() {  # name -> image@sha256:... for the current TAG
   echo "${IMAGE_BASE}/$1@${digest}"
 }
 
-render() { envsubst '${PROJECT_ID} ${REGION} ${TAG} ${QUEUE} ${RUNTIME_SA} ${IMAGE_BASE} ${IMAGE_CADDY} ${IMAGE_CLIENT} ${IMAGE_SERVER} ${IMAGE_JOBS} ${S3_ENDPOINT} ${GCS_BUCKET} ${STORAGE_PUBLIC_HOST} ${ALLOWED_EMAILS} ${PUBLIC_URL} ${JOBS_URL}' < "$1"; }
+render() { envsubst '${PROJECT_ID} ${REGION} ${TAG} ${QUEUE} ${RUNTIME_SA} ${IMAGE_BASE} ${IMAGE_CADDY} ${IMAGE_CLIENT} ${IMAGE_SERVER} ${IMAGE_JOBS} ${S3_ENDPOINT} ${GCS_BUCKET} ${STORAGE_PUBLIC_HOST} ${ALLOWED_EMAILS} ${PUBLIC_URL} ${INTERNAL_URL} ${JOBS_URL} ${EXA_SECRET_ENV} ${MCP_SECRET_ENV}' < "$1"; }
 
 cmd_deploy() {
   require_login
   gcloud config set project "$PROJECT_ID" >/dev/null 2>&1
-  PUBLIC_URL="$(public_url)"; JOBS_URL="$(jobs_url)"; export PUBLIC_URL JOBS_URL
+  PUBLIC_URL="$(public_url)"; INTERNAL_URL="$(internal_url)"; JOBS_URL="$(jobs_url)"; export PUBLIC_URL INTERNAL_URL JOBS_URL
+  EXA_SECRET_ENV=""
+  if secret_exists EXA_API_KEY; then
+    local exa_value; exa_value="$(gcloud secrets versions access latest --secret=EXA_API_KEY)"
+    [[ -n "$exa_value" && "$exa_value" != unset ]] || { echo "EXA_API_KEY exists but is empty or a placeholder" >&2; return 1; }
+    unset exa_value
+    EXA_SECRET_ENV=$'            - name: EXA_API_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: EXA_API_KEY\n                  key: latest'
+  fi
+  export EXA_SECRET_ENV
+  MCP_SECRET_ENV=""
+  if [[ "${MCP_ENABLED:-false}" == true ]]; then
+    require_secrets MCP_JWT_SIGNING_KEY MCP_STORAGE_ENCRYPTION_KEY
+    MCP_SECRET_ENV=$'            - name: MCP_ENABLED\n              value: "true"\n            - name: MCP_JWT_SIGNING_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: MCP_JWT_SIGNING_KEY\n                  key: latest\n            - name: MCP_STORAGE_ENCRYPTION_KEY\n              valueFrom:\n                secretKeyRef:\n                  name: MCP_STORAGE_ENCRYPTION_KEY\n                  key: latest'
+  fi
+  export MCP_SECRET_ENV
   require_secrets "${ALL_SECRETS[@]}"
   # Pin by digest so a rebuilt tag always produces a new revision.
   IMAGE_CADDY="$(image_digest caddy)"; IMAGE_CLIENT="$(image_digest client)"
@@ -303,7 +351,7 @@ cmd_schedule() {
   verb=create; gcloud scheduler jobs describe openpaper-zotero-sync --location="$REGION" >/dev/null 2>&1 && { verb=update; header_flag=--update-headers; }
   gcloud scheduler jobs "$verb" http openpaper-zotero-sync --location="$REGION" \
     --schedule="0 3 * * *" --time-zone="Asia/Manila" --http-method=POST \
-    --uri="$(public_url)/api/webhooks/internal/zotero-sync-all?threshold_seconds=86400" \
+    --uri="$(internal_url)/api/webhooks/internal/zotero-sync-all?threshold_seconds=86400" \
     "${header_flag}=X-Jobs-Secret=${secret}" --attempt-deadline=180s \
     >/dev/null 2> >(sed "s/${secret}/<redacted>/g" >&2)
   wait
@@ -320,6 +368,7 @@ case "${1:-}" in
   secrets-init)   cmd_secrets_init ;;
   secret-set)     shift; cmd_secret_set "$@" ;;
   secrets-status) cmd_secrets_status ;;
+  mcp-secrets-init) cmd_mcp_secrets_init ;;
   build)     cmd_build "${2:-}" ;;
   migrate)   cmd_migrate ;;
   deploy)    cmd_deploy ;;

@@ -83,9 +83,9 @@ def run_task(
     task runs with Celery's eager `apply`, so `self.request.id` is the id the
     server stored on the job and `update_state` works against the memory
     result backend. The task reports its own outcome to the server by webhook,
-    including failures, so a handled failure returns 200: a retry would only
-    repeat the LLM spend on a PDF that already failed. Crashes (OOM, timeout)
-    surface as a non-2xx and Cloud Tasks retries per the queue's policy.
+    including failures. PDF and table outcomes are stored before delivery;
+    redelivery replays that checkpoint rather than repeating inference. Storage
+    or webhook errors return non-2xx so Cloud Tasks can retry.
 
     Auth: Cloud Run IAM (OIDC token from the queue's service account, in
     Authorization) plus the shared JOBS_INTERNAL_SECRET when set, carried in
@@ -103,10 +103,24 @@ def run_task(
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task not registered: {request.task}")
 
+    if src.tasks.cloud_tasks_mode() and request.task in {"upload_and_process_file", "process_data_table"}:
+        try:
+            saved = src.tasks.load_outcome(request.task, request.task_id)
+            if saved is not None:
+                if saved["webhook_url"] != request.kwargs["webhook_url"]:
+                    raise ValueError("Outcome target does not match")
+                src.tasks.post_webhook(saved["webhook_url"], saved["payload"], delays=())
+                return {"task_id": request.task_id, "status": "completed"}
+        except Exception:
+            logger.exception("Unable to replay outcome for task %s", request.task_id)
+            raise HTTPException(status_code=503, detail="Outcome replay failed")
+
     logger.info(f"Running {request.task} as {request.task_id} (pushed)")
     result = task.apply(kwargs=request.kwargs, task_id=request.task_id, throw=False)
     if result.failed():
         logger.error(f"Task {request.task_id} failed: {result.result!r}")
+        if src.tasks.cloud_tasks_mode() and request.task in {"upload_and_process_file", "process_data_table"}:
+            raise HTTPException(status_code=503, detail="Task outcome unavailable")
         return {"task_id": request.task_id, "status": "failed", "error": str(result.result)}
     return {"task_id": request.task_id, "status": "completed"}
 

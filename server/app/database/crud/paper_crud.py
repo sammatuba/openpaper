@@ -397,11 +397,7 @@ class PaperCRUD(CRUDBase["Paper", PaperCreate, PaperUpdate]):
             )
 
             if not n_ai_h:
-                logger.error(
-                    f"Failed to create AI highlights for {paper_id}",
-                    exc_info=True,
-                )
-                continue
+                raise RuntimeError(f"Failed to create AI highlight for {paper_id}")
 
             n_annotation_obj = AnnotationCreate(
                 paper_id=uuid.UUID(paper_id),
@@ -415,9 +411,8 @@ class PaperCRUD(CRUDBase["Paper", PaperCreate, PaperUpdate]):
             )
 
             if not n_ai_annotation:
-                logger.error(
-                    f"Failed to create AI annotation for highlight {n_ai_h.id} in {paper_id}",
-                    exc_info=True,
+                raise RuntimeError(
+                    f"Failed to create AI annotation for highlight {n_ai_h.id} in {paper_id}"
                 )
 
     def get_summary_replace_image_placeholders(

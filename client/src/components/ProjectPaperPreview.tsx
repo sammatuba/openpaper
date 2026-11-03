@@ -104,6 +104,11 @@ export function ProjectPaperPreview({ paper, projectId, searchTerm }: ProjectPap
                     <h3 className="min-w-0 flex-1 truncate text-sm font-medium" title={paper.title}>{paper.title}</h3>
                     <div className="flex shrink-0 items-center gap-1">
                         <CitePaperButton paper={[paper]} minimalist={true} />
+                        {(paper.is_owner || forkedPaper) && (
+                            <Button variant="ghost" size="sm" className="h-7 px-2.5 text-xs" onClick={() => router.push(`/paper/${paper.is_owner ? paper.id : forkedPaper?.id}?rsf=notes`)}>
+                                Notes
+                            </Button>
+                        )}
                         {paper.is_owner ? (
                             <Button variant="outline" size="sm" className="h-7 px-2.5 text-xs" onClick={() => router.push(`/paper/${paper.id}`)}>
                                 <FilePlus2 className="h-3.5 w-3.5 mr-1.5" />

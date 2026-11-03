@@ -3,6 +3,7 @@ Webhook handlers for PDF processing service integration.
 """
 
 import logging
+import hmac
 import os
 import uuid
 from datetime import datetime, timezone
@@ -15,11 +16,7 @@ from app.database.crud.paper_crud import PaperUpdate, paper_crud
 from app.database.crud.paper_tag_crud import paper_tag_crud
 from app.database.crud.paper_upload_crud import paper_upload_job_crud
 from app.database.crud.projects.project_data_table_crud import (
-    DataTableResultCreate,
-    DataTableRowCreate,
     data_table_job_crud,
-    data_table_result_crud,
-    data_table_row_crud,
 )
 from app.database.crud.projects.project_paper_crud import project_paper_crud
 from app.database.crud.referral_crud import referral_crud
@@ -29,12 +26,16 @@ from app.database.crud.zotero_crud import zotero_crud
 from app.database.crud.zotero_import_crud import zotero_import_crud
 from app.database.database import SessionLocal, engine, get_db
 from app.database.models import (
+    DataTableExtractionJob,
+    DataTableExtractionResult,
+    DataTableRow,
     ConversableType,
     Conversation,
     JobStatus,
     ReferralStatus,
     ZoteroImportStatus,
 )
+from app.database.crud.sanitization import sanitize_for_postgres
 from app.database.telemetry import track_event
 from app.helpers.advisory_locks import AdvisoryLock, AdvisoryLockNamespace
 from app.helpers.compute_agent import run_computed_columns
@@ -122,10 +123,10 @@ def _finalize_zotero_import(
         user=job_user,
     )
 
-    paper_upload_job_crud.mark_as_completed(db=db, job_id=job_id, user=job_user)
-
     if not paper:
-        return None
+        raise RuntimeError("Could not persist Zotero paper")
+    if not paper_upload_job_crud.mark_as_completed(db=db, job_id=job_id, user=job_user):
+        raise RuntimeError("Could not complete Zotero upload job")
 
     # When salvaging a partial result, record the worker error on the import row.
     # apply_zotero_annotations (below) flips the row to COMPLETED but preserves
@@ -220,22 +221,26 @@ def handle_failed_upload(
             db=db, paper_id=uuid.UUID(str(existing_paper.id)), user=job_user
         )
         for project in projects:
-            project_paper_crud.remove_by_paper_and_project(
+            removed = project_paper_crud.remove_by_paper_and_project(
                 db=db,
                 paper_id=uuid.UUID(str(existing_paper.id)),
                 project_id=uuid.UUID(str(project.id)),
                 user=job_user,
             )
+            if not removed:
+                raise RuntimeError("Could not remove failed paper association")
             logger.info(
                 f"Removed ProjectPaper association for paper {existing_paper.id} and project {project.id}"
             )
 
         logger.info(f"Removing failed paper {existing_paper.id} for job {job_id}")
-        paper_crud.remove(db=db, id=str(existing_paper.id), user=job_user)
+        if not paper_crud.remove(db=db, id=str(existing_paper.id), user=job_user):
+            raise RuntimeError("Could not remove failed paper")
 
-    paper_upload_job_crud.mark_as_failed(
+    if not paper_upload_job_crud.mark_as_failed(
         db=db, job_id=job_id, user=job_user, error_message=user_message
-    )
+    ):
+        raise RuntimeError("Could not mark upload job as failed")
 
     zotero_import = zotero_import_crud.get_by_upload_job_id(
         db, upload_job_id=uuid.UUID(job_id)
@@ -377,7 +382,13 @@ class PdfProcessingWebhookData(BaseModel):
     user_message: Optional[str] = None
 
 
-@webhook_router.post("/paper-processing/{job_id}")
+def verify_jobs_webhook(request: Request):
+    secret = os.getenv("JOBS_INTERNAL_SECRET", "")
+    if secret and not hmac.compare_digest(request.headers.get("X-Jobs-Secret", ""), secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+@webhook_router.post("/paper-processing/{job_id}", dependencies=[Depends(verify_jobs_webhook)])
 async def handle_paper_processing_webhook(
     job_id: str,
     webhook_data: PdfProcessingWebhookData,
@@ -424,16 +435,15 @@ async def handle_paper_processing_webhook(
             f"Webhook for job {job_id} is already being processed by another "
             f"delivery, ignoring duplicate"
         )
-        return {"status": "webhook ignored - already being processed"}
+        raise HTTPException(status_code=503, detail="Webhook already being processed")
 
     status = webhook_data.status
     result = webhook_data.result
 
-    zotero_import = zotero_import_crud.get_by_upload_job_id(
-        db, upload_job_id=uuid.UUID(job_id)
-    )
-
     try:
+        zotero_import = zotero_import_crud.get_by_upload_job_id(
+            db, upload_job_id=uuid.UUID(job_id)
+        )
         # Re-check completion under the lock: another delivery may have finished
         # between our initial read and acquiring the lock.
         db.refresh(job)
@@ -458,12 +468,15 @@ async def handle_paper_processing_webhook(
                     background_tasks=background_tasks,
                 )
                 if finalized:
-                    track_event(
-                        "zotero_paper_processed",
-                        properties={"worker_duration": result.duration},
-                        user_id=str(user.id),
-                        db=db,
-                    )
+                    try:
+                        track_event(
+                            "zotero_paper_processed",
+                            properties={"worker_duration": result.duration},
+                            user_id=str(user.id),
+                            db=db,
+                        )
+                    except Exception:
+                        logger.warning("Failed to record Zotero telemetry", exc_info=True)
                     return {
                         "status": "webhook processed - zotero import",
                         "paper_id": finalized,
@@ -559,6 +572,8 @@ async def handle_paper_processing_webhook(
                 user=job_user,
             )
 
+            if not paper:
+                raise RuntimeError("Could not persist processed paper")
             # Extracted keywords are stored as reusable user tags rather than a
             # flat keywords list, reusing any existing tag that matches
             # case-insensitively. Best-effort: tagging must not fail ingestion.
@@ -578,89 +593,79 @@ async def handle_paper_processing_webhook(
                         exc_info=True,
                     )
 
-            # Create highlights/annotations if any
-            if metadata.highlights and paper:
-                try:
-                    paper_crud.create_ai_annotations(
-                        db=db,
-                        paper_id=str(paper.id),
-                        extract_metadata=metadata,
-                        current_user=job_user,
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Error creating annotations for job {job_id}: {str(e)}",
-                        exc_info=True,
-                    )
-                    # Don't fail the whole process for annotation errors
-
-            if metadata.summary and paper:
-                try:
-                    conversation_data = ConversationCreate(
-                        conversable_type=ConversableType.PAPER,
-                        conversable_id=uuid.UUID(str(paper.id)),
-                    )
-
-                    conversation: Conversation | None = conversation_crud.create(
-                        db, obj_in=conversation_data, user=job_user
-                    )
-
-                    if conversation:
-                        # Add the summary as the first message in the conversation, from the AI
-
-                        citations_dict = (
-                            CitationHandler.convert_response_citation_to_paper_citation(
-                                metadata.summary_citations
-                            )
+            # CRUD helpers commit internally. Bind a separate session to an outer
+            # transaction so their commits cannot publish partial enrichment.
+            # The job becomes terminal in the same transaction as its results.
+            with engine.begin() as connection:
+                with Session(bind=connection, join_transaction_mode="rollback_only") as enrichment_db:
+                    if metadata.highlights:
+                        paper_crud.create_ai_annotations(
+                            db=enrichment_db,
+                            paper_id=str(paper.id),
+                            extract_metadata=metadata,
+                            current_user=job_user,
                         )
-
-                        message_crud.create(
-                            db,
+                    if metadata.summary:
+                        conversation = conversation_crud.create(
+                            enrichment_db,
+                            obj_in=ConversationCreate(
+                                conversable_type=ConversableType.PAPER,
+                                conversable_id=uuid.UUID(str(paper.id)),
+                            ),
+                            user=job_user,
+                        )
+                        if not conversation:
+                            raise RuntimeError("Could not create summary conversation")
+                        citations = CitationHandler.convert_response_citation_to_paper_citation(
+                            metadata.summary_citations
+                        )
+                        if not message_crud.create(
+                            enrichment_db,
                             obj_in=MessageCreate(
                                 conversation_id=uuid.UUID(str(conversation.id)),
                                 role="assistant",
                                 content=metadata.summary,
-                                references=citations_dict,
+                                references=citations,
                             ),
                             user=job_user,
-                        )
-                except Exception as e:
-                    logger.error(
-                        f"Error creating conversation/message for job {job_id}: {str(e)}",
-                        exc_info=True,
-                    )
-                    # Don't fail the whole process for conversation/message errors
+                        ):
+                            raise RuntimeError("Could not create summary message")
+                    if not paper_upload_job_crud.mark_as_completed(
+                        db=enrichment_db, job_id=job_id, user=job_user
+                    ):
+                        raise RuntimeError("Could not complete upload job")
 
-            # Track metadata extraction event
-            track_event(
-                "extracted_metadata",
-                properties={
-                    "has_title": bool(metadata.title),
-                    "has_authors": bool(metadata.authors),
-                    "has_abstract": bool(metadata.abstract),
-                    "has_summary": bool(metadata.summary),
-                    "has_ai_highlights": bool(metadata.highlights),
-                },
-                user_id=str(user.id),
-                db=db,
-            )
+            try:
+                # Track metadata extraction event
+                track_event(
+                    "extracted_metadata",
+                    properties={
+                        "has_title": bool(metadata.title),
+                        "has_authors": bool(metadata.authors),
+                        "has_abstract": bool(metadata.abstract),
+                        "has_summary": bool(metadata.summary),
+                        "has_ai_highlights": bool(metadata.highlights),
+                    },
+                    user_id=str(user.id),
+                    db=db,
+                )
 
-            start_time = job.created_at
-            end_time = datetime.now(timezone.utc)
+                start_time = job.created_at
+                end_time = datetime.now(timezone.utc)
 
-            track_event(
-                "paper_upload",
-                properties={
-                    "has_metadata": bool(metadata),
-                    "duration": (end_time - start_time).total_seconds(),
-                    "worker_duration": result.duration,
-                },
-                user_id=str(user.id),
-                db=db,
-            )
+                track_event(
+                    "paper_upload",
+                    properties={
+                        "has_metadata": bool(metadata),
+                        "duration": (end_time - start_time).total_seconds(),
+                        "worker_duration": result.duration,
+                    },
+                    user_id=str(user.id),
+                    db=db,
+                )
 
-            # Mark job as completed
-            paper_upload_job_crud.mark_as_completed(db=db, job_id=job_id, user=job_user)
+            except Exception:
+                logger.warning("Failed to record paper telemetry", exc_info=True)
 
             if paper:
                 background_tasks.add_task(
@@ -712,20 +717,9 @@ async def handle_paper_processing_webhook(
             f"Error processing webhook for job {job_id}: {str(e)}", exc_info=True
         )
 
-        # Roll back before cleanup: the failure above may have left the session
-        # in a PendingRollbackError state, which would otherwise make every
-        # cleanup query (and mark_as_failed) fail too.
+        # The persisted outcome will be replayed. Never delete the user's paper
+        # or turn an infrastructure failure into a terminal processing failure.
         db.rollback()
-
-        # Clean up the paper record on exception as well
-        try:
-            handle_failed_upload(db=db, job_id=job_id, job_user=job_user, reason=str(e))
-        except Exception as cleanup_error:
-            logger.error(
-                f"Failed to cleanup paper for job {job_id}: {str(cleanup_error)}"
-            )
-            # Still mark job as failed even if cleanup fails
-            paper_upload_job_crud.mark_as_failed(db=db, job_id=job_id, user=job_user)
 
         raise HTTPException(status_code=500, detail="Error processing webhook")
     finally:
@@ -740,11 +734,11 @@ class DataTableProcessingResultWebhookData(BaseModel):
 
     task_id: str
     status: str
-    result: DataTableResult
+    result: Optional[DataTableResult] = None
     error: Optional[str] = None
 
 
-@webhook_router.post("/data-table-processing/{job_id}")
+@webhook_router.post("/data-table-processing/{job_id}", dependencies=[Depends(verify_jobs_webhook)])
 def handle_data_table_processing_webhook(
     job_id: str,
     webhook_data: DataTableProcessingResultWebhookData,
@@ -768,7 +762,15 @@ def handle_data_table_processing_webhook(
     error = webhook_data.error
 
     try:
-        if status == "completed" and result.success:
+        job = db.query(DataTableExtractionJob).filter(
+            DataTableExtractionJob.id == uuid.UUID(job_id),
+            DataTableExtractionJob.task_id == task_id,
+        ).with_for_update().first()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job.status == JobStatus.COMPLETED:
+            return {"status": "webhook ignored - job already completed"}
+        if status == "completed" and result is not None and result.success:
             # Processing was successful. NOTE: the job is only marked COMPLETED
             # after the result and rows are fully persisted below — clients stop
             # polling the moment they see COMPLETED, so flipping the status
@@ -783,7 +785,6 @@ def handle_data_table_processing_webhook(
             # produced here by the compute agent from the job's stored column
             # plan, and the run's provenance (inputs snapshot, script, stdout)
             # is persisted with the result.
-            job = data_table_job_crud.get(db=db, id=uuid.UUID(job_id))
             compute_provenance = None
             papers_by_id = {
                 row.paper_id: paper_crud.get(db=db, id=uuid.UUID(row.paper_id))
@@ -872,45 +873,24 @@ def handle_data_table_processing_webhook(
                 or f'Data Table ({", ".join(result.columns)})'
             )
 
-            # Create the data table result
-            table_result = data_table_result_crud.create(
-                db=db,
-                obj_in=DataTableResultCreate(
-                    job_id=uuid.UUID(job_id),
-                    title=title,
-                    success=result.success,
-                    columns=result.columns,
-                    row_failures=[uuid.UUID(pid) for pid in result.row_failures],
-                    compute_provenance=compute_provenance,
-                ),
+            # Commit result, rows and completion together while holding the job lock.
+            table_result = DataTableExtractionResult(
+                job_id=uuid.UUID(job_id), title=title, success=result.success,
+                columns=result.columns,
+                row_failures=[uuid.UUID(pid) for pid in result.row_failures],
+                compute_provenance=compute_provenance,
             )
-
+            db.add(table_result)
+            db.flush()
+            for row in result.rows:
+                db.add(DataTableRow(
+                    data_table_id=table_result.id, paper_id=uuid.UUID(row.paper_id),
+                    values=sanitize_for_postgres({col: cell.model_dump() for col, cell in row.values.items()}),
+                ))
+            job.status = JobStatus.COMPLETED
+            job.completed_at = datetime.now(timezone.utc)
+            db.commit()
             if table_result:
-                # Create all rows using create_many
-                # Convert DataTableCellValue objects to dicts for JSON serialization
-                row_creates = [
-                    DataTableRowCreate(
-                        data_table_id=uuid.UUID(str(table_result.id)),
-                        paper_id=uuid.UUID(row.paper_id),
-                        values={
-                            col: cell.model_dump() for col, cell in row.values.items()
-                        },
-                    )
-                    for row in result.rows
-                ]
-                if row_creates:
-                    data_table_row_crud.create_many(db=db, rows=row_creates)
-                    logger.info(
-                        f"Created {len(row_creates)} rows for data table result {table_result.id}"
-                    )
-
-                # Result and rows are durably persisted — NOW the job is done.
-                data_table_job_crud.update_status(
-                    db=db,
-                    job_id=uuid.UUID(job_id),
-                    status=JobStatus.COMPLETED,
-                )
-
                 # Send email notification to user
                 job = data_table_job_crud.get_by_task_id(db=db, task_id=task_id)
                 if job and job.user and job.project:
@@ -929,13 +909,6 @@ def handle_data_table_processing_webhook(
                             f"Failed to send data table complete email for job {job_id}: {email_error}",
                             exc_info=True,
                         )
-            else:
-                logger.error(f"Failed to create data table result for job {job_id}")
-                data_table_job_crud.update_status(
-                    db=db,
-                    job_id=uuid.UUID(job_id),
-                    status=JobStatus.FAILED,
-                )
 
         else:
             # Processing failed
@@ -945,14 +918,15 @@ def handle_data_table_processing_webhook(
             )
 
             # Update job status to failed
-            data_table_job_crud.update_status(
-                db=db,
-                job_id=uuid.UUID(job_id),
-                status=JobStatus.FAILED,
-                error_message=error_message,
-            )
+            job.status = JobStatus.FAILED
+            job.error_message = error_message
+            db.commit()
 
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
+        db.rollback()
         logger.error(
             f"Error processing data table webhook for job {job_id}: {str(e)}",
             exc_info=True,
@@ -963,8 +937,8 @@ def handle_data_table_processing_webhook(
         "status": "data table webhook processed",
         "job_id": job_id,
         "task_id": task_id,
-        "success": result.success,
-        "rows_count": len(result.rows),
+        "success": bool(result and result.success),
+        "rows_count": len(result.rows) if result else 0,
     }
 
 

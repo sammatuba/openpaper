@@ -1,0 +1,11 @@
+{
+  "name": "papers",
+  "account_id": "8cb8c98e46cb95e53dd9569a8e53d34e",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-15",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "UPSTREAM_ORIGIN": "https://openpaper-1061746501640.asia-southeast1.run.app"
+  }
+}

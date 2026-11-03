@@ -42,7 +42,7 @@ spec:
             - name: TASK_BACKEND
               value: cloudtasks
             - name: WEBHOOK_BASE_URL
-              value: ${PUBLIC_URL}
+              value: ${INTERNAL_URL}
             - name: DEBUG
               value: "False"
             - name: AWS_ENDPOINT_URL_S3

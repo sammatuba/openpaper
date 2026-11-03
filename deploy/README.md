@@ -56,11 +56,11 @@ needs it to add versions. Rotating a secret is `secret-set` then `deploy`.
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | OAuth web client in the personal project |
 | `GCS_HMAC_ACCESS_ID`, `GCS_HMAC_SECRET` | created by `bootstrap` for the runtime SA, never shown |
 | `JOBS_INTERNAL_SECRET`, `ADMIN_SECRET_KEY` | generated at the prompt when left blank |
+| `EXA_API_KEY` | optional Exa API key; add with `deploy/deploy.sh secret-set EXA_API_KEY` |
 
 ## One-time operator steps
 
-The public URL is deterministic (`https://openpaper-<project-number>.<region>.run.app`),
-so the Google OAuth client can be created before anything is deployed.
+By default the public URL is deterministic (`https://openpaper-<project-number>.<region>.run.app`). An optional Cloudflare Worker hostname is configured below.
 
 1. **gcloud, personal account.** Keep the work configuration untouched:
    ```bash
@@ -109,9 +109,11 @@ Rollback: Cloud Run keeps revisions; `gcloud run services update-traffic openpap
   Tasks has no readable task state. Completion and failure arrive by webhook.
 - **Request size** on Cloud Run is 32 MiB per request; PDFs above that will
   not upload. Rare for papers.
-- **Retries.** A task that fails inside the runner returns 200 (it already
-  reported the failure), so it is not re-run. Only a crashed instance is
-  retried, once.
+- **Retries.** The queue retries failures for at least 24 hours with exponential
+  backoff (10 seconds to 10 minutes, 100 attempts). Persisted results under
+  `job-outcomes/` are retained for at least the retry horizon; configure a
+  bucket lifecycle rule to delete them after 7 days. A crash before the result
+  is persisted can repeat inference. Recovery after the retry horizon is not guaranteed.
 - **Backups** land in `backups/` in the bucket nightly at 02:30 Manila
   time, kept 14 days. Restore with `pg_restore --no-owner -d "$DATABASE_URL_DIRECT" file.dump`.
 
@@ -150,3 +152,70 @@ Rollback: Cloud Run keeps revisions; `gcloud run services update-traffic openpap
 
 With `TASK_BACKEND` unset everything runs as in `DEVELOPMENT.md`
 (Celery, RabbitMQ, Redis, `scripts/dev`).
+
+## Optional workers.dev front door
+
+The connected account uses the `jansammat26` workers.dev subdomain. The planned
+Worker is `papers`, with URL `https://papers.jansammat26.workers.dev`; this name
+is not reserved until deployment. The Worker
+uses a fixed Cloud Run upstream, streams requests and responses, follows no
+redirects, and marks responses `no-store`. It does not make the existing Cloud
+Run service private.
+
+1. Verify `deploy/cloudflare/wrangler.jsonc` identifies the intended Cloudflare
+   account and Cloud Run upstream.
+2. From `deploy/cloudflare`, install Wrangler v4, authenticate with `npx wrangler login`,
+   run `npx wrangler deploy --dry-run`, then `npx wrangler deploy`. Record the
+   actual URL reported by Cloudflare.
+3. Add `https://papers.jansammat26.workers.dev/api/auth/google/callback`
+   as a Google OAuth redirect URI and authorize the new origin in the OAuth
+   client. Then set `PUBLIC_ORIGIN=https://papers.jansammat26.workers.dev`
+   in `deploy/config.env`.
+4. Run `deploy/deploy.sh bootstrap` to update bucket CORS and queue settings,
+   then `deploy/deploy.sh build`, `deploy/deploy.sh deploy`, and
+   `deploy/deploy.sh schedule`. The build embeds the browser origin. Job
+   callbacks and scheduler calls continue directly to Cloud Run.
+5. Verify login/logout, PDF upload and rendering, streaming chat (including over
+   60 seconds), and idle login on the actual hostname. For Exa, add its key
+   with `deploy/deploy.sh secret-set EXA_API_KEY`, redeploy the web service,
+   then run one bounded search and inspect Exa usage. Without the secret the
+   service starts normally. Exa does not configure Firecrawl.
+
+Rollback the origin by clearing `PUBLIC_ORIGIN`, rebuilding and redeploying,
+then rerunning bootstrap and schedule; retain the old OAuth redirect until
+rollback is validated.
+
+## Optional authenticated MCP
+
+MCP is disabled by default. Register the exact Google OAuth redirect URI
+`https://papers.jansammat26.workers.dev/api/mcp/auth/callback` in the existing
+web OAuth client. The MCP endpoint is
+`https://papers.jansammat26.workers.dev/api/mcp`; discovery is at
+`/.well-known/oauth-protected-resource/api/mcp` and
+`/.well-known/oauth-authorization-server`. Cloudflare and Caddy must forward
+those routes plus `/authorize`, `/token`, `/register`, `/consent`, and the
+callback to the server. The FastMCP Google provider handles OAuth and PKCE.
+
+After review, run `deploy/deploy.sh mcp-secrets-init` to generate separate
+signing and Fernet encryption keys directly in Secret Manager. It leaves
+existing keys untouched. These keys and the database must persist across
+revisions; replacing either invalidates existing sessions, and replacing the
+encryption key makes stored OAuth records unreadable. Run the normal build and
+`deploy/deploy.sh migrate`, set `MCP_ENABLED=true` in `deploy/config.env`,
+then deploy. `MCP_ENABLED=false` disables MCP while retaining stored data.
+
+MCP authorizes a verified Google email against the allowlist and an existing
+active, unblocked user. Tools return only that user's papers and annotations,
+and projects in which the user is a member. Search covers titles and abstracts;
+the bounded paper text tool exposes extracted text and its page-offset map.
+Appending a note requires a UUID request ID that must be reused for retries;
+its ledger is kept until the paper or user is deleted. Notes are plain text.
+The note API sends an ETag on GET; conditional PUT requires that exact value
+in `If-Match`, returns 412 if stale, and requires a precondition (428) when MCP
+is enabled. POST returns 409 if a note already exists. The browser should keep
+the unsaved draft on conflict and reload before trying again.
+
+Local protocol tests use a fake verifier, and the isolated PostgreSQL tests
+exercise encrypted storage and concurrent note transactions. A real Google
+OAuth flow, ChatGPT/Work registration, client connection, and long-lived refresh
+remain live acceptance checks.

@@ -3,6 +3,13 @@
 **Owner:** operator (single user). **Opened:** 2026-11-02. **Branch:** `meos/install` → feature branches per phase.
 **Purpose:** read, track and annotate papers for `../ai-safety` at near-zero recurring cost, with cold starts accepted.
 
+**Continuation (2026-11-03):** the operator approved
+[the research ecosystem intent](INTENT-research-ecosystem.md). Its short
+Cloudflare hostname, authenticated OAuth MCP, Exa integration and durable
+outcome-delivery requirements supersede the original no-domain, bearer-only
+connector and bounded webhook retry assumptions below. This document retains
+the original deployment history and P3 acceptance checks.
+
 ## Decisions (aligned 2026-11-02)
 
 | Topic | Decision | Rejected |

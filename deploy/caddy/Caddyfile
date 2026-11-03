@@ -9,7 +9,7 @@
 :{$PORT:8080} {
 	encode zstd gzip
 
-	@server path /api/* /docs /docs/* /openapi.json /redoc /admin /admin/*
+	@server path /api/* /.well-known/oauth-* /authorize /token /register /revoke /consent /docs /docs/* /openapi.json /redoc /admin /admin/*
 	handle @server {
 		reverse_proxy localhost:8000 {
 			# Cloud Run terminates TLS and Caddy does not trust its

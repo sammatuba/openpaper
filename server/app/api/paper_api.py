@@ -1,4 +1,5 @@
 import logging
+import os
 import uuid
 from typing import List, Optional
 
@@ -23,7 +24,7 @@ from app.helpers.subscription_limits import can_user_upload_paper
 from app.schemas.responses import ResponseCitation
 from app.schemas.user import CurrentUser
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -233,7 +234,8 @@ async def get_paper_note(
     )
 
     if paper_note:
-        return JSONResponse(content=paper_note.to_dict(), status_code=200)
+        from app.mcp.notes import note_etag
+        return JSONResponse(content=paper_note.to_dict(), status_code=200, headers={"ETag": note_etag(paper_note.content)})
 
     raise HTTPException(
         status_code=404, detail=f"Paper Note does not exist for document {paper_id}"
@@ -257,6 +259,12 @@ async def create_paper_note(
 
     if not target_paper:
         raise HTTPException(status_code=404, detail=f"No document with id {paper_id}")
+
+    # Serialize creation with MCP appends and conditional updates.
+    from app.database.models import PaperNote
+    db.query(Paper).filter(Paper.id == paper_id).with_for_update().one()
+    if db.query(PaperNote.id).filter(PaperNote.paper_id == paper_id).first():
+        raise HTTPException(status_code=409, detail="Paper note already exists")
 
     paper_note_to_create = PaperNoteCreate(
         paper_id=uuid.UUID(paper_id), content=content
@@ -405,6 +413,7 @@ async def get_relevant_papers(
 async def update_paper_note(
     paper_id: str,
     request: UpdatePaperNoteSchema,
+    if_match: Optional[str] = Header(default=None, alias="If-Match"),
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_required_user),
 ):
@@ -419,6 +428,12 @@ async def update_paper_note(
     if not target_paper:
         raise HTTPException(status_code=404, detail=f"No document with id {paper_id}")
 
+    mcp_enabled = os.getenv("MCP_ENABLED", "").lower() in {"1", "true", "yes"}
+    if mcp_enabled and if_match is None:
+        raise HTTPException(status_code=428, detail="If-Match required")
+    if if_match is not None:
+        # Serialize with MCP append and note creation.
+        db.query(Paper).filter(Paper.id == paper_id).with_for_update().one()
     paper_note = paper_note_crud.get_paper_note_by_paper_id(
         db, paper_id=paper_id, user=current_user
     )
@@ -428,6 +443,11 @@ async def update_paper_note(
             status_code=404,
             detail=f"No paper note associated with document ID {paper_id}",
         )
+
+    if if_match is not None:
+        from app.mcp.notes import note_etag
+        if if_match != note_etag(paper_note.content):
+            raise HTTPException(status_code=412, detail="Paper note has changed")
 
     paper_note_to_update = PaperNoteUpdate(content=content)
 

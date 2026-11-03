@@ -1,6 +1,6 @@
 {
-  "intent": "docs/work/INTENT-personal-cloud-run-deploy.md",
-  "phase": "P3: core flow verified end to end on Vertex AI; idle-login and one-week cost checks pending",
+  "intent": "docs/work/INTENT-research-ecosystem.md",
+  "phase": "Reviewed stack deployed; pilot complete; publishing committed handoff",
   "branch": "feat/cloud-run-personal",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,9 +8,9 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Commit session changes (operator to confirm). Decide webhook-outage policy for PDF and data-table outcomes (review 20261103T014702Z). Pending P3 checks: login after 30 min idle; cost after one week. Small: failed-upload UI shows no reason; orphan stuck paper 1acae0fe...; GEMINI_API_KEY secret unused. Then P4 corpus import.",
+  "next_action": "After publication, resume from origin/master and docs/work/current.json. Collect new pilot PDF/Notes browser result; verify second login after 30 minutes idle; review one-week GCP/Neon costs. Validate citations/project chat before corpus expansion. Preserve stale duplicate pending separate reconciliation.",
   "blocked_on": null,
-  "updated": "2026-11-03",
+  "updated": "2026-11-04",
   "done": [
     "bootstrap (project, billing, APIs, registry, SA, queue, GCS bucket+CORS+HMAC)",
     "Cloud Build 98fc719b: 5 images",
@@ -28,13 +28,105 @@
     "e2e r4 (chrome-devtools, Haiku subagent, 2026-11-03 01:39 UTC): upload 202 -> processing completed in ~22s -> PDF renders 55 pages from GCS -> AI overview shown -> chat reply with inline citations [1][2] (gemini-3.8). No failed requests or console errors. Paper 96732597-785f-46ca-88b6-eba26f43aa78"
   ],
   "review": {
-    "latest": ".meos/reviews/20261103T014702Z.md (local)",
-    "verdict": "rework",
+    "latest": ".meos/reviews/20261103T160931Z.md (full rework), .meos/reviews/terra-focused-recovery-cors.md (fixes accepted)",
+    "verdict": "accept for local disposition of full-review findings and importer user-agent fix; locked Cloud Build and live acceptance passed",
+    "scope": "Full ecosystem review included reliability, hostname/Exa, corpus/operator tooling, MCP and frontend; focused follow-ups accepted the reported fixes and importer header change",
     "unresolved": [
-      "webhook outage beyond ~1 min retry window drops PDF outcome (runner acks 200); operator leaning to accept for personal use, not yet decided",
-      "data-table webhooks single attempt, no retry",
-      "P3 idle-login (30 min) and one-week cost checks pending"
+      "Operator browser rendering check for two new pilot PDFs/Notes pending",
+      "Idle-login and week-long cost observations remain open",
+      "Before corpus expansion, validate citations/project chat; no expansion authorized or run"
+    ],
+    "followup": ".meos/reviews/terra-focused-recovery-cors.md accepts disposition of all three full-review findings and the importer User-Agent fix. Locked Cloud Build and documented live checks subsequently passed; remaining observations are listed explicitly."
+  },
+  "verification": "Frontend tsc, production build, desktop/mobile mocked Notes checks pass; locked Cloud Build all five images passes; corpus/operator14, Worker, shell and diff checks pass; focused recovery/CORS7 and isolated actual PostgreSQL PDF crash/replay pass. Full-review findings and importer User-Agent fix independently accepted. Live health, MCP discovery/auth boundaries, Google login/PDF/Notes, ChatGPT search and deployed Exa pass; pilot API readbacks pass.",
+  "strategy": {
+    "record": "docs/work/STRATEGY-research-ecosystem.md",
+    "status": "approved by operator; Terra implementation delegated",
+    "confirmed_preferences": [
+      "short free hostname; no owned domain",
+      "ChatGPT Business owner/admin confirmed; live OAuth connection and paper search verified by operator",
+      "Exa API account with credits",
+      "GPT-6.1 Terra for execution; operator corrected earlier Luna request"
+    ],
+    "proposed_order": [
+      "reliable outcome delivery before bulk import",
+      "Cloudflare Worker hostname and origin migration",
+      "existing Exa API integration secret wiring",
+      "curated corpus import pilot",
+      "OAuth MCP retrieval and explicit note saving",
+      "reuse landscape map with stable paper links"
     ]
   },
-  "verification": "jobs unittest 14 OK (GOOGLE_API_KEY=dummy, per-file); server tests.test_gemini_vertex + tests.test_stream_provider_fallback 14 OK; live e2e r4 pass 2026-11-03 01:39 UTC"
+  "deployment_intent": "docs/work/INTENT-personal-cloud-run-deploy.md",
+  "account_requirements": {
+    "cloudflare": "verified personal account 8cb8c98e46cb95e53dd9569a8e53d34e; papers.jansammat26.workers.dev deployed; temporary authentication config copy cleaned",
+    "gcp": "personal account verified; reviewed stack deployed; one-result Exa check passed using deployed image and runtime identity",
+    "oauth": "operator registered browser and MCP callback URIs for papers.jansammat26.workers.dev",
+    "chatgpt": "Operator confirmed ChatGPT OAuth connection and paper search work"
+  },
+  "pilot_session_authorization": "Operator explicitly approved temporary owner session, at most 30 minutes, token memory-only, delete on finish, in resumed session",
+  "rollout": {
+    "worker_url": "https://papers.jansammat26.workers.dev",
+    "worker_version": "984b0013-26c3-458a-a190-563b65b62872",
+    "cloud_build": "01c4c5da-c4d8-4ed9-abb9-9584aa1bd2a4",
+    "bootstrap": "complete including hostname CORS and queue",
+    "mcp_keys": "initialized in Secret Manager",
+    "cloud_run": "web and jobs deployed successfully; schedules updated",
+    "cloud_build_status": "SUCCESS (14m13s; all five locked images published)",
+    "migration": "openpaper-migrate-wbpvx succeeded",
+    "web_revision": "openpaper-00006-gfh",
+    "smoke": "homepage200, health200, MCP discovery200, unauthorized MCP401/no-store, jobs anonymous403, MCP enabled and Exa secret reference verified",
+    "exa": "Bounded one-result search passed using deployed server image and runtime identity; temporary verification job deleted"
+  },
+  "frontend": {
+    "typecheck": "passed",
+    "production_build": "passed locally after native-package repair; exact locked frontend image also passed Cloud Build",
+    "mocked_browser": "desktop/mobile Notes create, ETag edit, 412 draft preservation and cancel refresh passed",
+    "ssr_followup": "Existing unchanged PDF viewer import produces background window/document errors; route HTTP200 and mocked UI renders. Baseline runtime not rebuilt. Operator confirmed existing PDF rendering live; browser rendering of the two new pilot PDFs remains pending."
+  },
+  "pilot": {
+    "status": "completed",
+    "entries": {
+      "local-pdf:2306.12001v6.pdf": {
+        "paper_id": "96732597-785f-46ca-88b6-eba26f43aa78",
+        "outcome": "Reconciled with existing completed 55-page paper; no duplicate upload"
+      },
+      "T17": {
+        "paper_id": "7f1ebfc5-e0db-44d8-be46-2226aad97d1c",
+        "outcome": "Completed; dossier note created once"
+      },
+      "R11": {
+        "paper_id": "39a02fd5-6d03-4a93-aa45-fd8e08f421bc",
+        "outcome": "Completed; dossier note created once"
+      }
+    },
+    "verification": "Both new signed PDF URLs return PDF magic, extracted text exists, notes exactly match source dossiers, ETag and credentialed CORS exposure verified",
+    "first_attempt": "Cloudflare1010 rejected default Python user agent before origin; DB confirmed no new jobs; reviewed descriptive User-Agent fix then manual reset and successful retry",
+    "cleanup": "Temporary owner sessions cleaned; temporary Cloudflare config copy removed; original config preserved",
+    "stale_duplicate": "Preserved existing stale placeholder paper and running job; do not reupload or delete without reconciliation"
+  },
+  "live_acceptance": {
+    "operator_confirmed": [
+      "Google login at new hostname",
+      "Existing 55-page PDF renders",
+      "Notes panel works",
+      "ChatGPT OAuth connection completed",
+      "ChatGPT paper search works"
+    ],
+    "pending": [
+      "New pilot PDFs/Notes operator browser check",
+      "Idle login observation",
+      "One-week billing observation",
+      "Citations/project chat before corpus expansion"
+    ],
+    "completed": [
+      "Deployed-image bounded Exa search",
+      "Three-item pilot API readbacks"
+    ]
+  },
+  "version_control": {
+    "status": "Implementation commit and push authorized; fast-forward merge to origin/master pending",
+    "integration_branch": "master",
+    "source_branch": "feat/cloud-run-personal"
+  }
 }

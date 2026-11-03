@@ -49,7 +49,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 logger = logging.getLogger(__name__)
 
+mcp_app = None
+if os.getenv("MCP_ENABLED", "").lower() in {"1", "true", "yes"}:
+    from app.mcp.server import create_mcp_app
+    mcp_app = create_mcp_app()
+
 app = FastAPI(
+    lifespan=mcp_app.lifespan if mcp_app else None,
     title="Open Paper",
     description="A web application for uploading and annotating papers.",
     version="1.0.0",
@@ -63,10 +69,19 @@ app.add_middleware(
     allow_origins=[client_domain],
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
-    expose_headers=["*"],
+    expose_headers=["ETag"],
     allow_credentials=True,  # This is required for cookies
     max_age=600,  # Cache preflight requests for 10 minutes
 )
+
+if mcp_app is not None:
+    @app.middleware("http")
+    async def no_store_mcp(request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith(("/api/mcp", "/.well-known/oauth-")) or path in {"/authorize", "/token", "/register", "/revoke", "/consent"}:
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
 # Include the router in the main app
 app.include_router(router, prefix="/api")
@@ -100,6 +115,11 @@ app.include_router(referral_router, prefix="/api/referral")
 app.include_router(zotero_router, prefix="/api/zotero")
 
 setup_admin(app)  # Setup admin interface
+
+# Mount last: preserve FastMCP's authentication middleware and its root-level
+# OAuth discovery routes without shadowing the existing application routes.
+if mcp_app is not None:
+    app.mount("/", mcp_app)
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))

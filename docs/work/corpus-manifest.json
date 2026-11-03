@@ -1,0 +1,1482 @@
+{
+  "version": 1,
+  "source_root_hint": "../ai-safety",
+  "landscape_source_count": 3598,
+  "idea_count": 17,
+  "entries": [
+    {
+      "id": "R1",
+      "kind": "dossier",
+      "path": "literature/papers/r1-artificial-epistemic-authorities.md",
+      "sha256": "29e20e91e1cf3cf70ab3235e0dea1c792e4f2c5da2fff42e463335563b7423ac",
+      "title": "Artificial Epistemic Authorities",
+      "dossier_status": "peer-reviewed",
+      "read_status": "stub",
+      "updated": "2026-10-23",
+      "source_urls": [
+        "https://doi.org/10.1080/02691728.2025.2449602"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "doi:10.1080/02691728.2025.2449602"
+      ],
+      "source_ids": [
+        "src-d3ff6a5d74879b63e09c"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "R11",
+      "kind": "dossier",
+      "path": "literature/papers/r11-ai-control.md",
+      "sha256": "d174a9031c87f8fc3af6f4fefcf1a5e068fcab5cefa025480cb3698e513a8c12",
+      "title": "AI Control: Improving Safety Despite Intentional Subversion",
+      "dossier_status": "peer-reviewed",
+      "read_status": "stub",
+      "updated": "2026-10-23",
+      "source_urls": [
+        "https://proceedings.mlr.press/v235/greenblatt24a.html"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://proceedings.mlr.press/v235/greenblatt24a.html"
+      ],
+      "source_ids": [
+        "src-30a895373ecb51dbaf14"
+      ],
+      "local_pdf": null,
+      "upload_url": "https://raw.githubusercontent.com/mlresearch/v235/main/assets/greenblatt24a/greenblatt24a.pdf",
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": "b40ffdfd-e5b4-4996-a61c-a72791b20ed3",
+      "paper_id": "39a02fd5-6d03-4a93-aa45-fd8e08f421bc",
+      "status": "completed",
+      "note_status": "created",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "R12",
+      "kind": "dossier",
+      "path": "literature/papers/r12-secret-collusion-steganography.md",
+      "sha256": "c676ac156b445c6c5dcb12d8d4fc070795dd3d5cfd82b6c11a538f84d01b502f",
+      "title": "Secret Collusion among AI Agents: Multi-Agent Deception via Steganography",
+      "dossier_status": "peer-reviewed",
+      "read_status": "stub",
+      "updated": "2026-10-23",
+      "source_urls": [
+        "https://proceedings.neurips.cc/paper_files/paper/2024/hash/861f7dad098aec1c3560fb7add468d41-Abstract-Conference.html"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://proceedings.neurips.cc/paper_files/paper/2024/hash/861f7dad098aec1c3560fb7add468d41-Abstract-Conference.html"
+      ],
+      "source_ids": [
+        "src-dcb957017d5106c86f36"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "R14",
+      "kind": "dossier",
+      "path": "literature/papers/r14-lying-with-truths.md",
+      "sha256": "3c73f75c604296a1d022d811c1720bc4d33ff0dca1400d0187ec7d1ddbbef810",
+      "title": "Lying with Truths: Open-Channel Multi-Agent Collusion for Belief Manipulation via Generative Montage",
+      "dossier_status": "peer-reviewed",
+      "read_status": "stub",
+      "updated": "2026-10-23",
+      "source_urls": [
+        "https://aclanthology.org/2026.acl-long.270/"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "arxiv:2601.01685",
+        "url:https://aclanthology.org/2026.acl-long.270"
+      ],
+      "source_ids": [
+        "src-9051c2ca71c1973d2c99"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "R15",
+      "kind": "dossier",
+      "path": "literature/papers/r15-biased-consensus-debates.md",
+      "sha256": "ed36253d85990ad371fb8c1887de67b0cbb7432ce6388fd098b6d3b5b6576153",
+      "title": "Emergence of Biased Consensus in Multi-Agent LLM Debates",
+      "dossier_status": "peer-reviewed",
+      "read_status": "stub",
+      "updated": "2026-10-23",
+      "source_urls": [
+        "https://proceedings.mlr.press/v306/okawa26a.html"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://proceedings.mlr.press/v306/okawa26a.html"
+      ],
+      "source_ids": [
+        "src-2c2f423da3f54da905a9"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "R16",
+      "kind": "dossier",
+      "path": "literature/papers/r16-when-does-multi-agent-debate-fail.md",
+      "sha256": "205aa87275f9c1b794f485badd06c460c4e1467e3a826bff7fc282acdc20a887",
+      "title": "When and Why Does Multi-Agent Debate Fail and Does It Really Underperform?",
+      "dossier_status": "preprint",
+      "read_status": "stub",
+      "updated": "2026-10-23",
+      "source_urls": [
+        "https://arxiv.org/abs/2510.20963"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "arxiv:2510.20963"
+      ],
+      "source_ids": [
+        "src-379ade12e6c90fc1ef1f"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "R17",
+      "kind": "dossier",
+      "path": "literature/papers/r17-narcbench-collusion-interpretability.md",
+      "sha256": "9633d2c7e70d1183516e3dd0f7e94a333cf6f70c9ace9adcc4ea4023c4b41997",
+      "title": "Detecting Multi-Agent Collusion Through Multi-Agent Interpretability",
+      "dossier_status": "preprint",
+      "read_status": "stub",
+      "updated": "2026-10-23",
+      "source_urls": [
+        "https://arxiv.org/abs/2604.01151"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "arxiv:2604.01151"
+      ],
+      "source_ids": [
+        "src-7dbc91dc243b63cd963b"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "R18",
+      "kind": "dossier",
+      "path": "literature/papers/r18-persuasion-driven-adversarial-debate.md",
+      "sha256": "e7ce41adb882f2dba34dbf36664f17e3af6364483d9f7393a695b4d7bbed9909",
+      "title": "When Collaboration Fails: Persuasion-Driven Adversarial Influence in Multi-Agent Large Language Model Debate",
+      "dossier_status": "peer-reviewed",
+      "read_status": "stub",
+      "updated": "2026-10-23",
+      "source_urls": [
+        "https://www.nature.com/articles/s41598-026-42705-7"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://www.nature.com/articles/s41598-026-42705-7"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "R6",
+      "kind": "dossier",
+      "path": "literature/papers/r6-informational-cascades.md",
+      "sha256": "d03289224d0d5cb79fd0a0a4f87b01dedc2d515c1d066c6cf2435b03784e5f3f",
+      "title": "A Theory of Fads, Fashion, Custom, and Cultural Change as Informational Cascades",
+      "dossier_status": "peer-reviewed",
+      "read_status": "stub",
+      "updated": "2026-10-23",
+      "source_urls": [
+        "https://doi.org/10.1086/261849"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "doi:10.1086/261849"
+      ],
+      "source_ids": [
+        "src-b432098f914ede6a2783"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "R7",
+      "kind": "dossier",
+      "path": "literature/papers/r7-strategic-information-transmission.md",
+      "sha256": "5307a28412673dd460951a372b56db961e2a35752fd5caa383557440306e39ad",
+      "title": "Strategic Information Transmission",
+      "dossier_status": "peer-reviewed",
+      "read_status": "stub",
+      "updated": "2026-10-23",
+      "source_urls": [
+        "https://doi.org/10.2307/1913390"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "doi:10.2307/1913390"
+      ],
+      "source_ids": [
+        "src-7e8c18662bc39078cc36"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "R8",
+      "kind": "dossier",
+      "path": "literature/papers/r8-bayesian-persuasion.md",
+      "sha256": "72a62253ad7500878e3927a51f666fc8fdce8f368ab919ced9a1c1fd79166b19",
+      "title": "Bayesian Persuasion",
+      "dossier_status": "peer-reviewed",
+      "read_status": "stub",
+      "updated": "2026-10-23",
+      "source_urls": [
+        "https://doi.org/10.1257/aer.101.6.2590"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "doi:10.1257/aer.101.6.2590"
+      ],
+      "source_ids": [
+        "src-0f70dcd73d1df9576e68"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "S1",
+      "kind": "dossier",
+      "path": "literature/papers/s1-colosseum.md",
+      "sha256": "e2b5cc5d1980ab52ecb94f814d04ec4692650502a78abb853e867ff2c4868da8",
+      "title": "Colosseum: Auditing Collusion in Cooperative Multi-Agent Systems",
+      "dossier_status": "preprint",
+      "read_status": "stub",
+      "updated": "2026-10-23",
+      "source_urls": [
+        "https://arxiv.org/abs/2602.15198"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "arxiv:2602.15198"
+      ],
+      "source_ids": [
+        "src-def03886e0234e141b03"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "S14",
+      "kind": "dossier",
+      "path": "literature/papers/s14-sleight-bench.md",
+      "sha256": "d4db726f1d83371b9d5b2c1f369752367a82df5152349e178dc1da1f3d31c83a",
+      "title": "SLEIGHT-Bench: A Benchmark of Evasion Attacks Against Agent Monitors",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://arxiv.org/abs/2605.16626"
+      ],
+      "arxiv_versions": [
+        "v2"
+      ],
+      "identities": [
+        "arxiv:2605.16626"
+      ],
+      "source_ids": [
+        "src-0ab132ac2b44af13e2e5"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "S2",
+      "kind": "dossier",
+      "path": "literature/papers/s2-antitrust-plus-factors-ai-pricing.md",
+      "sha256": "00702422bfaa546a5faee0f45af4446017c41fad5258df50654c055b4389e8c0",
+      "title": "Inferred from URL slug, verify: Coordination Code: Rethinking Antitrust Liability in the Age of AI Pricing",
+      "dossier_status": "web page",
+      "read_status": "stub",
+      "updated": "2026-10-23",
+      "source_urls": [
+        "https://www.americanbar.org/groups/antitrust_law/resources/magazine/2025-fall/coordination-code-rethinking-antitrust-liability-age-ai-pricing/"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://www.americanbar.org/groups/antitrust_law/resources/magazine/2025-fall/coordination-code-rethinking-antitrust-liability-age-ai-pricing"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T1",
+      "kind": "dossier",
+      "path": "literature/papers/t1-automated-researchers-sandbag.md",
+      "sha256": "41ff52d33b24f79ef423279bfd441d50e79c7439bc38db807517401422ac05b3",
+      "title": "Automated Researchers Can Subtly Sandbag",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://alignment.anthropic.com/2025/automated-researchers-sandbag/"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://alignment.anthropic.com/2025/automated-researchers-sandbag"
+      ],
+      "source_ids": [
+        "src-43ddbcc5294394d395ce"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T10",
+      "kind": "dossier",
+      "path": "literature/papers/t10-auditbench-alignment-auditing.md",
+      "sha256": "d7b91e0dabf838f76035633cabb80a9f2bdabcb8b522a108df3efea0cb28609d",
+      "title": "AuditBench: Evaluating Alignment Auditing Techniques on Models with Hidden Behaviors",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://arxiv.org/abs/2602.22755"
+      ],
+      "arxiv_versions": [
+        "v4"
+      ],
+      "identities": [
+        "arxiv:2602.22755"
+      ],
+      "source_ids": [
+        "src-b35d8430db73dc54306e"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T11",
+      "kind": "dossier",
+      "path": "literature/papers/t11-causalgame.md",
+      "sha256": "586d94f4fe8374af256ac1ab957113a6e2865e21d389424269437be7e5660353",
+      "title": "CausalGame: Benchmarking Causal Thinking of LLM Agents in Games",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://arxiv.org/abs/2607.04293"
+      ],
+      "arxiv_versions": [
+        "v1"
+      ],
+      "identities": [
+        "arxiv:2607.04293"
+      ],
+      "source_ids": [
+        "src-aeb6847991d3a0edb50b"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T12",
+      "kind": "dossier",
+      "path": "literature/papers/t12-safety-research-sabotage-propensity.md",
+      "sha256": "d0c604aeb985f4068a7b5c730d28e3ab11ff0cbdd026c028026968e28983e6cc",
+      "title": "Evaluating whether AI models would sabotage AI safety research",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://arxiv.org/abs/2604.24618"
+      ],
+      "arxiv_versions": [
+        "v1"
+      ],
+      "identities": [
+        "arxiv:2604.24618"
+      ],
+      "source_ids": [
+        "src-66e22ff168f36f6e1c16"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T13",
+      "kind": "dossier",
+      "path": "literature/papers/t13-bounded-agents.md",
+      "sha256": "68559d417f5c04a6c7256ec9a2ab919e79a7c93bdc21bfa62dad49c681667459",
+      "title": "Bounded Agents: Delegation Security for Multi-Agent AI Systems",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2608.15888"
+      ],
+      "arxiv_versions": [
+        "v1"
+      ],
+      "identities": [
+        "arxiv:2608.15888"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T14",
+      "kind": "dossier",
+      "path": "literature/papers/t14-shutdown-sabotage-propensities.md",
+      "sha256": "ba21b9a5c7a69e7634661dbe61ad61f21c3120392690b1089575ba0f54feabbe",
+      "title": "Shutdown Sabotage Propensities in Multi-Agent Systems",
+      "dossier_status": "draft",
+      "read_status": "pass1",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2609.28274"
+      ],
+      "arxiv_versions": [
+        "v1"
+      ],
+      "identities": [
+        "arxiv:2609.28274"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T15",
+      "kind": "dossier",
+      "path": "literature/papers/t15-memevobench.md",
+      "sha256": "a90ed1ba9ad9cb68beb3da71eb71d677a8f539e78aa814c44936b5275e787e14",
+      "title": "MemEvoBench: Benchmarking Safety Risks from Memory Misevolution in LLM Agents",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2604.15774"
+      ],
+      "arxiv_versions": [
+        "v2"
+      ],
+      "identities": [
+        "arxiv:2604.15774"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T16",
+      "kind": "dossier",
+      "path": "literature/papers/t16-remembering-more-risking-more.md",
+      "sha256": "0bc7ad75822dc9c3be071949fc5ced5122f8f176e178104c46fc1821e6fce4e5",
+      "title": "Remembering More, Risking More: Longitudinal Safety Risks in Memory-Equipped LLM Agents",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2605.17830"
+      ],
+      "arxiv_versions": [
+        "v1"
+      ],
+      "identities": [
+        "arxiv:2605.17830"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T17",
+      "kind": "dossier",
+      "path": "literature/papers/t17-hiddenbench.md",
+      "sha256": "1c6cb7ae1f5cb54cd32a408374c27f86cb934f4ed1797865596ed7c3c7f7f057",
+      "title": "Systematic Failures in Collective Reasoning under Distributed Information in Multi-Agent LLMs",
+      "dossier_status": "peer-reviewed",
+      "read_status": "pass1",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2505.11556"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "arxiv:2505.11556",
+        "doi:10.48550/arxiv.2505.11556"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": "https://arxiv.org/pdf/2505.11556",
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": "13aaa2d8-ce60-4925-bc30-8ec43b98e733",
+      "paper_id": "7f1ebfc5-e0db-44d8-be46-2226aad97d1c",
+      "status": "completed",
+      "note_status": "created",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T18",
+      "kind": "dossier",
+      "path": "literature/papers/t18-getting-out-of-the-big-muddy.md",
+      "sha256": "3c2f5f7b786751c723494304221742b822b2cb250b0387057d26a592ff4decc8",
+      "title": "Getting out of the Big-Muddy: Escalation of Commitment in LLMs",
+      "dossier_status": "preprint",
+      "read_status": "stub",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2508.01545"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "arxiv:2508.01545",
+        "doi:10.48550/arxiv.2508.01545"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T19",
+      "kind": "dossier",
+      "path": "literature/papers/t19-outcome-driven-constraint-violations.md",
+      "sha256": "38a36fa1892e742acd313972c5e137183542d307c9514e6040db4158679c2311",
+      "title": "A Benchmark for Evaluating Outcome-Driven Constraint Violations in Autonomous AI Agents",
+      "dossier_status": "preprint",
+      "read_status": "stub",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2512.20798"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "arxiv:2512.20798",
+        "doi:10.48550/arxiv.2512.20798"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T2",
+      "kind": "dossier",
+      "path": "literature/papers/t2-schelling-focal-points.md",
+      "sha256": "fd7d3be04ade6b70e7f6e7df56b7ec69c7f556d804a14ee26f4b302df53e0871",
+      "title": "Thomas Schelling interview",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://www.richmondfed.org/publications/research/econ_focus/2005/spring/full_interview"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://www.richmondfed.org/publications/research/econ_focus/2005/spring/full_interview"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T20",
+      "kind": "dossier",
+      "path": "literature/papers/t20-episem-bench.md",
+      "sha256": "fe71bf0b953027992f74757d0efa23ebdbb9b79e7211d4cfb7e1f44709fb3a45",
+      "title": "EpiSEM-Bench: Evaluating Safety and Evidence Recovery in LLM Agents under Missing Evidence",
+      "dossier_status": "draft",
+      "read_status": "pass1",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2610.31650"
+      ],
+      "arxiv_versions": [
+        "v1"
+      ],
+      "identities": [
+        "arxiv:2610.31650"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T21",
+      "kind": "dossier",
+      "path": "literature/papers/t21-specification-based-testing.md",
+      "sha256": "7e7010bd929fe56d26b5016795bd3809b1b393fb9c7e5ec8abe72857f88b55e6",
+      "title": "Specification-Based Testing of Large Language Models",
+      "dossier_status": "draft",
+      "read_status": "pass1",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2610.14443"
+      ],
+      "arxiv_versions": [
+        "v1"
+      ],
+      "identities": [
+        "arxiv:2610.14443"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T22",
+      "kind": "dossier",
+      "path": "literature/papers/t22-delegated-misalignment.md",
+      "sha256": "806ea23bccf45715f3f3f139aa33f90ae4e74365ef8b84fc51636e4d23ab2cc3",
+      "title": "Delegated Misalignment: How Multi-Agent Structures Amplify LLM Safety Risks",
+      "dossier_status": "draft",
+      "read_status": "pass1",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2609.27900"
+      ],
+      "arxiv_versions": [
+        "v1"
+      ],
+      "identities": [
+        "arxiv:2609.27900"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T23",
+      "kind": "dossier",
+      "path": "literature/papers/t23-interruptbench.md",
+      "sha256": "97909e0427a6ea59b413302a3f2b92d86782d712829784434ed69e6d66d31bda",
+      "title": "When Users Change Their Mind: Evaluating Interruptible Agents in Long-Horizon Web Navigation",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2604.00892"
+      ],
+      "arxiv_versions": [
+        "v1"
+      ],
+      "identities": [
+        "arxiv:2604.00892"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T24",
+      "kind": "dossier",
+      "path": "literature/papers/t24-async-rbench.md",
+      "sha256": "e9e244d314b511906972ff329df9f681f385453dfcdc011d914bf8372a97aaf0",
+      "title": "Async-RBench: Benchmarking Asynchronous Task Execution in LLM Agents",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2610.32429"
+      ],
+      "arxiv_versions": [
+        "v1"
+      ],
+      "identities": [
+        "arxiv:2610.32429"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T25",
+      "kind": "dossier",
+      "path": "literature/papers/t25-incomplete-tasks-shutdown-resistance.md",
+      "sha256": "164878067addb37a962c98373e3721cbaba850a4b7bb2f390f45b6bb3e43ed79",
+      "title": "Incomplete Tasks Induce Shutdown Resistance in Some Frontier LLMs",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2509.14260"
+      ],
+      "arxiv_versions": [
+        "v2"
+      ],
+      "identities": [
+        "arxiv:2509.14260"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T26",
+      "kind": "dossier",
+      "path": "literature/papers/t26-explore-or-confirm.md",
+      "sha256": "63b9a9c9da5fb2505dd869c2c4189960e7e53137ed48f469127c14109acf8320",
+      "title": "Explore or Confirm? LLM Agents Misallocate Measurements Under Noise",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2610.25111"
+      ],
+      "arxiv_versions": [
+        "v1"
+      ],
+      "identities": [
+        "arxiv:2610.25111"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T27",
+      "kind": "dossier",
+      "path": "literature/papers/t27-leveson-system-safety.md",
+      "sha256": "449226fa68895a8744fb908830ad1e796de326059f079bea61494c0e15263b5a",
+      "title": "A New Accident Model for Engineering Safer Systems",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://doi.org/10.1016/S0925-7535(03)00047-X"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "doi:10.1016/s0925-7535(03)00047-x"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T28",
+      "kind": "dossier",
+      "path": "literature/papers/t28-grid-agentic-digital-twin.md",
+      "sha256": "0fb06890b84136860ef0844f45175724b5c20090217b54672550d2217f916045",
+      "title": "A Governance-Aware Large Language Model Orchestrated Agentic Digital Twin for Transmission System Operator Control Room Decision Support",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://arxiv.org/abs/2609.22476"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "arxiv:2609.22476"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T3",
+      "kind": "dossier",
+      "path": "literature/papers/t3-rashomon-many-good-models.md",
+      "sha256": "78614c90fa9a9dcf8ab3e747242f18b3438c29a2e2388ec9e3e93163c1b46b6d",
+      "title": "Amazing Things Come From Having Many Good Models",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://arxiv.org/abs/2407.04846"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "arxiv:2407.04846"
+      ],
+      "source_ids": [
+        "src-f2b6b5677762520f2939"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T4",
+      "kind": "dossier",
+      "path": "literature/papers/t4-pearl-causal-inference-overview.md",
+      "sha256": "9afdf78f1ff47ae2abc80652d429e9f990c0d2548da7204cd80391bd7c1f4b99",
+      "title": "Causal inference in statistics: An overview",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://web.cs.ucla.edu/~kaoru/SS-2009-57-Sup.pdf"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://web.cs.ucla.edu/~kaoru/SS-2009-57-Sup.pdf"
+      ],
+      "source_ids": [
+        "src-ef2593a04ae2600ba2d8"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T5",
+      "kind": "dossier",
+      "path": "literature/papers/t5-measurement-and-fairness.md",
+      "sha256": "c00bbf92eabbd267da7105f2faf530df285757edfef6e1157080d0b57119760c",
+      "title": "Measurement and Fairness",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://arxiv.org/abs/1912.05511"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "arxiv:1912.05511"
+      ],
+      "source_ids": [
+        "src-3a25587281d433667a90"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T6",
+      "kind": "dossier",
+      "path": "literature/papers/t6-algorithmic-monoculture.md",
+      "sha256": "bcedefddcf9ed61165370fc7cad0d291a3deb26d593e4b0a81e93ba2592fe630",
+      "title": "Algorithmic Monoculture and Social Welfare",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://arxiv.org/abs/2101.05853"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "arxiv:2101.05853"
+      ],
+      "source_ids": [
+        "src-6169909648eed845ab8f"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T7",
+      "kind": "dossier",
+      "path": "literature/papers/t7-electricity-focal-points.md",
+      "sha256": "7bc9580dc0b76bf5cbc53e44b9629b766db1671ebc3d063642defe46c6bdb593",
+      "title": "Empowering Customer Choice in Electricity Markets",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://www.oecd.org/content/dam/oecd/en/publications/reports/2011/10/empowering-customer-choice-in-electricity-markets_g17a2030/5kg3n27x4v41-en.pdf"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://www.oecd.org/content/dam/oecd/en/publications/reports/2011/10/empowering-customer-choice-in-electricity-markets_g17a2030/5kg3n27x4v41-en.pdf"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T8",
+      "kind": "dossier",
+      "path": "literature/papers/t8-strategic-algorithmic-monoculture.md",
+      "sha256": "5b24dfc36ee9792df1c6febe3cd882f413db977f37490a831643f4668ec6ec35",
+      "title": "Strategic Algorithmic Monoculture: Experimental Evidence from Coordination Games",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://arxiv.org/abs/2604.09502"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "arxiv:2604.09502"
+      ],
+      "source_ids": [
+        "src-a1c7ec2ffd30ab575746"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "T9",
+      "kind": "dossier",
+      "path": "literature/papers/t9-subversion-via-focal-points.md",
+      "sha256": "bbf36e4a3ceaaf67828172a0507f9fec296d0a59be19ad8fadf31ac161b760bd",
+      "title": "Subversion via Focal Points: Investigating Collusion in LLM Monitoring",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://arxiv.org/abs/2507.03010"
+      ],
+      "arxiv_versions": [
+        "v1"
+      ],
+      "identities": [
+        "arxiv:2507.03010"
+      ],
+      "source_ids": [
+        "src-e7a4463f941435391cfb"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "W4",
+      "kind": "dossier",
+      "path": "literature/papers/w4-deepseek-search-fetch.md",
+      "sha256": "6f85deeebb98a7c28fcfedcc9fbbdc296f2411860a020220d9c96ae9d518ac5b",
+      "title": "Search & Fetch",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://api-docs.deepseek.com/guides/search/"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://api-docs.deepseek.com/guides/search"
+      ],
+      "source_ids": [
+        "src-56ddeb4dc142762fd27d"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "W5",
+      "kind": "dossier",
+      "path": "literature/papers/w5-deepseek-account-balance.md",
+      "sha256": "c7c60bf81d01aa636707c5d4cc8beb307c94e467240c8cd9c0ea82e3adca32f5",
+      "title": "Get User Balance",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://api-docs.deepseek.com/api/get-user-balance/"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://api-docs.deepseek.com/api/get-user-balance"
+      ],
+      "source_ids": [
+        "src-9a38e69bf95977aa4273"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "W6",
+      "kind": "dossier",
+      "path": "literature/papers/w6-deepseek-flash-1017-update.md",
+      "sha256": "49727a71a1ecd2d4c3196c22e8554838056bfaf6e66e5e31894530b5eaf03031",
+      "title": "DeepSeek Change Log: 2026-10-17 entry",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://api-docs.deepseek.com/updates/"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://api-docs.deepseek.com/updates"
+      ],
+      "source_ids": [
+        "src-8f8555b73e1b42928d84"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "W7",
+      "kind": "dossier",
+      "path": "literature/papers/w7-deepseek-native-search-provider.md",
+      "sha256": "0bbe034302730a9aa4192fb9b6f6383f8722f5f5dc8299fc8dbaca5d77973f21",
+      "title": "DeepSeek Harness native web-search provider",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-28",
+      "source_urls": [
+        "https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/web/web-search-deepseek/README.md"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/web/web-search-deepseek/README.md"
+      ],
+      "source_ids": [
+        "src-da95dace19c6c034c752"
+      ],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "W8",
+      "kind": "dossier",
+      "path": "literature/papers/w8-cais-catastrophic-ai-risks.md",
+      "sha256": "c3181a1e219067a06fc42c392827b1d7099bb9f33dde3eb490b095a5f0c9fa75",
+      "title": "An Overview of Catastrophic AI Risks",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://safe.ai/ai-risk"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://safe.ai/ai-risk"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "W9",
+      "kind": "dossier",
+      "path": "literature/papers/w9-doe-ai-critical-energy-risk-assessment.md",
+      "sha256": "f6acc961492abe265445b40aa6a59a128992b1be6f6801964b687aba3748a105",
+      "title": "DOE Delivers Initial Risk Assessment on Artificial Intelligence for Critical Energy Infrastructure",
+      "dossier_status": "draft",
+      "read_status": "stub",
+      "updated": "2026-10-29",
+      "source_urls": [
+        "https://www.energy.gov/ceser/articles/doe-delivers-initial-risk-assessment-artificial-intelligence-critical-energy"
+      ],
+      "arxiv_versions": [],
+      "identities": [
+        "url:https://www.energy.gov/ceser/articles/doe-delivers-initial-risk-assessment-artificial-intelligence-critical-energy"
+      ],
+      "source_ids": [],
+      "local_pdf": null,
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "pending",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "local-pdf:2306.12001v6.pdf",
+      "kind": "literature_pdf",
+      "path": "2306.12001v6.pdf",
+      "sha256": "db87a2c26d9ccf274d7e1500e584d86c0c478dc9e04cf8c6fd24b465d82d696f",
+      "identities": [
+        "arxiv:2306.12001"
+      ],
+      "arxiv_versions": [
+        "v6"
+      ],
+      "source_ids": [],
+      "local_pdf": "2306.12001v6.pdf",
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": "32d7a795-168f-4606-b88e-c1023e88b318",
+      "paper_id": "96732597-785f-46ca-88b6-eba26f43aa78",
+      "status": "completed",
+      "note_status": "not_applicable",
+      "error": null,
+      "matching_entry_ids": []
+    },
+    {
+      "id": "local-pdf:projects/2026-10-apart-collusion-sprint/report/REPORT.pdf",
+      "kind": "sprint_report",
+      "path": "projects/2026-10-apart-collusion-sprint/report/REPORT.pdf",
+      "sha256": "f31c159b2bf959a8021763120188d5d33e0c2068363ebd596a174315e832013e",
+      "identities": [],
+      "arxiv_versions": [],
+      "source_ids": [],
+      "local_pdf": "projects/2026-10-apart-collusion-sprint/report/REPORT.pdf",
+      "upload_url": null,
+      "project_id": null,
+      "tag_ids": [],
+      "job_id": null,
+      "paper_id": null,
+      "status": "needs_selection",
+      "note_status": "not_applicable",
+      "error": null,
+      "matching_entry_ids": []
+    }
+  ]
+}

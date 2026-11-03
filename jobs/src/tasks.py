@@ -6,6 +6,10 @@ import psutil
 import os
 import asyncio
 import time
+import json
+import hashlib
+from urllib.parse import quote, urlparse
+from botocore.exceptions import ClientError
 from datetime import datetime, timezone
 from typing import Dict, Any, TypeVar, Coroutine
 import requests
@@ -29,6 +33,71 @@ WORKER_LOST_MESSAGE = (
     "Processing stopped before this PDF finished. It may be too large or "
     "complex to process. Try a shorter document, such as a single chapter."
 )
+
+class OutcomeDeliveryError(Exception):
+    pass
+
+
+def outcome_key(task, task_id):
+    return "job-outcomes/" + hashlib.sha256(f"{task}:{task_id}".encode()).hexdigest() + ".json"
+
+
+def load_outcome(task, task_id):
+    try:
+        obj = s3_service.s3_client.get_object(Bucket=s3_service.bucket_name, Key=outcome_key(task, task_id))
+        return json.loads(obj["Body"].read())
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404", "NotFound"):
+            return None
+        raise
+
+
+def put_outcome_once(task, task_id, data):
+    key = outcome_key(task, task_id)
+    endpoint = os.getenv("AWS_ENDPOINT_URL_S3") or os.getenv("AWS_ENDPOINT_URL", "")
+    if urlparse(endpoint).hostname == "storage.googleapis.com":
+        # GCS XML interoperability does not support S3's conditional PUT.
+        # The JSON API provides the equivalent generation-match precondition.
+        import google.auth
+        from google.auth.transport.requests import AuthorizedSession
+
+        credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/devstorage.read_write"])
+        bucket = quote(s3_service.bucket_name, safe="")
+        response = AuthorizedSession(credentials).post(
+            f"https://storage.googleapis.com/upload/storage/v1/b/{bucket}/o",
+            params={"uploadType": "media", "name": key, "ifGenerationMatch": "0"},
+            data=data, headers={"Content-Type": "application/json"}, timeout=60,
+        )
+        if response.status_code == 412:
+            return False
+        response.raise_for_status()
+        return True
+    try:
+        s3_service.s3_client.put_object(Bucket=s3_service.bucket_name, Key=key, Body=data, ContentType="application/json", IfNoneMatch="*")
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in ("PreconditionFailed", "412"):
+            return False
+        raise
+
+
+def deliver_outcome(task, task_id, webhook_url, payload):
+    try:
+        data = json.dumps({"webhook_url": webhook_url, "payload": payload}).encode()
+        if not put_outcome_once(task, task_id, data):
+            saved = load_outcome(task, task_id)
+            if saved is None or saved["webhook_url"] != webhook_url:
+                raise RuntimeError("Outcome target does not match")
+            payload = saved["payload"]
+        post_webhook(webhook_url, payload, delays=())
+    except Exception as exc:
+        raise OutcomeDeliveryError("Outcome persistence or delivery failed") from exc
+    return payload
+
+
+def cloud_tasks_mode():
+    return os.getenv("TASK_BACKEND", "celery").strip().lower() == "cloudtasks"
+
 
 def run_async_safely(coro: Coroutine[Any, Any, T]) -> T:
     """
@@ -162,6 +231,9 @@ def upload_and_process_file(
             "user_message": result.user_message if not result.success else None,
         }
 
+        if cloud_tasks_mode():
+            return deliver_outcome("upload_and_process_file", task_id, webhook_url, webhook_payload)
+
         # Send webhook notification
         try:
             post_webhook(webhook_url, webhook_payload)
@@ -176,7 +248,11 @@ def upload_and_process_file(
         )
         return webhook_payload
 
+    except OutcomeDeliveryError:
+        raise
     except Exception as exc:
+        if cloud_tasks_mode():
+            return deliver_outcome("upload_and_process_file", task_id, webhook_url, {"task_id": task_id, "status": "failed", "result": None, "error": str(exc), "user_message": None})
         logger.error(f"Task {task_id} failed: {exc}", exc_info=True)
         send_failure_webhook(webhook_url, task_id, error=str(exc))
 
@@ -217,10 +293,8 @@ def post_webhook(
 ) -> None:
     """POST an upload outcome to the server, retrying transient failures.
 
-    Under Cloud Tasks this call is the only way the outcome reaches the server:
-    the runner acknowledges the push either way, so a dropped webhook leaves the
-    job pending until it ages out. Retrying is safe because the server ignores
-    repeat deliveries for a job. 404 is retried too: the server stores the
+    Cloud Tasks persists outcomes before calling this function and retries the
+    push on delivery failure. Repeated deliveries are safe. 404 is retried too: the server stores the
     task id on the job just after enqueueing, so a fast outcome can arrive
     first. Other client errors are final.
     Raises the last requests.RequestException when every attempt fails.
@@ -231,7 +305,7 @@ def post_webhook(
                 webhook_url,
                 json=payload,
                 timeout=timeout,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", "X-Jobs-Secret": os.getenv("JOBS_INTERNAL_SECRET", "")},
             ).raise_for_status()
             return
         except requests.RequestException as e:
@@ -308,9 +382,8 @@ def construct_data_table_task(
 
     write_to_status("Starting data table construction")
 
-    data_table = DataTableSchema.model_validate(data_table)
-
     try:
+        data_table = DataTableSchema.model_validate(data_table)
         result = run_async_safely(
             construct_data_table(
                 data_table_schema=data_table,
@@ -328,12 +401,15 @@ def construct_data_table_task(
             "error": result[1] if not result[0].success else None,
         }
 
+        if cloud_tasks_mode():
+            return deliver_outcome("process_data_table", task_id, webhook_url, webhook_payload)
+
         try:
             response = requests.post(
                 webhook_url,
                 json=webhook_payload,
                 timeout=60,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", "X-Jobs-Secret": os.getenv("JOBS_INTERNAL_SECRET", "")},
             )
             response.raise_for_status()
             logger.info(f"Webhook sent successfully for task {task_id}")
@@ -344,7 +420,11 @@ def construct_data_table_task(
         logger.info(f"Task {task_id} completed successfully")
         return
 
+    except OutcomeDeliveryError:
+        raise
     except Exception as exc:
+        if cloud_tasks_mode():
+            return deliver_outcome("process_data_table", task_id, webhook_url, {"task_id": task_id, "status": "failed", "result": None, "error": str(exc)})
         logger.error(f"Data table construction task {task_id} failed: {exc}", exc_info=True)
 
         # Send failure webhook
@@ -360,7 +440,7 @@ def construct_data_table_task(
                 webhook_url,
                 json=failure_payload,
                 timeout=60,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", "X-Jobs-Secret": os.getenv("JOBS_INTERNAL_SECRET", "")},
             ).raise_for_status()
 
             return
