@@ -1,6 +1,6 @@
 {
   "intent": "docs/work/INTENT-personal-cloud-run-deploy.md",
-  "phase": "P3: live; awaiting first sign-in and upload",
+  "phase": "P3: core flow verified end to end on Vertex AI; idle-login and one-week cost checks pending",
   "branch": "feat/cloud-run-personal",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,8 +8,8 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Operator signs in at https://openpaper-1061746501640.asia-southeast1.run.app and uploads a PDF; then verify Cloud Tasks round trip, PDF render, chat. Then P4 corpus import.",
-  "blocked_on": "operator browser sign-in",
+  "next_action": "Commit session changes (operator to confirm). Decide webhook-outage policy for PDF and data-table outcomes (review 20261103T014702Z). Pending P3 checks: login after 30 min idle; cost after one week. Small: failed-upload UI shows no reason; orphan stuck paper 1acae0fe...; GEMINI_API_KEY secret unused. Then P4 corpus import.",
+  "blocked_on": null,
   "updated": "2026-11-03",
   "done": [
     "bootstrap (project, billing, APIs, registry, SA, queue, GCS bucket+CORS+HMAC)",
@@ -20,6 +20,21 @@
     "deploy: openpaper + openpaper-jobs live; /api/health 200 via Caddy, client 200, jobs 403 anon / 200 with identity token",
     "X-Jobs-Secret rollout; scheduler \u2192 server 200",
     "services pinned by digest (revision openpaper-00002)",
-    "backup job verified end to end: dump, upload to gs://openpaper-sammatuba-papers/backups/, prune (14 days)"
-  ]
+    "backup job verified end to end: dump, upload to gs://openpaper-sammatuba-papers/backups/, prune (14 days)",
+    "OAuth redirect URI registered; Google sign-in verified in operator browser (callback 302, /api/auth/me 200)",
+    "Caddy X-Forwarded-Proto https fix deployed; POST /api/paper/upload 307 Location now https",
+    "jobs fixes deployed (src.tasks import, webhook retry); e2e r3: upload 202 -> Cloud Tasks -> jobs 200 -> GCS download 0.16s -> text extraction 10.6s -> Gemini 402 -> failure webhook 200 -> job failed (22s). Full round trip proven except LLM.",
+    "Vertex AI deployed (openpaper-00005, openpaper-jobs-00005): runtime SA has aiplatform.user; both services GOOGLE_GENAI_USE_VERTEXAI=true, location global; 404 webhook retry shipped",
+    "e2e r4 (chrome-devtools, Haiku subagent, 2026-11-03 01:39 UTC): upload 202 -> processing completed in ~22s -> PDF renders 55 pages from GCS -> AI overview shown -> chat reply with inline citations [1][2] (gemini-3.8). No failed requests or console errors. Paper 96732597-785f-46ca-88b6-eba26f43aa78"
+  ],
+  "review": {
+    "latest": ".meos/reviews/20261103T014702Z.md (local)",
+    "verdict": "rework",
+    "unresolved": [
+      "webhook outage beyond ~1 min retry window drops PDF outcome (runner acks 200); operator leaning to accept for personal use, not yet decided",
+      "data-table webhooks single attempt, no retry",
+      "P3 idle-login (30 min) and one-week cost checks pending"
+    ]
+  },
+  "verification": "jobs unittest 14 OK (GOOGLE_API_KEY=dummy, per-file); server tests.test_gemini_vertex + tests.test_stream_provider_fallback 14 OK; live e2e r4 pass 2026-11-03 01:39 UTC"
 }

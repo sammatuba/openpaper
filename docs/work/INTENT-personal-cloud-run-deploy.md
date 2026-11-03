@@ -40,22 +40,23 @@
 3. `server/gunicorn.config.py`: `WEB_CONCURRENCY` override.
 4. Task backend: `server/app/helpers/pdf_jobs.py` + `referral_jobs.py` dispatch through a `TaskBackend` with `celery` and `cloudtasks` implementations; `jobs/src/app.py` gains `POST /tasks/run` (OIDC-protected via Cloud Tasks service account, or shared `JOBS_INTERNAL_SECRET`) that runs the named task eagerly. Referral task is a no-op in cloudtasks mode.
 5. `client/Dockerfile`: `ARG NEXT_PUBLIC_API_URL`; drop the hard-coded Stripe and PostHog values; sourcemap upload stage only when secrets are provided.
-6. `deploy/` directory: `Caddyfile`, `cloudbuild.yaml` (three images → Artifact Registry), `service.yaml` (multi-container service), `jobs-service.yaml`, `migrate-job.yaml`, `backup-job.yaml` (pg_dump → R2), `deploy.sh` (idempotent: enable APIs, queue, scheduler, secrets, deploy), `README.md`.
-7. Found while doing 1: `STRIPE_API_KEY` (subscription config) and `FIRECRAWL_API_KEY` (scrape tool) also raised at import; both made lazy. The jobs service reads `GOOGLE_API_KEY`, not `GEMINI_API_KEY`; the deploy maps the same secret onto both. Without Stripe every user is on the Basic plan (10 papers, 2 projects), which would block the corpus import, so `SELF_HOSTED_PLAN=researcher` forces a plan without billing.
+6. `deploy/` directory: `Caddyfile`, `cloudbuild.yaml` (three images → Artifact Registry), `service.yaml` (multi-container service), `jobs-service.yaml`, `migrate-job.yaml`, `backup-job.yaml` (pg_dump → GCS), `deploy.sh` (idempotent: enable APIs, queue, scheduler, secrets, deploy), `README.md`.
+7. Found while doing 1: `STRIPE_API_KEY` (subscription config) and `FIRECRAWL_API_KEY` (scrape tool) also raised at import; both made lazy. The jobs service reads `GOOGLE_API_KEY`, not `GEMINI_API_KEY`; the deploy mapped the same secret onto both (superseded 2026-11-03 by Vertex AI, see P3). Without Stripe every user is on the Basic plan (10 papers, 2 projects), which would block the corpus import, so `SELF_HOSTED_PLAN=researcher` forces a plan without billing.
 - Checks (run 2026-11-02): server `unittest discover` 336 tests OK under the CI env and under a Gemini-only env; `from app.main import app` succeeds with only `GEMINI_API_KEY` set (providers: gemini, fallback: none); jobs suite 4 tests OK (runner executes a task under the server's id, failures return 200, unknown task 404, shared secret enforced); `TASK_BACKEND` unset leaves `JobsClient.cloud_tasks` None and the Celery path untouched.
-- Status: **done**, committed on `feat/cloud-run-personal`. Not yet exercised: a Cloud Build of the client image and a real Cloud Tasks round trip (P3).
+- Status: **done**, committed on `feat/cloud-run-personal`. The Cloud Build and Cloud Tasks paths were exercised in P3 (2026-11-03).
 
 ### P2 Operator actions (console/manual, in this order)
 1. `! gcloud config configurations create personal` then `! gcloud auth login` as `jansammat26@gmail.com`.
 2. Neon: project in `aws-ap-southeast-1`, copy the pooled connection string.
 3. ~~Cloudflare R2~~ replaced by GCS; bootstrap creates bucket, CORS and HMAC key.
-4. Gemini API key (AI Studio).
+4. ~~Gemini API key (AI Studio)~~ replaced by Vertex AI on 2026-11-03 (AI Studio prepaid credits ran out; Vertex bills the project, where Google AI Pro Cloud credits apply). Bootstrap enables `aiplatform` and grants the runtime SA `aiplatform.user`.
 5. After the first deploy prints the service URL: OAuth consent screen (External, Testing, own Gmail as test user) and an OAuth web client with redirect `https://<service-url>/api/auth/google/callback`.
 
 ### P3 Provision and deploy
 - `deploy/deploy.sh` creates project `openpaper-personal-<suffix>`, links billing, enables Run/Build/Tasks/Scheduler/Secret Manager/Artifact Registry, stores secrets, builds images with Cloud Build, runs the migrate job, deploys `openpaper` and `openpaper-jobs`, creates the Tasks queue and two Scheduler jobs (Zotero sync daily, backup nightly).
-- Checks: sign in with the allow-listed Gmail; upload a PDF and see it finish processing; chat answers with citations; PDF renders (R2 CORS); second login after 30 min idle works (Neon resume + `pool_pre_ping`); backup object appears in R2.
-- Cost check after one week: GCP billing report under $3; Neon and R2 at $0.
+- Checks: sign in with the allow-listed Gmail; upload a PDF and see it finish processing; chat answers with citations; PDF renders (GCS CORS); second login after 30 min idle works (Neon resume + `pool_pre_ping`); backup object appears in the GCS bucket under `backups/`.
+- Cost check after one week: GCP billing report under $3; Neon at $0.
+- Results 2026-11-03: sign-in, upload → Cloud Tasks → jobs → Vertex Gemini → webhook (completed in ~22 s), PDF from GCS, AI overview and cited chat all **pass** (chrome-devtools run with a Haiku subagent; Google refuses sign-in in an automated browser, so the session cookie came from a normal sign-in). Backup **pass**. Fixes found on the way: OAuth redirect URI registration, Caddy `X-Forwarded-Proto` (http:// trailing-slash redirect blocked as mixed content), jobs never imported its tasks under uvicorn (404 "Task not registered"), webhook retries. **Pending:** login after 30 min idle; one-week cost check; webhook-outage policy (outcome dropped when the server is unreachable beyond the ~1 min retry window; data-table webhooks still single attempt).
 
 ### P4 Corpus
 - Import the ai-safety literature: extract arXiv ids from `../ai-safety/literature/papers/*.md`, upload into project "Epistemic authority and collusion" (two local PDFs plus arXiv fetches). Verify the Open Paper upload-by-URL path first; otherwise fetch PDFs locally and upload.
@@ -64,7 +65,7 @@
 - Remote MCP server (streamable HTTP) on the server exposing `search_papers`, `get_paper`, `list_annotations`, `add_note`, guarded by a bearer token; add it in ChatGPT Developer Mode as a custom connector. Spec written when P3 is verified.
 
 ## Open items
-- ~~Whether anything fetches the stored `file_url` directly.~~ Closed 2026-11-03: every paper/file URL the API returns comes from `get_cached_presigned_url*` (paper_api.py), so the R2 bucket stays private; `R2_PUBLIC_HOST` only shapes the stored key prefix.
+- ~~Whether anything fetches the stored `file_url` directly.~~ Closed 2026-11-03: every paper/file URL the API returns comes from `get_cached_presigned_url*` (paper_api.py), so the storage bucket stays private; `R2_PUBLIC_HOST` only shapes the stored key prefix.
 - Whether the jobs → server webhook should also carry `JOBS_INTERNAL_SECRET` (currently matched by unguessable job + task ids).
 - Found in P3 (2026-11-03): a shared secret in `Authorization` never arrives on Cloud Run paths (Cloud Tasks replaces it with OIDC; a Scheduler-set bearer was rejected 403 by the server). Moved to `X-Jobs-Secret` in the task push, the runner, the internal Zotero endpoint, the periodic task and the scheduler job; bearer still accepted for local runs. The leaked-in-terminal first value of `JOBS_INTERNAL_SECRET` was rotated and version 1 disabled.
-- Not yet exercised against the real APIs: the Cloud Run service YAML (multi-container, sidecar probes), the Cloud Build run, a Cloud Tasks round trip, GCS S3-interop presigned GET with the `when_required` checksum setting and region `auto`. All land in P3.
+- ~~Not yet exercised against the real APIs: service YAML, Cloud Build, Cloud Tasks round trip, GCS presigned GET.~~ Closed 2026-11-03: all exercised in the P3 end-to-end run.
