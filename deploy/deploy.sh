@@ -73,14 +73,16 @@ cmd_bootstrap() {
   fi
   log "APIs"
   gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
-    cloudtasks.googleapis.com cloudscheduler.googleapis.com secretmanager.googleapis.com iam.googleapis.com
+    cloudtasks.googleapis.com cloudscheduler.googleapis.com secretmanager.googleapis.com iam.googleapis.com \
+    aiplatform.googleapis.com
   log "artifact registry $REPO"
   gcloud artifacts repositories describe "$REPO" --location="$REGION" >/dev/null 2>&1 || \
     gcloud artifacts repositories create "$REPO" --location="$REGION" --repository-format=docker
   log "service account $RUNTIME_SA"
   gcloud iam service-accounts describe "$RUNTIME_SA" >/dev/null 2>&1 || \
     gcloud iam service-accounts create "$SA_NAME" --display-name="Open Paper runtime"
-  for role in roles/secretmanager.secretAccessor roles/cloudtasks.enqueuer roles/cloudtasks.taskDeleter roles/run.invoker roles/logging.logWriter; do
+  # aiplatform.user: Gemini runs on Vertex AI as this account (no API key).
+  for role in roles/secretmanager.secretAccessor roles/cloudtasks.enqueuer roles/cloudtasks.taskDeleter roles/run.invoker roles/logging.logWriter roles/aiplatform.user; do
     gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:${RUNTIME_SA}" --role="$role" --condition=None >/dev/null
   done
   # The server enqueues tasks that carry an OIDC token for this same account.
@@ -130,7 +132,7 @@ JSON
 }
 
 # Prompted by secrets-init. GCS_HMAC_* are created by bootstrap, not prompted.
-SECRET_NAMES=(DATABASE_URL DATABASE_URL_DIRECT GEMINI_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
+SECRET_NAMES=(DATABASE_URL DATABASE_URL_DIRECT GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
               JOBS_INTERNAL_SECRET ADMIN_SECRET_KEY)
 ALL_SECRETS=("${SECRET_NAMES[@]}" GCS_HMAC_ACCESS_ID GCS_HMAC_SECRET)
 # Generated locally when left blank at the prompt; never need to be known.
@@ -140,7 +142,6 @@ secret_hint() {
   case "$1" in
     DATABASE_URL) echo "Neon pooled connection string (host contains -pooler), with ?sslmode=require" ;;
     DATABASE_URL_DIRECT) echo "Neon direct connection string (no -pooler); blank = same as DATABASE_URL" ;;
-    GEMINI_API_KEY) echo "Google AI Studio API key" ;;
     GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET) echo "OAuth web client in the personal project; blank = placeholder until created" ;;
     JOBS_INTERNAL_SECRET|ADMIN_SECRET_KEY) echo "blank = generate 32 random bytes" ;;
   esac

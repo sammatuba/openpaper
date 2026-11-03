@@ -59,17 +59,14 @@ spec:
               value: ${GCS_BUCKET}
             - name: CLOUDFLARE_BUCKET_NAME
               value: ${STORAGE_PUBLIC_HOST}
-            - name: GEMINI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: GEMINI_API_KEY
-                  key: latest
-            # jobs/src/llm_client.py reads GOOGLE_API_KEY; same key.
-            - name: GOOGLE_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: GEMINI_API_KEY
-                  key: latest
+            # Gemini on Vertex AI as the runtime service account (roles/aiplatform.user),
+            # billed to the project; no API key.
+            - name: GOOGLE_GENAI_USE_VERTEXAI
+              value: "true"
+            - name: GOOGLE_CLOUD_PROJECT
+              value: ${PROJECT_ID}
+            - name: GOOGLE_CLOUD_LOCATION
+              value: global
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:

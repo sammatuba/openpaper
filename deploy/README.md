@@ -38,7 +38,7 @@ piped on stdin, and go straight into Secret Manager:
 
 ```bash
 deploy/deploy.sh secrets-init                 # prompts for every secret not yet set
-deploy/deploy.sh secret-set GEMINI_API_KEY    # rotate one
+deploy/deploy.sh secret-set GOOGLE_CLIENT_SECRET   # rotate one
 powershell.exe -c Get-Clipboard | tr -d '\r\n' | deploy/deploy.sh secret-set DATABASE_URL   # or pipe it (WSL clipboard)
 deploy/deploy.sh secrets-status
 ```
@@ -53,7 +53,6 @@ needs it to add versions. Rotating a secret is `secret-set` then `deploy`.
 |---|---|
 | `DATABASE_URL` | Neon pooled connection string |
 | `DATABASE_URL_DIRECT` | Neon direct string (backups); blank copies `DATABASE_URL` |
-| `GEMINI_API_KEY` | Google AI Studio |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | OAuth web client in the personal project |
 | `GCS_HMAC_ACCESS_ID`, `GCS_HMAC_SECRET` | created by `bootstrap` for the runtime SA, never shown |
 | `JOBS_INTERNAL_SECRET`, `ADMIN_SECRET_KEY` | generated at the prompt when left blank |
@@ -80,7 +79,9 @@ so the Google OAuth client can be created before anything is deployed.
    bucket, its CORS rule for the service origin, and the HMAC key.
 5. **Neon.** New project, region `aws-ap-southeast-1` (Singapore). Keep the
    pooled and direct connection strings at hand for the prompt.
-6. **Gemini API key** from AI Studio.
+6. **Gemini** needs nothing from you: it runs on Vertex AI as the runtime
+   service account (bootstrap enables the API and grants `aiplatform.user`),
+   billed to the project, so Google AI Pro Cloud credits can cover it.
 7. **Enter secrets, then ship:**
    ```bash
    deploy/deploy.sh secrets-init
@@ -123,7 +124,7 @@ Rollback: Cloud Run keeps revisions; `gcloud run services update-traffic openpap
 | Cloud Tasks, Scheduler, Secret Manager | cents |
 | Neon free tier (0.5 GB) | $0 |
 | GCS (a few GB in asia-southeast1, plus egress when reading) | about $0.10 plus cents |
-| Gemini Flash | usage; a few dollars at heavy reading |
+| Gemini Flash on Vertex AI | usage; a few dollars at heavy reading |
 
 ## Troubleshooting
 

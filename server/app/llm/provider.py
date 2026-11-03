@@ -247,19 +247,32 @@ BLOCKED_FINISH_REASONS = {
 }
 
 
+def gemini_uses_vertex_ai() -> bool:
+    """GOOGLE_GENAI_USE_VERTEXAI=true routes Gemini through Vertex AI, billed to
+    the Cloud project and authenticated as the runtime service account,
+    instead of an AI Studio API key."""
+    return os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").strip().lower() in ("1", "true")
+
+
 class GeminiProvider(BaseLLMProvider):
     """Gemini LLM provider implementation"""
 
     def __init__(self):
-        self.api_key = os.getenv("GEMINI_API_KEY")
-        if not self.api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is required")
-
-        self._client = genai.Client(
-            api_key=self.api_key,
-            # Retry twice more on a 408/429/5xx or a connect/read timeout.
-            http_options=HttpOptions(retry_options=HttpRetryOptions(attempts=3)),
-        )
+        # Retry twice more on a 408/429/5xx or a connect/read timeout.
+        http_options = HttpOptions(retry_options=HttpRetryOptions(attempts=3))
+        if gemini_uses_vertex_ai():
+            self.api_key = None
+            self._client = genai.Client(
+                vertexai=True,
+                project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+                location=os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
+                http_options=http_options,
+            )
+        else:
+            self.api_key = os.getenv("GEMINI_API_KEY")
+            if not self.api_key:
+                raise ValueError("GEMINI_API_KEY environment variable is required")
+            self._client = genai.Client(api_key=self.api_key, http_options=http_options)
         self._default_model = "gemini-3.8-flash"
         self._fast_model = "gemini-3.5-flash-lite"
 

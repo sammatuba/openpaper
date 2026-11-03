@@ -17,6 +17,7 @@ from app.llm.provider import (
     OpenAIProvider,
     StreamChunk,
     ToolCallResult,
+    gemini_uses_vertex_ai,
     strict_json_schema,
 )
 from app.llm.utils import is_provider_outage, retry_llm_operation
@@ -50,6 +51,8 @@ def _provider_configured(provider: LLMProvider) -> bool:
     """True when the provider's API key is set. The default provider is
     always initialized (and fails loudly without its key); the others are
     optional so a personal deployment can run on one provider."""
+    if provider == LLMProvider.GEMINI and gemini_uses_vertex_ai():
+        return True
     env_var = _PROVIDER_KEY_ENV.get(provider)
     return bool(env_var and os.getenv(env_var))
 

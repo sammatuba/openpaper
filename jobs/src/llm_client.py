@@ -178,6 +178,13 @@ class JSONParser:
         )
 
 
+def gemini_uses_vertex_ai() -> bool:
+    """GOOGLE_GENAI_USE_VERTEXAI=true routes Gemini through Vertex AI, billed to
+    the Cloud project and authenticated as the runtime service account,
+    instead of an AI Studio API key."""
+    return os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").strip().lower() in ("1", "true")
+
+
 class AsyncLLMClient:
     """
     A simple LLM client for metadata extraction.
@@ -190,7 +197,7 @@ class AsyncLLMClient:
 
     def __init__(
         self,
-        api_key: str,
+        api_key: Optional[str],
         default_model: Optional[str] = None,
     ):
         self.api_key = api_key
@@ -198,12 +205,17 @@ class AsyncLLMClient:
 
     def _create_client(self, timeout: int = DEFAULT_TIMEOUT) -> genai.Client:
         """Create a fresh client instance for thread-safe concurrent calls."""
+        http_options = types.HttpOptions(timeout=timeout)
+        if gemini_uses_vertex_ai():
+            return genai.Client(
+                vertexai=True,
+                project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+                location=os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
+                http_options=http_options,
+            )
         if not self.api_key:
             raise ValueError("API key is not set")
-        return genai.Client(
-            api_key=self.api_key,
-            http_options=types.HttpOptions(timeout=timeout),
-        )
+        return genai.Client(api_key=self.api_key, http_options=http_options)
 
     async def _close_client(self, client: genai.Client) -> None:
         """Close the async transport before the task's event loop goes away.
@@ -527,7 +539,7 @@ class PaperOperations(AsyncLLMClient):
     with actual LLM API calls (OpenAI, Anthropic, Google, etc.)
     """
 
-    def __init__(self, api_key: str, default_model: Optional[str] = None):
+    def __init__(self, api_key: Optional[str], default_model: Optional[str] = None):
         """Initialize the LLM client for paper operations."""
         super().__init__(api_key, default_model=default_model)
 
@@ -1039,7 +1051,7 @@ class PaperOperations(AsyncLLMClient):
 # Create a single instance to use throughout the application
 api_key = os.getenv("GOOGLE_API_KEY")
 
-if not api_key:
+if not api_key and not gemini_uses_vertex_ai():
     raise ValueError("GOOGLE_API_KEY environment variable is not set")
 
 llm_client = PaperOperations(api_key=api_key, default_model=DEFAULT_CHAT_MODEL)

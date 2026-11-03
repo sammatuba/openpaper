@@ -105,11 +105,14 @@ spec:
                 secretKeyRef:
                   name: DATABASE_URL
                   key: latest
-            - name: GEMINI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: GEMINI_API_KEY
-                  key: latest
+            # Gemini on Vertex AI as the runtime service account (roles/aiplatform.user),
+            # billed to the project; no API key.
+            - name: GOOGLE_GENAI_USE_VERTEXAI
+              value: "true"
+            - name: GOOGLE_CLOUD_PROJECT
+              value: ${PROJECT_ID}
+            - name: GOOGLE_CLOUD_LOCATION
+              value: global
             - name: GOOGLE_CLIENT_ID
               valueFrom:
                 secretKeyRef:
