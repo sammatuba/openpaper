@@ -5,6 +5,7 @@ import logging
 import psutil
 import os
 import asyncio
+import time
 from datetime import datetime, timezone
 from typing import Dict, Any, TypeVar, Coroutine
 import requests
@@ -163,13 +164,7 @@ def upload_and_process_file(
 
         # Send webhook notification
         try:
-            response = requests.post(
-                webhook_url,
-                json=webhook_payload,
-                timeout=60,
-                headers={"Content-Type": "application/json"},
-            )
-            response.raise_for_status()
+            post_webhook(webhook_url, webhook_payload)
             logger.info(f"Webhook sent successfully for task {task_id}")
         except requests.RequestException as e:
             logger.error(f"Failed to send webhook for task {task_id}: {e}")
@@ -205,14 +200,47 @@ def send_failure_webhook(
         "user_message": user_message,
     }
     try:
-        requests.post(
-            webhook_url,
-            json=failure_payload,
-            timeout=timeout,
-            headers={"Content-Type": "application/json"},
-        ).raise_for_status()
+        post_webhook(webhook_url, failure_payload, timeout=timeout)
     except requests.RequestException as e:
         logger.error(f"Failed to send failure webhook for task {task_id}: {e}")
+
+
+# Waits between webhook attempts: five tries over about a minute.
+WEBHOOK_RETRY_DELAYS = (2, 5, 15, 30)
+
+
+def post_webhook(
+    webhook_url: str,
+    payload: dict,
+    timeout: int = 60,
+    delays: tuple[float, ...] = WEBHOOK_RETRY_DELAYS,
+) -> None:
+    """POST an upload outcome to the server, retrying transient failures.
+
+    Under Cloud Tasks this call is the only way the outcome reaches the server:
+    the runner acknowledges the push either way, so a dropped webhook leaves the
+    job pending until it ages out. Retrying is safe because the server ignores
+    repeat deliveries for a job. 404 is retried too: the server stores the
+    task id on the job just after enqueueing, so a fast outcome can arrive
+    first. Other client errors are final.
+    Raises the last requests.RequestException when every attempt fails.
+    """
+    for delay in (*delays, None):
+        try:
+            requests.post(
+                webhook_url,
+                json=payload,
+                timeout=timeout,
+                headers={"Content-Type": "application/json"},
+            ).raise_for_status()
+            return
+        except requests.RequestException as e:
+            status = e.response.status_code if e.response is not None else None
+            retryable = status is None or status >= 500 or status in (404, 429)
+            if delay is None or not retryable:
+                raise
+            logger.warning(f"Webhook to {webhook_url} failed ({e}); retrying in {delay}s")
+            time.sleep(delay)
 
 
 @worker_process_init.connect
