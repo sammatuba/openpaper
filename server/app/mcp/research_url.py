@@ -60,7 +60,10 @@ def normalize_research_pdf_url(url: str) -> tuple[str, str]:
         return f"openreview:{paper_id}", f"https://openreview.net/pdf?id={quote(paper_id)}"
     if not p.path.lower().endswith(".pdf"):
         raise ValueError("Publisher landing page is not a PDF; provide a direct PDF URL")
-    return f"pdf:{hostname}{p.path}?{p.query}", url
+    source_key = f"pdf:{hostname}{p.path}?{p.query}"
+    if len(source_key) > 600:
+        raise ValueError("PDF source URL is too long for the import ledger")
+    return source_key, url
 
 
 def _require_public_dns(host: str) -> None:
