@@ -3,6 +3,7 @@
 This is deliberately narrower than the browser's general URL import endpoint.
 Only exact publisher hosts and PDF URLs are accepted. No private network fetches.
 """
+import asyncio
 import ipaddress
 import re
 import socket
@@ -76,8 +77,8 @@ def _require_public_dns(host: str) -> None:
             raise ValueError("Research publisher resolves to a non-public network")
 
 
-async def fetch_research_pdf(url: str) -> bytes:
-    """Fetch with no redirects; enforce a hard byte cap and real PDF validation."""
+def _download_research_pdf(url: str) -> bytes:
+    """Run all blocking network I/O outside the ASGI event loop."""
     p = urlsplit(url)
     if (p.scheme != "https" or (p.hostname or "").lower() not in _ALLOWED_PDF_HOSTS
             or p.username or p.password or p.port not in (None, 443)):
@@ -100,6 +101,12 @@ async def fetch_research_pdf(url: str) -> bytes:
             data = b"".join(parts)
     except requests.RequestException as exc:
         raise ValueError("Research PDF download failed") from exc
+    return data
+
+
+async def fetch_research_pdf(url: str) -> bytes:
+    """Fetch without redirects, then validate the complete bounded PDF."""
+    data = await asyncio.to_thread(_download_research_pdf, url)
     valid, reason = await validate_pdf_content(data, source="MCP research URL")
     if not valid:
         raise ValueError(f"Invalid research PDF: {reason}")
