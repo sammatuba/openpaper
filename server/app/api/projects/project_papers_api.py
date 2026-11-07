@@ -10,7 +10,7 @@ from app.database.crud.projects.project_paper_crud import (
     project_paper_crud,
 )
 from app.database.database import get_db
-from app.database.models import Paper, ProjectPaper
+from app.database.models import Paper, Project, ProjectPaper
 from app.database.telemetry import track_event
 from app.helpers.s3 import s3_service
 from app.helpers.subscription_limits import (
@@ -182,29 +182,32 @@ async def add_paper_to_project(
 ) -> JSONResponse:
     """Add a paper to a project"""
     try:
-        can_add, error_message = can_user_add_papers_to_project(
-            db,
-            current_user,
-            project_id=uuid.UUID(project_id),
-            paper_count=len(request.paper_ids),
-        )
-        if not can_add:
-            return JSONResponse(
-                status_code=403,
-                content={"message": error_message},
-            )
+        pid = uuid.UUID(project_id)
+        paper_ids = list(dict.fromkeys(uuid.UUID(value) for value in request.paper_ids))
+        project = db.query(Project).filter(Project.id == pid).with_for_update().one_or_none()
+        if project is None:
+            raise ValueError("Project not found")
+        existing = {row.paper_id for row in db.query(ProjectPaper).filter(
+            ProjectPaper.project_id == pid, ProjectPaper.paper_id.in_(paper_ids)
+        ).all()}
+        additional = len(set(paper_ids) - existing)
+        if additional:
+            can_add, reason = can_user_add_papers_to_project(db, current_user, project_id=pid, paper_count=additional)
+            if not can_add:
+                raise PermissionError(reason or "Project paper limit reached")
 
-        for paper_id in request.paper_ids:
+        for paper_id in paper_ids:
             project_paper = project_paper_crud.create(
                 db,
-                obj_in=ProjectPaperCreate(paper_id=uuid.UUID(paper_id)),
+                obj_in=ProjectPaperCreate(paper_id=paper_id),
                 user=current_user,
-                project_id=uuid.UUID(project_id),
+                project_id=pid,
+                auto_commit=False,
             )
             if not project_paper:
-                logger.error(
-                    f"Failed to add paper {paper_id} to project {project_id}. Check permissions or if the paper already exists in the project."
-                )
+                raise ValueError("Paper not found, not owned, or insufficient project permissions")
+
+        db.commit()
 
         track_event(
             "papers_added_to_project",
@@ -218,7 +221,11 @@ async def add_paper_to_project(
             content={"message": "Papers added to project successfully"},
         )
 
+    except PermissionError as e:
+        db.rollback()
+        return JSONResponse(status_code=403, content={"message":str(e)})
     except Exception as e:
+        db.rollback()
         logger.error(f"Error adding paper to project: {e}", exc_info=True)
         return JSONResponse(
             status_code=400,

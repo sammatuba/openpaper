@@ -1,5 +1,6 @@
 import logging
 import uuid
+from datetime import datetime, timezone
 from ctypes import cast
 from typing import List, Optional
 
@@ -47,6 +48,11 @@ class ProjectPaperCRUD(
             )
 
         try:
+            # Shared with MCP, browser batches and PDF-upload associations.
+            # Retain the lock through the caller's commit when auto_commit=False.
+            project = db.query(Project).filter(Project.id == project_id).with_for_update().one_or_none()
+            if project is None:
+                return None
             # Check if the user has permission to add a paper to this project
             project_role = (
                 db.query(ProjectRole)
@@ -90,18 +96,23 @@ class ProjectPaperCRUD(
                 )
                 return existing_project_paper
 
+            from app.helpers.subscription_limits import can_user_add_papers_to_project
+            permitted, reason = can_user_add_papers_to_project(db, user, project_id, paper_count=1)
+            if not permitted:
+                raise PermissionError(reason or "Project paper limit reached")
             db_obj = ProjectPaper(project_id=project_id, paper_id=obj_in.paper_id)
             db.add(db_obj)
+            project.updated_at = datetime.now(timezone.utc)
             if auto_commit:
                 db.commit()
             else:
                 db.flush()
             db.refresh(db_obj)
 
-            # Touch project updated_at so it sorts to top of recent projects
-            project_crud.touch(db, project_id)
-
             return db_obj
+        except PermissionError:
+            db.rollback()
+            raise
         except Exception as e:
             db.rollback()
             logger.error(

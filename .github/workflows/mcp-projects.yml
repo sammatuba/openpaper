@@ -1,0 +1,37 @@
+name: MCP project operations
+on:
+  pull_request:
+    paths:
+      - 'server/app/mcp/**'
+      - 'server/app/database/**'
+      - 'server/app/helpers/project_admission.py'
+      - 'server/app/helpers/subscription_limits.py'
+      - 'server/app/api/projects/**'
+      - 'server/migrations/**'
+      - 'server/tests/**'
+      - 'server/pyproject.toml'
+      - 'server/uv.lock'
+      - 'scripts/ci/run_isolated_postgres.py'
+      - '.github/workflows/mcp-projects.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  project-operations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: '3.12'
+      - name: Install PostgreSQL
+        run: sudo apt-get update && sudo apt-get install -y postgresql
+      - name: Install locked server dependencies
+        working-directory: server
+        run: uv sync --locked
+      - name: Required PostgreSQL and MCP checks (no skips)
+        working-directory: server
+        run: uv run python ../scripts/ci/run_isolated_postgres.py

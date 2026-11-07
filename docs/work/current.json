@@ -1,16 +1,16 @@
 {
-  "intent": "docs/work/INTENT-research-ecosystem.md",
-  "phase": "Reviewed stack deployed; pilot complete; implementation committed and merged to origin/master",
-  "branch": "master",
+  "intent": "docs/work/INTENT-mcp-project-release.md",
+  "phase": "Backend deployed and public checks passed; authenticated live acceptance and SwarmLab creation pending",
+  "branch": "feat/mcp-project-management",
   "gcp": {
     "project": "openpaper-sammatuba",
     "number": "1061746501640",
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Resume on master from origin/master; read docs/work/HANDOFF-research-ecosystem.md and this pointer. Collect new pilot PDF/Notes browser confirmation; verify second login after 30 minutes idle; review one-week GCP/Neon costs. Validate citations/project chat before corpus expansion. Preserve stale duplicate pending separate reconciliation. Completed pilot entries must not be resubmitted.",
-  "blocked_on": null,
-  "updated": "2026-11-04",
+  "next_action": "Run docs/work/CHATGPT-swarmlab-release-check.md in the existing ChatGPT thread containing the authenticated custom MCP connection and SwarmLab scaffold/RRL. Verify registry and operations, check existing projects, then create/replay using saved UUID b3738396-babb-49cb-8645-3d1a27d049eb. Return actual project ID/results; do not claim completion or import papers before acceptance.",
+  "blocked_on": "Authenticated OpenPaper tools and prior SwarmLab context are available only in the user existing ChatGPT thread, not this Codex tool session.",
+  "updated": "2026-11-07",
   "done": [
     "bootstrap (project, billing, APIs, registry, SA, queue, GCS bucket+CORS+HMAC)",
     "Cloud Build 98fc719b: 5 images",
@@ -28,17 +28,11 @@
     "e2e r4 (chrome-devtools, Haiku subagent, 2026-11-03 01:39 UTC): upload 202 -> processing completed in ~22s -> PDF renders 55 pages from GCS -> AI overview shown -> chat reply with inline citations [1][2] (gemini-3.8). No failed requests or console errors. Paper 96732597-785f-46ca-88b6-eba26f43aa78"
   ],
   "review": {
-    "latest": ".meos/reviews/20261103T160931Z.md (full rework), .meos/reviews/terra-focused-recovery-cors.md (fixes accepted)",
-    "verdict": "accept for local disposition of full-review findings and importer user-agent fix; locked Cloud Build and live acceptance passed",
-    "scope": "Full ecosystem review included reliability, hostname/Exa, corpus/operator tooling, MCP and frontend; focused follow-ups accepted the reported fixes and importer header change",
-    "unresolved": [
-      "Operator browser rendering check for two new pilot PDFs/Notes pending",
-      "Idle-login and week-long cost observations remain open",
-      "Before corpus expansion, validate citations/project chat; no expansion authorized or run"
-    ],
-    "followup": ".meos/reviews/terra-focused-recovery-cors.md accepts disposition of all three full-review findings and the importer User-Agent fix. Locked Cloud Build and documented live checks subsequently passed; remaining observations are listed explicitly."
+    "latest": "docs/work/REVIEW-mcp-project-release.md",
+    "verdict": "accept",
+    "scope": "Release code; minor regression recommendation retained and required34 rerun passed. Live OAuth acceptance remains pending."
   },
-  "verification": "Frontend tsc, production build, desktop/mobile mocked Notes checks pass; locked Cloud Build all five images passes; corpus/operator14, Worker, shell and diff checks pass; focused recovery/CORS7 and isolated actual PostgreSQL PDF crash/replay pass. Full-review findings and importer User-Agent fix independently accepted. Live health, MCP discovery/auth boundaries, Google login/PDF/Notes, ChatGPT search and deployed Exa pass; pilot API readbacks pass.",
+  "verification": "Required PostgreSQL34 zero skips; full server387 pass with24 skips (18 PG cases separately pass; six baseline browser OAuth-state cases unrun); independent reviewaccept; build/migrate/deploy succeeded; public health/discovery/auth boundary and digest/traffic checks passed; authenticated registry/writes pending.",
   "strategy": {
     "record": "docs/work/STRATEGY-research-ecosystem.md",
     "status": "approved by operator; Terra implementation delegated",
@@ -130,5 +124,36 @@
     "source_branch": "feat/cloud-run-personal",
     "implementation_commit": "0a1cffe77bf844691f08897fd18361f2016b8a08",
     "handoff": "docs/work/HANDOFF-research-ecosystem.md"
+  },
+  "previous_work": {
+    "intent": "docs/work/INTENT-research-ecosystem.md",
+    "phase": "Reviewed stack deployed; pilot complete; implementation committed and merged to origin/master",
+    "next_action": "Resume on master from origin/master; read docs/work/HANDOFF-research-ecosystem.md and this pointer. Collect new pilot PDF/Notes browser confirmation; verify second login after 30 minutes idle; review one-week GCP/Neon costs. Validate citations/project chat before corpus expansion. Preserve stale duplicate pending separate reconciliation. Completed pilot entries must not be resubmitted.",
+    "review": {
+      "latest": ".meos/reviews/20261103T160931Z.md (full rework), .meos/reviews/terra-focused-recovery-cors.md (fixes accepted)",
+      "verdict": "accept for local disposition of full-review findings and importer user-agent fix; locked Cloud Build and live acceptance passed",
+      "scope": "Full ecosystem review included reliability, hostname/Exa, corpus/operator tooling, MCP and frontend; focused follow-ups accepted the reported fixes and importer header change",
+      "unresolved": [
+        "Operator browser rendering check for two new pilot PDFs/Notes pending",
+        "Idle-login and week-long cost observations remain open",
+        "Before corpus expansion, validate citations/project chat; no expansion authorized or run"
+      ],
+      "followup": ".meos/reviews/terra-focused-recovery-cors.md accepts disposition of all three full-review findings and the importer User-Agent fix. Locked Cloud Build and documented live checks subsequently passed; remaining observations are listed explicitly."
+    },
+    "verification": "Frontend tsc, production build, desktop/mobile mocked Notes checks pass; locked Cloud Build all five images passes; corpus/operator14, Worker, shell and diff checks pass; focused recovery/CORS7 and isolated actual PostgreSQL PDF crash/replay pass. Full-review findings and importer User-Agent fix independently accepted. Live health, MCP discovery/auth boundaries, Google login/PDF/Notes, ChatGPT search and deployed Exa pass; pilot API readbacks pass."
+  },
+  "mcp_release": {
+    "runtime_commit": "2aaa93d55a8b0e17fabe7ce8987e8d13f94d025a",
+    "cloud_build": "9da4a43c-9fca-4a2e-9209-230ca2bf8458",
+    "migration_execution": "openpaper-migrate-kgwg8",
+    "schema_head": "mcp_project_requests_01",
+    "web_revision": "openpaper-00010-zkp",
+    "jobs_revision": "openpaper-jobs-00007-v9m",
+    "rollback_web": "openpaper-00009-fb9",
+    "rollback_jobs": "openpaper-jobs-00006-r7q",
+    "evidence": "docs/work/VERIFICATION-mcp-project-release.md",
+    "operator_handoff": "docs/work/CHATGPT-swarmlab-release-check.md",
+    "current_authorization": "Existing credentials only; no temporary owner sessions, credential creation/rotation, infrastructure bootstrap, Worker modification, or PR merge.",
+    "project_creation_request_sent": false
   }
 }

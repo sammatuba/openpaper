@@ -13,6 +13,7 @@ from sqlalchemy import func, or_
 from app.database.database import SessionLocal
 from app.database.models import Annotation, Paper, PaperNote, Project, ProjectRole, User
 from app.mcp.notes import append_note
+from app.mcp import project_tools
 from app.helpers.paper_search import normalize_doi
 
 
@@ -90,6 +91,51 @@ def create_mcp_app():
             user = current_user(db)
             rows = db.query(Project).outerjoin(ProjectRole, ProjectRole.project_id == Project.id).filter(or_(Project.admin_id == user.id, ProjectRole.user_id == user.id)).distinct().limit(100).all()
             return [{"id": str(p.id), "title": p.title, "description": p.description} for p in rows]
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+    def create_project(title: str, request_id: str, description: str | None = None) -> dict:
+        """Create a research project. Supply a fresh UUID request_id; reuse it for retries."""
+        with SessionLocal() as db:
+            return project_tools.create_project(
+                db, current_user(db), title, request_id, description, public_origin
+            )
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
+    def update_project(project_id: str, title: str | None = None,
+                       description: str | None = None,
+                       clear_description: bool = False) -> dict:
+        """Update a project you administer; omit fields to preserve existing values."""
+        with SessionLocal() as db:
+            return project_tools.update_project(
+                db, current_user(db), project_id, public_origin,
+                title=title, description=description,
+                clear_description=clear_description,
+            )
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+    def add_paper_to_project(project_id: str, paper_id: str) -> dict:
+        """Add one of your own papers to a project where you can edit."""
+        with SessionLocal() as db:
+            return project_tools.add_paper_to_project(
+                db, current_user(db), project_id, paper_id
+            )
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
+    def remove_paper_from_project(project_id: str, paper_id: str) -> dict:
+        """Unlink a paper from a project; do not delete the underlying library paper."""
+        with SessionLocal() as db:
+            return project_tools.remove_paper_from_project(
+                db, current_user(db), project_id, paper_id
+            )
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
+    def list_project_papers(project_id: str, offset: int = 0, limit: int = 50) -> dict:
+        """List paper metadata in an accessible project, with pagination."""
+        with SessionLocal() as db:
+            return project_tools.list_project_papers(
+                db, current_user(db), project_id, public_origin,
+                offset=offset, limit=limit,
+            )
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
     def get_paper_note(paper_id: str) -> dict:
