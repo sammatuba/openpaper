@@ -1,6 +1,8 @@
 # Intent: finish the authenticated MCP project release
 
-Status: planned, implementation and release pending.
+Status: implemented, independently accepted and deployed; public checks passed.
+Authenticated live acceptance and SwarmLab setup await the existing ChatGPT thread.
+Evidence: [VERIFICATION-mcp-project-release.md](VERIFICATION-mcp-project-release.md).
 Opened: 2026-11-07. User requested a proper plan following independent review.
 
 ## Outcome and authority

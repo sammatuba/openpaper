@@ -1,6 +1,9 @@
 # ChatGPT handoff: live MCP acceptance and SwarmLab context
 
-Status: **draft; wait for the deployment evidence before running**.
+Status: **ready for authenticated live acceptance**. Runtime commit
+`2aaa93d55a8b0e17fabe7ce8987e8d13f94d025a` is deployed as web
+`openpaper-00010-zkp`, jobs `openpaper-jobs-00007-v9m`. Public health, discovery
+and anonymous rejection checks passed. Authenticated tool checks are pending.
 Run this in the existing ChatGPT thread containing the SwarmLab scaffold/RRL,
 using the existing authenticated OpenPaper custom integration. No new
 credentials, token sharing or fresh paper imports are needed.

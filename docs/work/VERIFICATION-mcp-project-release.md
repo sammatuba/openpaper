@@ -1,6 +1,7 @@
 # MCP project release verification
 
-Updated: 2026-11-07. Release is not yet deployed.
+Updated: 2026-11-07. Backend deployed and public checks passed; authenticated
+live acceptance and SwarmLab creation remain pending in the user's ChatGPT thread.
 Intent: [INTENT-mcp-project-release.md](INTENT-mcp-project-release.md).
 Starting feature SHA: `9404869b55ee2c8fc62a4c4f2e6f742769c3a77c`.
 Origin was refreshed on 2026-11-07 and its feature ref still matches that SHA.
@@ -82,11 +83,12 @@ No dependency or lock changes were made.
 
 3. `git diff --check`: passed.
 
-GitHub Actions has not been run or claimed successful. Previous billing failures
+GitHub Actions is not used as acceptance evidence; its status was not queried.
+No GitHub CI success is claimed. Previous billing failures
 do not stand in for test results. The CI workflow now runs locked dependencies
 and the required PostgreSQL launcher on its own disposable cluster.
 
-## Pending release evidence
+## Independent acceptance
 
 - Follow-up independent review `20261107T073023Z.md`: **accept**, no blocking or
   important release-code findings. Reviewer independently passed 16 focused
@@ -94,15 +96,39 @@ and the required PostgreSQL launcher on its own disposable cluster.
   regression recommendation was implemented in the existing PostgreSQL batch
   test; required suite rerun passed all 34 checks without skips. No runtime
   change after acceptance. Retained report: [REVIEW-mcp-project-release.md](REVIEW-mcp-project-release.md).
-- Successor commit SHA, build ID/digests, additive migration, both revisions.
-- Fresh rollback traffic/revisions/digests; earlier candidates were web
-  `openpaper-00009-fb9` and jobs `openpaper-jobs-00006-r7q`.
+
+## Deployed release
+
+- Runtime source commit: **`2aaa93d55a8b0e17fabe7ce8987e8d13f94d025a`**,
+  built from a clean isolated checkout, pushed to `origin/feat/mcp-project-management`.
+  PR #1 was updated by that branch push and remains unmerged.
+- `bash deploy/deploy.sh build backend`: **SUCCESS**, build
+  `9da4a43c-9fca-4a2e-9209-230ca2bf8458` (4m20s).
+- `bash deploy/deploy.sh migrate`: **SUCCESS**, existing job execution
+  `openpaper-migrate-kgwg8`, completed 2026-11-07T07:40:46Z. Upgrade target is the
+  sole Alembic head `mcp_project_requests_01`; no infrastructure bootstrap.
+  Execution metadata confirms `alembic upgrade head` using the exact reviewed
+  server digest `74ed23b0add9736a9dad30adc63b32984e4ecc46d05f33c2141dc1755157e2ad`.
+- `bash deploy/deploy.sh deploy`: **SUCCESS**. Postflight at
+  2026-11-07T07:43:48Z verified latest-created equals latest-ready, with **100%**
+  traffic on web **`openpaper-00010-zkp`** and jobs **`openpaper-jobs-00007-v9m`**.
+- Deployed server digest:
+  `sha256:74ed23b0add9736a9dad30adc63b32984e4ecc46d05f33c2141dc1755157e2ad`.
+- Deployed jobs digest:
+  `sha256:739f555ea1e34c4a5e2006b55129ba342e962c98a2a14c83ace1c15ddd96e258`.
+- Postflight assertions matched both backend digests to the successful build and
+  confirmed the existing client/Caddy images and all secret references unchanged.
+  No credentials were created, exposed in tool output, or rotated; Worker unchanged.
+- Rollback: web **`openpaper-00009-fb9`**, jobs **`openpaper-jobs-00006-r7q`**,
+  previously at 100% traffic. Restore these revisions' traffic if needed; leave
+  the additive request ledger and uniqueness schema in place. No rollback needed.
 
 Preflight refreshed at 2026-11-07T07:23:34Z: same rollback revisions, both at
 100% traffic. Account `jansammat26@gmail.com`, configuration `personal`, explicit
 target `openpaper-sammatuba`, region `asia-southeast1`. Configuration's default
-project was still `health-facility-finder`; deployment script sets the correct
-OpenPaper target. Retained client and Caddy latest digests match the running
+project was still `health-facility-finder`; the build/deployment scripts set it
+to `openpaper-sammatuba`, confirmed again in postflight. Retained client and
+Caddy latest digests match the running
 revision. Complete filtered revision/traffic/digest/secret-reference metadata is
 in `.meos/artifacts/mcp-release-preflight.json`; no secret values were read.
 
@@ -110,8 +136,17 @@ Before-release public probes passed homepage200, health200, protected-resource
 and authorization-server discovery200 (public Worker origin and S256), anonymous
 MCP401/no-store with resource-metadata challenge, and direct Cloud Run health200.
 Evidence: `.meos/artifacts/mcp-smoke-before.json`. No Worker routing fix needed.
-- Live application health, OAuth discovery, anonymous rejection, authenticated
-  registry and operations through an existing authorized MCP connection.
+
+After-release public probes passed the same homepage, both health paths, both
+OAuth discovery documents and anonymous MCP401/no-store checks. Jobs service
+rejects anonymous access with403. Evidence: `.meos/artifacts/mcp-smoke-after.json`,
+`.meos/artifacts/mcp-release-postflight.json`, `.meos/artifacts/mcp-release-build.json`.
+These checks establish public reachability and auth enforcement, not authenticated
+registry contents or successful OAuth tool operations.
+
+## Remaining live acceptance
+
+- Authenticated registry and operations through the existing authorized MCP connection.
 - Existing authorized connection is in the user's ChatGPT custom integration;
   this Codex session exposes no OpenPaper connector. Final authenticated checks
   will need that existing ChatGPT connection. Do not create credentials or
@@ -119,7 +154,12 @@ Evidence: `.meos/artifacts/mcp-smoke-before.json`. No Worker routing fix needed.
 - SwarmLab scaffold/RRL is in the user's prior ChatGPT thread. The final project
   setup handoff must run there; do not fabricate prior results or substitute
   reviewer collusion.
-- Project existence check, persisted creation request UUID, project ID and replay.
+- Project existence check, project ID, creation/reuse and replay outcome.
+  Fixed request UUID: **`b3738396-babb-49cb-8645-3d1a27d049eb`**. It is persisted
+  with the original payload in [SWARMLAB-create-request.json](SWARMLAB-create-request.json)
+  but has not been sent. See [ChatGPT handoff](CHATGPT-swarmlab-release-check.md).
 
-No build, deployment, schema change to Neon, project creation, paper import,
-secret rotation, Worker change or PR merge has been performed in this release.
+No SwarmLab project creation, paper import, secret rotation, Worker change or
+PR merge was performed. No unresolved local test failures or material code-review
+findings remain. The six baseline browser OAuth-state tests remain skipped, and
+authenticated production checks/project setup are explicitly unfinished.
