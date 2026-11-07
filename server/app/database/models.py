@@ -1222,6 +1222,16 @@ class Project(Base):
     )
 
 
+class MCPProjectRequest(Base):
+    """Original creation identity, retained even if the project is deleted."""
+    __tablename__ = "mcp_project_requests"
+
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    request_id = Column(UUID(as_uuid=True), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), nullable=False)
+    payload_hash = Column(String(64), nullable=False)
+
+
 class ProjectRoleInvitation(Base):
     __tablename__ = "project_role_invitations"
 
@@ -1268,6 +1278,9 @@ class ProjectPaper(Base):
     """
 
     __tablename__ = "project_paper"
+    __table_args__ = (
+        UniqueConstraint("project_id", "paper_id", name="uq_project_paper_project_id_paper_id"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     paper_id = Column(

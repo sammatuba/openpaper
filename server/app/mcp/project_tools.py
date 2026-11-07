@@ -1,10 +1,13 @@
 """Authenticated MCP project operations. Actor identity comes only from OAuth."""
 import uuid
+import hashlib
+import json
 from datetime import datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
 
-from app.database.models import Paper, Project, ProjectPaper, ProjectRole, ProjectRoles
+from app.database.models import MCPProjectRequest, Paper, Project, ProjectPaper, ProjectRole, ProjectRoles
+from app.helpers.project_admission import lock_project_admissions
 from app.helpers.subscription_limits import can_user_add_papers_to_project, can_user_create_project
 
 
@@ -56,16 +59,29 @@ def create_project(db, user, title: str, request_id: str, description: str | Non
     title = _title(title)
     description = _description(description)
     request_uuid = _uuid(request_id, "request_id")
+    payload_hash = hashlib.sha256(json.dumps(
+        {"title": title, "description": description}, sort_keys=True,
+        separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
     project_id = uuid.uuid5(uuid.NAMESPACE_URL, f"openpaper:mcp:project:{user.id}:{request_uuid}")
 
     def previous():
-        row = db.query(Project).filter(Project.id == project_id).one_or_none()
-        if row is None:
+        request = db.query(MCPProjectRequest).filter(
+            MCPProjectRequest.user_id == user.id,
+            MCPProjectRequest.request_id == request_uuid,
+        ).one_or_none()
+        if request is None:
             return None
-        if row.admin_id != user.id or row.title != title or row.description != description:
+        if request.payload_hash != payload_hash:
             raise ValueError("Request ID already used for different project creation")
+        row = db.query(Project).filter(Project.id == request.project_id).one_or_none()
+        if row is None:
+            raise ValueError("Previously created project was deleted; request cannot be reused")
+        if row.admin_id != user.id:
+            raise ValueError("Project not found or not accessible")
         return _project_result(row, public_origin, "already_created")
 
+    lock_project_admissions(db, user)
     existing = previous()
     if existing is not None:
         return existing
@@ -76,6 +92,8 @@ def create_project(db, user, title: str, request_id: str, description: str | Non
     row = Project(id=project_id, admin_id=user.id, title=title, description=description)
     db.add(row)
     db.add(ProjectRole(project_id=project_id, user_id=user.id, role=ProjectRoles.ADMIN))
+    db.add(MCPProjectRequest(user_id=user.id, request_id=request_uuid,
+                             project_id=project_id, payload_hash=payload_hash))
     try:
         db.commit()  # Project and admin membership are one transaction.
     except IntegrityError:

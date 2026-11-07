@@ -100,7 +100,7 @@ def create_mcp_app():
                 db, current_user(db), title, request_id, description, public_origin
             )
 
-    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
     def update_project(project_id: str, title: str | None = None,
                        description: str | None = None,
                        clear_description: bool = False) -> dict:
@@ -120,7 +120,7 @@ def create_mcp_app():
                 db, current_user(db), project_id, paper_id
             )
 
-    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False))
     def remove_paper_from_project(project_id: str, paper_id: str) -> dict:
         """Unlink a paper from a project; do not delete the underlying library paper."""
         with SessionLocal() as db:

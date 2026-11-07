@@ -1,5 +1,6 @@
 """Focused MCP project CRUD checks: access rules, validation, and replay safety."""
 import uuid
+import hashlib
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -31,7 +32,10 @@ class TestProjectTools(unittest.TestCase):
         existing = SimpleNamespace(
             id=uuid.uuid4(), admin_id=self.user.id, title="MEOS SwarmLab", description="research"
         )
-        self.db.query.return_value.filter.return_value.one_or_none.return_value = existing
+        request = SimpleNamespace(project_id=existing.id, payload_hash=hashlib.sha256(
+            b'{"description":"research","title":"MEOS SwarmLab"}'
+        ).hexdigest())
+        self.db.query.return_value.filter.return_value.one_or_none.side_effect = [request, existing]
         with patch.object(ops, "can_user_create_project") as quota:
             result = ops.create_project(self.db, self.user, "MEOS SwarmLab",
                                         str(uuid.uuid4()), "research", "https://example.org")
@@ -40,8 +44,7 @@ class TestProjectTools(unittest.TestCase):
             self.db.commit.assert_not_called()
 
     def test_create_replay_rejects_mutated_request(self):
-        existing = SimpleNamespace(id=uuid.uuid4(), admin_id=self.user.id,
-                                   title="Different", description=None)
+        existing = SimpleNamespace(payload_hash="different-payload")
         self.db.query.return_value.filter.return_value.one_or_none.return_value = existing
         with self.assertRaisesRegex(ValueError, "Request ID already used"):
             ops.create_project(self.db, self.user, "MEOS SwarmLab",

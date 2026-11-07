@@ -1,6 +1,6 @@
 # OpenPaper MCP project management
 
-The authenticated MCP server now exposes five project operations. These tools reuse the existing SQLAlchemy project membership model and subscription checks. **No project creation or import was executed against a live user account during this change.**
+The authenticated MCP server exposes five project operations. These tools reuse the existing SQLAlchemy project membership model and subscription checks. Release evidence belongs in `docs/work/VERIFICATION-mcp-project-release.md`.
 
 | Tool | Permission | Behavior |
 | --- | --- | --- |
@@ -18,9 +18,17 @@ Do not treat model-authored roles or paper IDs as authority. UUIDs identify reso
 
 ## Retry semantics
 
-Generate a random UUID for each *new* project creation request and keep it unchanged across retries. The server derives a stable project ID from the authenticated user ID and request ID. A repeated call with the same title and description returns `already_created`; a changed payload with the same request ID fails. This does not deduplicate independent requests with different UUIDs. Renaming an existing project is a separate operation.
+Generate a random UUID for each *new* project creation request and keep it unchanged across retries. The server derives a stable project ID from the authenticated user ID and request ID and records the original payload hash in `mcp_project_requests`, atomically with the project and creator membership. Titles are trimmed; omitted and null descriptions are equivalent. A repeated call with the same original payload returns `already_created` with the project's current metadata, even after a rename or description edit. A changed original payload fails. After project deletion the request history remains and the server rejects reuse without recreating the project. This does not deduplicate independent requests with different UUIDs.
+
+MCP creation, browser creation, and invitation acceptance serialize quota admission on the user's row until their transaction commits. Replay lookup precedes quota checking; a retry of a successful request consumes no additional capacity.
+
+Paper additions through MCP, browser batches and PDF-upload associations lock the project before checking duplicates and capacity. Browser batches commit together and count only distinct, new associations. A database constraint enforces one association per project/paper pair. The release migration retains one row for any legacy duplicate link; underlying research content is untouched.
 
 Add and remove operations are state-idempotent (`already_present`, `not_present`). Update operations are idempotent when the same values are supplied.
+
+Removing a project-paper association is annotated `destructiveHint=True`: it changes shared project contents. The explicitly authorized project-management scope permits this bounded unlink; it preserves the underlying paper, notes, highlights and annotations. MCP project deletion and role administration remain excluded.
+
+`update_project` is also annotated `destructiveHint=True` because overwriting fields or clearing a description can remove prior content.
 
 ## Validation
 
@@ -38,9 +46,14 @@ Run from `server/`:
 ```bash
 uv run python -m unittest tests.test_mcp_project_tools
 uv run python -m unittest discover -s tests
+uv run python ../scripts/ci/run_isolated_postgres.py
 ```
 
 Before deploying, run the app in its disposable development stack, exercise the five tools with authenticated owner, editor, viewer, and non-member accounts, and confirm a second `create_project` invocation using the *same* request UUID produces no duplicate.
+
+The required PostgreSQL runner creates a socket-only cluster and rejects skipped tests; `--run-existing` uses only an existing guarded disposable cluster without stopping or deleting it. Its transport tests use actual mappings and quota checks and substitute Google token verification only. Actual OAuth is verified separately against the live installation with an existing authorized connection.
+
+Build the reviewed backend, apply the additive ledger migration with `bash deploy/deploy.sh migrate`, then deploy. Application rollback leaves the ledger migration and its records intact. Do not downgrade production schema to roll back code.
 
 After merge and deployment, reconnect/refresh the OpenPaper MCP integration if the ChatGPT tool manifest still lists only the older tools. Availability in source code does not imply availability on the deployed MCP endpoint.
 

@@ -1,0 +1,5 @@
+{
+  "title": "MEOS SwarmLab — Swarm Alignment 2026",
+  "request_id": "b3738396-babb-49cb-8645-3d1a27d049eb",
+  "description": "SwarmLab research workspace for swarm alignment in 2026. Use the previous SwarmLab experimental scaffold and RRL from this ChatGPT thread as initial context. Preserve prior research results as prior evidence and distinguish them from new sprint hypotheses and experiments. Keep the earlier reviewer-collusion project separate. Populate the detailed project context from those existing sources after creation; verify project creation and authorization before importing any papers."
+}

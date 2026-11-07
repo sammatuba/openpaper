@@ -20,10 +20,11 @@ from app.database.crud.projects.project_crud import project_crud
 from app.database.crud.projects.project_data_table_crud import data_table_job_crud
 from app.database.crud.projects.project_paper_crud import project_paper_crud
 from app.database.crud.subscription_crud import subscription_crud
-from app.database.models import SubscriptionPlan, SubscriptionStatus
+from app.database.models import Project, ProjectRole, SubscriptionPlan, SubscriptionStatus
 from app.database.telemetry import track_event
 from app.schemas.user import CurrentUser
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 logger = logging.getLogger(__name__)
 
@@ -277,8 +278,13 @@ def can_user_create_project(
     plan = get_user_subscription_plan(db, user)
     limits = get_plan_limits(plan)
 
-    current_project_count = len(
-        project_crud.get_all_projects_by_user_with_metadata(db=db, user=user)
+    # A direct count fails closed on database errors, unlike the UI metadata
+    # listing which catches errors and returns an empty list.
+    current_project_count = (
+        db.query(func.count(func.distinct(Project.id)))
+        .join(ProjectRole, ProjectRole.project_id == Project.id)
+        .filter(ProjectRole.user_id == user.id)
+        .scalar()
     )
     project_limit = limits[PROJECTS_KEY]
 

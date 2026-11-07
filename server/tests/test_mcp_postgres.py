@@ -2,6 +2,7 @@
 import getpass
 import os
 import unittest
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
@@ -162,7 +163,7 @@ class MCPPostgresTests(unittest.TestCase):
             conn.execute(self.text("CREATE SCHEMA " + schema))
         engine = create_engine(self.admin.url, connect_args={"options":"-csearch_path=" + schema})
         try:
-            path = "/home/sammatuba/projects/ps/openpaper/server/migrations/versions/2026_11_03_1200_mcp_note_requests.py"
+            path = Path(__file__).resolve().parents[1] / "migrations/versions/2026_11_03_1200_mcp_note_requests.py"
             spec = importlib.util.spec_from_file_location("mcp_migration_test", path)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)

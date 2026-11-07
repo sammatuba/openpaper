@@ -58,6 +58,14 @@ class ProjectPaper(Base):
     paper_id = Column(Uuid(as_uuid=True), nullable=False)
 
 
+class MCPProjectRequest(Base):
+    __tablename__ = "mcp_project_requests"
+    user_id = Column(Uuid(as_uuid=True), primary_key=True)
+    request_id = Column(Uuid(as_uuid=True), primary_key=True)
+    project_id = Column(Uuid(as_uuid=True), nullable=False)
+    payload_hash = Column(String(64), nullable=False)
+
+
 quotas = {"project": True, "papers": True}
 
 
@@ -71,17 +79,20 @@ def mock_paper_quota(db, user, project_id, paper_count):
 
 def load_service():
     models = ModuleType("app.database.models")
-    for name in ("Paper", "Project", "ProjectPaper", "ProjectRole", "ProjectRoles"):
+    for name in ("Paper", "Project", "ProjectPaper", "ProjectRole", "ProjectRoles", "MCPProjectRequest"):
         setattr(models, name, globals()[name])
     limits = ModuleType("app.helpers.subscription_limits")
     limits.can_user_create_project = mock_project_quota
     limits.can_user_add_papers_to_project = mock_paper_quota
+    admissions = ModuleType("app.helpers.project_admission")
+    admissions.lock_project_admissions = lambda db, user: None
     stub_modules = {
         "app": ModuleType("app"),
         "app.database": ModuleType("app.database"),
         "app.database.models": models,
         "app.helpers": ModuleType("app.helpers"),
         "app.helpers.subscription_limits": limits,
+        "app.helpers.project_admission": admissions,
     }
     with patch.dict(sys.modules, stub_modules):
         path = Path(__file__).resolve().parents[1] / "app" / "mcp" / "project_tools.py"
@@ -150,6 +161,22 @@ class TestMCPProjectsDatabase(unittest.TestCase):
         quotas["project"] = False
         with self.assertRaises(PermissionError):
             service.create_project(self.db, self.admin, "Test", str(uuid.uuid4()), None, ORIGIN)
+        self.assertEqual(self.db.query(Project).count(), 0)
+
+    def test_replay_survives_rename_and_rejects_deleted_project(self):
+        request_id = str(uuid.uuid4())
+        first = service.create_project(self.db, self.admin, "Original", request_id, None, ORIGIN)
+        service.update_project(self.db, self.admin, first["id"], ORIGIN, title="Renamed", description="New")
+        quotas["project"] = False
+        replay = service.create_project(self.db, self.admin, "Original", request_id, None, ORIGIN)
+        self.assertEqual(replay["id"], first["id"])
+        self.assertEqual(replay["title"], "Renamed")
+        self.db.query(ProjectRole).delete()
+        self.db.query(Project).delete()
+        self.db.commit()
+        with self.assertRaisesRegex(ValueError, "was deleted"):
+            service.create_project(self.db, self.admin, "Original", request_id, None, ORIGIN)
+        self.assertEqual(self.db.query(MCPProjectRequest).count(), 1)
         self.assertEqual(self.db.query(Project).count(), 0)
 
     def test_admin_can_update_and_others_cannot(self):
