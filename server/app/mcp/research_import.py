@@ -39,7 +39,7 @@ def _summary(db, row) -> dict:
             PaperUploadJob.id == row.upload_job_id,
             PaperUploadJob.user_id == row.user_id,
         ).one_or_none()
-        job_status = str(job.status) if job is not None else "missing"
+        job_status = (getattr(job.status, "value", job.status) if job is not None else "missing")
     paper_id = row.paper_id
     if paper_id is None and row.upload_job_id:
         paper = db.query(Paper).filter(
@@ -198,15 +198,10 @@ async def import_paper_from_url(db, user, project_id: str, request_id: str, url:
             MCPPaperImportRequest.user_id == user.id,
             MCPPaperImportRequest.request_id == rid,
         ).one()
-        row.status = "failed"
+        # A task may already have been dispatched. Never assert that it failed
+        # or schedule a second task merely because the MCP request failed.
+        # The operator must reconcile the durable upload_job_id and its state.
+        row.status = "needs_reconciliation" if row.upload_job_id else "failed"
         row.error_message = type(exc).__name__  # No secrets or untrusted exception text.
-        if row.upload_job_id:
-            job = db.query(PaperUploadJob).filter(
-                PaperUploadJob.id == row.upload_job_id,
-                PaperUploadJob.user_id == user.id,
-            ).one_or_none()
-            if job is not None and job.status not in (JobStatus.COMPLETED, JobStatus.FAILED):
-                job.status = JobStatus.FAILED
-                job.completed_at = datetime.now(timezone.utc)
         db.commit()
         return {**_summary(db, row), "replay": False}
