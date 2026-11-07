@@ -160,6 +160,26 @@ class ImportPostgresTests(unittest.TestCase):
                     self.invoke(user,pid,str(uuid4()))
                 fetch.assert_not_awaited()
 
+    def test_confirmed_failure_releases_capacity_but_preserves_request_replay(self):
+        from app.database.crud.paper_upload_crud import paper_upload_job_crud
+        for state in ("submitted","submitting","needs_reconciliation"):
+            with self.subTest(ledger_status=state):
+                user,pid=self.fixture()
+                self.seed_completed(user,9)
+                rid=str(uuid4())
+                with self.Session() as db:
+                    job=PaperUploadJob(user_id=user.id,status="running")
+                    db.add(job);db.flush()
+                    db.add(MCPPaperImportRequest(user_id=user.id,request_id=UUID(rid),project_id=UUID(pid),source_key="arxiv:2512.16857",source_url="https://arxiv.org/abs/2512.16857",status=state,upload_job_id=job.id))
+                    db.commit()
+                    paper_upload_job_crud.mark_as_failed(db,job_id=str(job.id),user=user,error_message="Confirmed processing failure")
+                with patch.object(research_import,"fetch_research_pdf",new_callable=AsyncMock,return_value=b"fixture") as fetch, patch.object(pdf_jobs.jobs_client,"submit_pdf_processing_job_with_upload",new_callable=AsyncMock,return_value="task") as dispatch:
+                    self.assertEqual(self.invoke(user,pid,str(uuid4()))["status"],"submitted")
+                    failed=self.invoke(user,pid,rid,"https://arxiv.org/abs/2512.16857")
+                    self.assertEqual(failed["processing_status"],"failed")
+                    self.assertTrue(failed["replay"])
+                    self.assertEqual((fetch.await_count,dispatch.await_count),(1,1))
+
     def test_owned_arxiv_identity_is_exact_and_version_aware(self):
         user,pid = self.fixture()
         with self.Session() as db:

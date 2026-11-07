@@ -113,12 +113,13 @@ def _check_upload_capacity(db, user, exclude_request=None):
     ambiguous = exists().where(
         MCPPaperImportRequest.user_id == user.id,
         MCPPaperImportRequest.upload_job_id == PaperUploadJob.id,
-        MCPPaperImportRequest.status.in_(("submitting", "submitted", "needs_reconciliation")),
+        MCPPaperImportRequest.status.in_(("submitting", "needs_reconciliation")),
     )
     outstanding = select(func.count(PaperUploadJob.id)).where(
         PaperUploadJob.user_id == user.id,
-        or_(PaperUploadJob.status.notin_((JobStatus.COMPLETED, JobStatus.FAILED)),
-            and_(PaperUploadJob.status != JobStatus.COMPLETED, ambiguous)),
+        or_(PaperUploadJob.status.notin_((JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED)),
+            and_(PaperUploadJob.status.in_((JobStatus.FAILED, JobStatus.CANCELLED)),
+                 PaperUploadJob.completed_at.is_(None), ambiguous)),
     )
     unbacked = select(func.count()).select_from(MCPPaperImportRequest).where(
         MCPPaperImportRequest.user_id == user.id,
