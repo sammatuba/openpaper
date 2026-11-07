@@ -1,5 +1,9 @@
 # Uploaded to Cloud Build by deploy/deploy.sh build; keep it to what the images need.
 .git
+.meos
+.agents
+.claude
+.codex
 .gcloudignore
 demo.gif
 docker/seed/fixture.dump

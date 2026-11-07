@@ -21,6 +21,8 @@ This tool is deliberately **not** a general web-fetch endpoint.
 - Source provenance and bibliographic identity are not proofs of PDF integrity. Confirm publisher metadata and matching titles after extraction.
 - DNS validation on trusted hosts is a defense in depth; avoid introducing arbitrary user-configurable host allowlists.
 
+The downloader pins the vetted public address through TLS and bounds download plus PDF validation in a killable 60-second child process. arXiv PDFs use extensionless canonical paths. Ambiguous dispatch preserves paper, association and object for reconciliation.
+
 ## Current sprint reading manifest
 
 Pinned exact sprint resource links:
@@ -58,7 +60,7 @@ export CLOUDSDK_ACTIVE_CONFIG_NAME=personal
 gcloud auth list --filter=status:ACTIVE
 gcloud config get-value project
 # Record current Cloud Run web/jobs revision IDs before the release.
-bash deploy/deploy.sh build backend
+bash deploy/deploy.sh build  # full build required when the public hostname changes
 bash deploy/deploy.sh migrate
 bash deploy/deploy.sh deploy
 ```
@@ -74,4 +76,4 @@ Read `deploy/README.md` and confirm `deploy/config.env` still targets the correc
 5. For each publisher landing page, find an official available direct PDF link from the primary publisher or a valid open-access copy, then ingest with a new stable request UUID; record original landing URL separately in the manifest.
 6. Verify all final project associations, dedupe by DOI/title, preserve failed/ambiguous rows, and report the remaining access/licensing blockers. No paper is removed automatically.
 
-Current code has not been deployed or accepted through live MCP. No new papers were imported by this feature-branch work.
+Release evidence and remaining acceptance: `docs/work/VERIFICATION-mcp-import-release.md`. The current public origin is `https://papers.sammatuba.workers.dev`; register both `/api/auth/google/callback` and `/api/mcp/auth/callback` under that origin in the existing Google OAuth client. Refresh the existing ChatGPT integration against `/api/mcp` on that origin after deployment. No new papers were imported by this feature-branch work.

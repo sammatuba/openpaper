@@ -1,5 +1,6 @@
 """Authenticated, idempotent research PDF import via existing upload/job pipeline."""
 import uuid
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import func
@@ -10,6 +11,7 @@ from app.database.models import (
     ProjectPaper, ProjectRole, ProjectRoles,
 )
 from app.helpers.pdf_jobs import jobs_client
+from app.helpers.paper_search import normalize_doi
 from app.helpers.subscription_limits import (
     can_user_access_knowledge_base, can_user_add_papers_to_project,
     can_user_upload_paper,
@@ -74,12 +76,17 @@ def get_import_status(db, user, request_id: str) -> dict:
 def _owned_arxiv_match(db, user, source_key: str):
     if not source_key.startswith("arxiv:"):
         return None
-    identifier = source_key.removeprefix("arxiv:").split("v", 1)[0]
-    suffix = f"arxiv.{identifier}"
-    return db.query(Paper).filter(
+    identifier = source_key.removeprefix("arxiv:")
+    base = re.sub(r"v[0-9]+$", "", identifier)
+    suffix = f"arxiv.{base}"
+    candidates = db.query(Paper).filter(
         Paper.user_id == user.id,
-        func.lower(Paper.doi).like(f"%{suffix}"),
-    ).first()
+        func.lower(Paper.doi).contains(suffix, autoescape=True),
+    ).all()
+    expected = "10.48550/arxiv." + identifier
+    pattern = re.escape(expected) + (r"(?:v[0-9]+)?" if identifier == base else "")
+    return next((paper for paper in candidates
+                 if re.fullmatch(pattern, normalize_doi(paper.doi) or "")), None)
 
 
 def _check_limit(db, user, func_check, *args, **kwargs):
@@ -172,6 +179,8 @@ async def import_paper_from_url(db, user, project_id: str, request_id: str, url:
         data = await fetch_research_pdf(pdf_url)
         # Membership can change during remote retrieval.
         _require_editor(db, user, pid)
+        _check_limit(db, user, can_user_upload_paper)
+        _check_limit(db, user, can_user_access_knowledge_base)
         job = PaperUploadJob(
             user_id=user.id, status=JobStatus.PENDING,
             started_at=datetime.now(timezone.utc),
@@ -185,6 +194,7 @@ async def import_paper_from_url(db, user, project_id: str, request_id: str, url:
         task_id = await jobs_client.submit_pdf_processing_job_with_upload(
             pdf_bytes=data, paper_upload_job=job, db=db, user=user,
             project_id=pid, original_filename=filename,
+            preserve_on_dispatch_error=True,
         )
         job.task_id = task_id
         row.status = "submitted"

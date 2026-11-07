@@ -1,79 +1,72 @@
-"""Focused regression tests for publisher URL controls and bounded PDF retrieval."""
+"""Publisher normalization, pinned connections and hard resource bounds."""
 import socket
+import subprocess
+import sys
+import time
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
-
-from app.mcp.research_url import (
-    fetch_research_pdf,
-    normalize_research_pdf_url,
-)
-
+from unittest.mock import MagicMock, patch
+from app.mcp import research_url as urls
 
 class TestResearchURLNormalization(unittest.TestCase):
-    def test_arxiv_abstract_and_pdf_are_same_source(self):
-        a = normalize_research_pdf_url("https://arxiv.org/abs/2502.14143")
-        b = normalize_research_pdf_url("https://arxiv.org/pdf/2502.14143.pdf")
-        self.assertEqual(a, b)
-        self.assertEqual(a[0], "arxiv:2502.14143")
+    def test_arxiv_aliases_use_extensionless_pdf_without_redirect(self):
+        expected = ("arxiv:2502.14143", "https://arxiv.org/pdf/2502.14143")
+        for url in ("https://arxiv.org/abs/2502.14143", "https://arxiv.org/pdf/2502.14143.pdf", "https://export.arxiv.org/pdf/2502.14143"):
+            self.assertEqual(urls.normalize_research_pdf_url(url), expected)
 
-    def test_openreview_forum_and_pdf_are_same_source(self):
-        a = normalize_research_pdf_url("https://openreview.net/forum?id=GCkhEPE1FG")
-        b = normalize_research_pdf_url("https://openreview.net/pdf?id=GCkhEPE1FG")
-        self.assertEqual(a, b)
-        self.assertEqual(a[1], "https://openreview.net/pdf?id=GCkhEPE1FG")
+    def test_openreview_aliases(self):
+        self.assertEqual(urls.normalize_research_pdf_url("https://openreview.net/forum?id=GCkhEPE1FG"), urls.normalize_research_pdf_url("https://openreview.net/pdf?id=GCkhEPE1FG"))
 
-    def test_landing_pages_require_an_actual_pdf(self):
-        with self.assertRaisesRegex(ValueError, "not a PDF"):
-            normalize_research_pdf_url("https://www.nature.com/articles/s41562-025-02172-y")
-
-    def test_private_network_and_unapproved_hosts_are_rejected(self):
-        for url in (
-            "http://arxiv.org/pdf/2502.14143",
-            "https://127.0.0.1/file.pdf",
-            "https://arxiv.org.evil.test/pdf/file.pdf",
-            "https://arxiv.org:8443/pdf/2502.14143",
-            "https://user@arxiv.org/pdf/2502.14143",
-            "https://arxiv.org/pdf/2502.14143#x",
-        ):
+    def test_reject_unsafe_or_landing_urls(self):
+        for url in ("http://arxiv.org/pdf/2502.14143", "https://127.0.0.1/file.pdf", "https://arxiv.org.evil.test/file.pdf", "https://arxiv.org:8443/pdf/2502.14143", "https://user@arxiv.org/pdf/2502.14143", "https://arxiv.org/pdf/2502.14143#x", "https://www.nature.com/articles/example", "https://arxiv.org/pdf/2502.14143\n", "https://openreview.net/pdf?id=abcd&id=efgh", "https://aclanthology.org/" + "a"*600 + ".pdf"):
             with self.subTest(url=url), self.assertRaises(ValueError):
-                normalize_research_pdf_url(url)
+                urls.normalize_research_pdf_url(url)
 
+class TestResearchPDFNetwork(unittest.TestCase):
+    def download(self, response):
+        pool = MagicMock()
+        pool.request.return_value = response
+        with patch.object(urls, "_require_public_dns", return_value="8.8.8.8"), patch.object(urls.urllib3, "HTTPSConnectionPool", return_value=pool) as factory:
+            data = urls._download_research_pdf("https://arxiv.org/pdf/2502.14143")
+        return data, pool, factory
 
-class TestResearchPDFNetwork(unittest.IsolatedAsyncioTestCase):
-    @staticmethod
-    def make_response(data=b"%PDF-1.7 fake"):
-        response = MagicMock()
-        response.status_code = 200
-        response.iter_content.return_value = [data]
-        response.__enter__.return_value = response
-        response.__exit__.return_value = False
+    def response(self, status=200):
+        response = MagicMock(status=status, headers={})
+        response.stream.return_value = [b"%PDF-1.7 fake"]
         return response
 
-    async def test_fetch_uses_no_redirects_and_checks_pdf(self):
-        response = self.make_response()
-        with patch("app.mcp.research_url._require_public_dns"), \
-             patch("app.mcp.research_url.requests.get", return_value=response) as get, \
-             patch("app.mcp.research_url.validate_pdf_content", new_callable=AsyncMock, return_value=(True, "")):
-            data = await fetch_research_pdf("https://arxiv.org/pdf/2502.14143.pdf")
+    def test_pins_vetted_address_and_preserves_tls_hostname(self):
+        data, pool, factory = self.download(self.response())
         self.assertEqual(data, b"%PDF-1.7 fake")
-        self.assertFalse(get.call_args.kwargs["allow_redirects"])
+        self.assertEqual(factory.call_args.args[0], "8.8.8.8")
+        self.assertEqual(factory.call_args.kwargs["assert_hostname"], "arxiv.org")
+        self.assertEqual(factory.call_args.kwargs["server_hostname"], "arxiv.org")
+        self.assertFalse(pool.request.call_args.kwargs["redirect"])
+        self.assertEqual(pool.request.call_args.kwargs["headers"]["Host"], "arxiv.org")
+        pool.close.assert_called_once()
 
-    async def test_cross_host_redirect_is_never_followed(self):
-        response = self.make_response()
-        response.status_code = 302
-        response.headers = {"Location": "http://127.0.0.1/admin"}
-        with patch("app.mcp.research_url._require_public_dns"), \
-             patch("app.mcp.research_url.requests.get", return_value=response):
-            with self.assertRaisesRegex(ValueError, "redirect rejected"):
-                await fetch_research_pdf("https://arxiv.org/pdf/2502.14143.pdf")
+    def test_redirect_and_size_rejected_and_closed(self):
+        for status, headers, chunks in ((302, {"Location":"http://127.0.0.1"}, []), (200, {"Content-Length":"999999999"}, []), (200, {}, [b"x"*31*1024*1024])):
+            response = self.response(status)
+            response.headers, response.stream.return_value = headers, chunks
+            with self.assertRaises(ValueError):
+                self.download(response)
+            response.close.assert_called_once()
 
-    def test_private_resolved_dns_rejected(self):
-        fake_records = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", 443))]
-        with patch("app.mcp.research_url.socket.getaddrinfo", return_value=fake_records):
-            from app.mcp.research_url import _require_public_dns
-            with self.assertRaisesRegex(ValueError, "non-public"):
-                _require_public_dns("arxiv.org")
+    def test_private_or_mixed_dns_rejected(self):
+        for addresses in (("10.0.0.1",), ("8.8.8.8", "127.0.0.1")):
+            records = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip,443)) for ip in addresses]
+            with patch.object(urls.socket, "getaddrinfo", return_value=records), self.assertRaises(ValueError):
+                urls._require_public_dns("arxiv.org")
 
+    def test_child_deadline_kills_and_reaps_real_stalled_process(self):
+        run = subprocess.run
+        def stalled(*args, **kwargs):
+            return run([sys.executable,"-c","import time; time.sleep(30)"], **kwargs)
+        start = time.monotonic()
+        with patch.object(urls.subprocess,"run",side_effect=stalled), self.assertRaisesRegex(ValueError,"deadline"):
+            urls._fetch_validated_pdf("https://arxiv.org/pdf/2502.14143", timeout=0.1)
+        self.assertLess(time.monotonic()-start, 3)
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_worker_failure_never_exposes_diagnostics(self):
+        with patch.object(urls.subprocess,"run",return_value=subprocess.CompletedProcess([],0,b"0secret-url")), self.assertRaisesRegex(ValueError,"validation failed"):
+            urls._fetch_validated_pdf("https://arxiv.org/pdf/2502.14143")

@@ -1,6 +1,6 @@
 {
-  "intent": "docs/work/INTENT-mcp-project-release.md",
-  "phase": "Backend deployed and public checks passed; authenticated live acceptance and SwarmLab creation pending",
+  "intent": "docs/work/INTENT-mcp-import-release.md",
+  "phase": "MCP importer and hostname corrections verified locally; independent review and release in progress",
   "branch": "feat/mcp-project-management",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,7 +8,7 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Run docs/work/CHATGPT-swarmlab-release-check.md in the existing ChatGPT thread containing the authenticated custom MCP connection and SwarmLab scaffold/RRL. Verify registry and operations, check existing projects, then create/replay using saved UUID b3738396-babb-49cb-8645-3d1a27d049eb. Return actual project ID/results; do not claim completion or import papers before acceptance.",
+  "next_action": "Read VERIFICATION-mcp-import-release.md and independent review .meos/reviews/20261107T152938Z.md; resolve material findings, commit reviewed importer fixes, build all images for confirmed new public origin, migrate, deploy, update PDF bucket CORS, verify public probes, then hand off actual Google OAuth/ChatGPT refresh and pilot acceptance. Do not merge PRs or import production papers here.",
   "blocked_on": "Authenticated OpenPaper tools and prior SwarmLab context are available only in the user existing ChatGPT thread, not this Codex tool session.",
   "updated": "2026-11-07",
   "done": [
@@ -155,5 +155,13 @@
     "operator_handoff": "docs/work/CHATGPT-swarmlab-release-check.md",
     "current_authorization": "Existing credentials only; no temporary owner sessions, credential creation/rotation, infrastructure bootstrap, Worker modification, or PR merge.",
     "project_creation_request_sent": false
+  },
+  "mcp_import_release": {
+    "source_pr": 2,
+    "source_sha": "8e51c247eef9e738320454fb616dc737aa66bdef",
+    "canonical_origin": "https://papers.sammatuba.workers.dev",
+    "verification": "docs/work/VERIFICATION-mcp-import-release.md",
+    "review": ".meos/reviews/20261107T152938Z.md",
+    "status": "local checks pass; review running; undeployed"
   }
 }

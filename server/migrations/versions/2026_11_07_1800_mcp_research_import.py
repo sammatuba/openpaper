@@ -21,6 +21,8 @@ def upgrade():
         sa.Column("upload_job_id", UUID(as_uuid=True), nullable=True),
         sa.Column("paper_id", UUID(as_uuid=True), nullable=True),
         sa.Column("error_message", sa.Text, nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.UniqueConstraint("user_id", "project_id", "source_key", name="uq_mcp_import_source"),
     )
 
