@@ -155,8 +155,8 @@ With `TASK_BACKEND` unset everything runs as in `DEVELOPMENT.md`
 
 ## Optional workers.dev front door
 
-The connected account uses the `jansammat26` workers.dev subdomain. The planned
-Worker is `papers`, with URL `https://papers.jansammat26.workers.dev`; this name
+The connected account uses the `sammatuba` workers.dev subdomain. The planned
+Worker is `papers`, with URL `https://papers.sammatuba.workers.dev`; this name
 is not reserved until deployment. The Worker
 uses a fixed Cloud Run upstream, streams requests and responses, follows no
 redirects, and marks responses `no-store`. It does not make the existing Cloud
@@ -167,9 +167,9 @@ Run service private.
 2. From `deploy/cloudflare`, install Wrangler v4, authenticate with `npx wrangler login`,
    run `npx wrangler deploy --dry-run`, then `npx wrangler deploy`. Record the
    actual URL reported by Cloudflare.
-3. Add `https://papers.jansammat26.workers.dev/api/auth/google/callback`
+3. Add `https://papers.sammatuba.workers.dev/api/auth/google/callback`
    as a Google OAuth redirect URI and authorize the new origin in the OAuth
-   client. Then set `PUBLIC_ORIGIN=https://papers.jansammat26.workers.dev`
+   client. Then set `PUBLIC_ORIGIN=https://papers.sammatuba.workers.dev`
    in `deploy/config.env`.
 4. Run `deploy/deploy.sh bootstrap` to update bucket CORS and queue settings,
    then `deploy/deploy.sh build`, `deploy/deploy.sh deploy`, and
@@ -188,9 +188,9 @@ rollback is validated.
 ## Optional authenticated MCP
 
 MCP is disabled by default. Register the exact Google OAuth redirect URI
-`https://papers.jansammat26.workers.dev/api/mcp/auth/callback` in the existing
+`https://papers.sammatuba.workers.dev/api/mcp/auth/callback` in the existing
 web OAuth client. The MCP endpoint is
-`https://papers.jansammat26.workers.dev/api/mcp`; discovery is at
+`https://papers.sammatuba.workers.dev/api/mcp`; discovery is at
 `/.well-known/oauth-protected-resource/api/mcp` and
 `/.well-known/oauth-authorization-server`. Cloudflare and Caddy must forward
 those routes plus `/authorize`, `/token`, `/register`, `/consent`, and the

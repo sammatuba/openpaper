@@ -1222,6 +1222,28 @@ class Project(Base):
     )
 
 
+class MCPPaperImportRequest(Base):
+    """One original URL import request, preserving identity across retries.
+
+    Uniqueness by (user, project, source_key) prevents duplicate source imports
+    even if the caller accidentally generates a second UUID.
+    """
+    __tablename__ = "mcp_paper_import_requests"
+    __table_args__ = (
+        UniqueConstraint("user_id", "project_id", "source_key", name="uq_mcp_import_source"),
+    )
+
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    request_id = Column(UUID(as_uuid=True), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False)
+    source_key = Column(String(600), nullable=False)
+    source_url = Column(Text, nullable=False)
+    status = Column(String(32), nullable=False)
+    upload_job_id = Column(UUID(as_uuid=True), nullable=True)
+    paper_id = Column(UUID(as_uuid=True), nullable=True)
+    error_message = Column(Text, nullable=True)
+
+
 class MCPProjectRequest(Base):
     """Original creation identity, retained even if the project is deleted."""
     __tablename__ = "mcp_project_requests"

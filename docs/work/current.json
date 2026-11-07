@@ -1,6 +1,6 @@
 {
-  "intent": "docs/work/INTENT-mcp-project-release.md",
-  "phase": "Backend deployed and public checks passed; authenticated live acceptance and SwarmLab creation pending",
+  "intent": "docs/work/INTENT-mcp-import-release.md",
+  "phase": "MCP importer deployed on new domain; Google OAuth callbacks and authenticated ChatGPT acceptance pending",
   "branch": "feat/mcp-project-management",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,8 +8,11 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Run docs/work/CHATGPT-swarmlab-release-check.md in the existing ChatGPT thread containing the authenticated custom MCP connection and SwarmLab scaffold/RRL. Verify registry and operations, check existing projects, then create/replay using saved UUID b3738396-babb-49cb-8645-3d1a27d049eb. Return actual project ID/results; do not claim completion or import papers before acceptance.",
-  "blocked_on": "Authenticated OpenPaper tools and prior SwarmLab context are available only in the user existing ChatGPT thread, not this Codex tool session.",
+  "next_action": "Register both new Google OAuth callbacks in the existing client, then reconnect OpenPaper in ChatGPT to https://papers.sammatuba.workers.dev/api/mcp and refresh tools/actions. Follow CHATGPT-mcp-import-release.md to verify authenticated import/status discovery and a separately authorized single-paper pilot. Google still returns redirect_uri_mismatch; do not mint user tokens, infer completion from submitted, merge PRs automatically, or bulk import before pilot acceptance.",
+  "blocked_on": [
+    "Register new Google OAuth callbacks",
+    "Reconnect/refresh existing ChatGPT OpenPaper integration and run authenticated acceptance"
+  ],
   "updated": "2026-11-07",
   "done": [
     "bootstrap (project, billing, APIs, registry, SA, queue, GCS bucket+CORS+HMAC)",
@@ -60,7 +63,7 @@
   },
   "pilot_session_authorization": "Operator explicitly approved temporary owner session, at most 30 minutes, token memory-only, delete on finish, in resumed session",
   "rollout": {
-    "worker_url": "https://papers.jansammat26.workers.dev",
+    "worker_url": "https://papers.sammatuba.workers.dev",
     "worker_version": "984b0013-26c3-458a-a190-563b65b62872",
     "cloud_build": "01c4c5da-c4d8-4ed9-abb9-9584aa1bd2a4",
     "bootstrap": "complete including hostname CORS and queue",
@@ -155,5 +158,26 @@
     "operator_handoff": "docs/work/CHATGPT-swarmlab-release-check.md",
     "current_authorization": "Existing credentials only; no temporary owner sessions, credential creation/rotation, infrastructure bootstrap, Worker modification, or PR merge.",
     "project_creation_request_sent": false
+  },
+  "mcp_import_release": {
+    "status": "deployed; public checks and independent review pass; Google callback registration/ChatGPT acceptance pending",
+    "source_pr": 2,
+    "source_branch": "feat/mcp-url-import",
+    "runtime_commit": "36066d53c089e54b6f21cae496bb1c08436c54e0",
+    "canonical_origin": "https://papers.sammatuba.workers.dev",
+    "mcp_url": "https://papers.sammatuba.workers.dev/api/mcp",
+    "intent": "docs/work/INTENT-mcp-import-release.md",
+    "verification": "docs/work/VERIFICATION-mcp-import-release.md",
+    "handoff": "docs/work/CHATGPT-mcp-import-release.md",
+    "review": "docs/work/REVIEW-mcp-import-release.md",
+    "review_verdict": "accept",
+    "web_revision": "openpaper-00011-wx8",
+    "jobs_revision": "openpaper-jobs-00008-plm",
+    "migration_execution": "openpaper-migrate-894c8",
+    "checks": "Required PostgreSQL44 zero skips; focused13; full410 OK34skips; real public PDF validation; final live health/discovery/auth/digest/compiled-origin/CORS checks pass",
+    "google_callback_status": "redirect_uri_mismatch for both new callbacks",
+    "production_imports": false,
+    "prs_merged": false,
+    "implementation_checkout": "/tmp/openpaper-mcp-deploy"
   }
 }

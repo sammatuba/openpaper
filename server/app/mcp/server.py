@@ -14,6 +14,7 @@ from app.database.database import SessionLocal
 from app.database.models import Annotation, Paper, PaperNote, Project, ProjectRole, User
 from app.mcp.notes import append_note
 from app.mcp import project_tools
+from app.mcp import research_import
 from app.helpers.paper_search import normalize_doi
 
 
@@ -136,6 +137,24 @@ def create_mcp_app():
                 db, current_user(db), project_id, public_origin,
                 offset=offset, limit=limit,
             )
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True))
+    async def import_paper_from_url(project_id: str, request_id: str, url: str) -> dict:
+        """Import an approved public research PDF into an editable project.
+
+        Reuse the same UUID request_id on retry. Result tracks an asynchronous
+        processing job; 'submitted' is NOT proof that extraction succeeded.
+        """
+        with SessionLocal() as db:
+            return await research_import.import_paper_from_url(
+                db, current_user(db), project_id, request_id, url
+            )
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
+    def get_paper_import_status(request_id: str) -> dict:
+        """Read upload-job status for an authenticated user's MCP import request."""
+        with SessionLocal() as db:
+            return research_import.get_import_status(db, current_user(db), request_id)
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
     def get_paper_note(paper_id: str) -> dict:

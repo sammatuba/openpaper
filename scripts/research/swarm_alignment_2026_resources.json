@@ -1,0 +1,298 @@
+{
+  "source": "https://apartresearch.com/sprints/swarm-alignment-2026#resources",
+  "project_id": "075d0311-79ed-5852-8a2c-151831ccfbd7",
+  "collected_on": "2026-11-07",
+  "items": [
+    {
+      "section": "General",
+      "title": "Multi-Agent Risks from Advanced AI",
+      "source_url": "https://arxiv.org/abs/2502.14143",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "linked",
+      "paper_id": "9cd116b6-a2e8-4904-84a5-7001a14ffabd",
+      "association_verification": "unverified_in_release_session"
+    },
+    {
+      "section": "General",
+      "title": "Distributional AGI Safety",
+      "source_url": "https://arxiv.org/abs/2512.16856",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "General",
+      "title": "ARIA's Scaling Trust programme thesis",
+      "source_url": "https://aria.org.uk/opportunity-spaces/trust-everything-everywhere/scaling-trust/",
+      "kind": "supporting_resource",
+      "import_mode": "reference_only",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "General",
+      "title": "Open Problems in Cooperative AI",
+      "source_url": "https://arxiv.org/abs/2012.08630",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "General",
+      "title": "Infrastructure for AI Agents",
+      "source_url": "https://arxiv.org/abs/2501.10114",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "General",
+      "title": "Foundations of Cooperative AI",
+      "source_url": "https://ojs.aaai.org/index.php/AAAI/article/view/26791",
+      "kind": "research_paper",
+      "import_mode": "direct_pdf_required",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 1",
+      "title": "Generative Agents",
+      "source_url": "https://dl.acm.org/doi/10.1145/3586183.3606763",
+      "kind": "research_paper",
+      "import_mode": "direct_pdf_required",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 1",
+      "title": "Playing repeated games with large language models",
+      "source_url": "https://www.nature.com/articles/s41562-025-02172-y",
+      "kind": "research_paper",
+      "import_mode": "direct_pdf_required",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 1",
+      "title": "LLM agents in stylised games and simulated social environments",
+      "source_url": "https://openreview.net/forum?id=MUtbsFRZwI",
+      "kind": "research_paper",
+      "import_mode": "openreview",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 1",
+      "title": "CRUX",
+      "source_url": "https://cruxevals.com/",
+      "kind": "supporting_resource",
+      "import_mode": "reference_only",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 1",
+      "title": "Concordia, a library for generative agent simulations",
+      "source_url": "https://github.com/google-deepmind/concordia",
+      "kind": "supporting_resource",
+      "import_mode": "reference_only",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 1",
+      "title": "GovSim",
+      "source_url": "https://arxiv.org/abs/2404.16698",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 2",
+      "title": "Prompt Infection",
+      "source_url": "https://arxiv.org/abs/2410.07283",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 2",
+      "title": "Splitting tasks to evade per-agent safety filters",
+      "source_url": "https://openreview.net/forum?id=GCkhEPE1FG",
+      "kind": "research_paper",
+      "import_mode": "openreview",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 2",
+      "title": "Coordination to resist modification or shutdown",
+      "source_url": "https://dl.acm.org/doi/abs/10.65109/HQQZ1937",
+      "kind": "research_paper",
+      "import_mode": "direct_pdf_required",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 2",
+      "title": "From individual cooperation properties to system outcomes",
+      "source_url": "https://openreview.net/forum?id=00KtDBoKnO",
+      "kind": "research_paper",
+      "import_mode": "openreview",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 2",
+      "title": "Defining collective agency",
+      "source_url": "https://openreview.net/forum?id=NacA6YRBNX",
+      "kind": "research_paper",
+      "import_mode": "openreview",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 3",
+      "title": "A2A agent-to-agent protocol",
+      "source_url": "https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/",
+      "kind": "supporting_resource",
+      "import_mode": "reference_only",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 3",
+      "title": "IDs for AI Systems",
+      "source_url": "https://arxiv.org/abs/2406.12137",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 3",
+      "title": "A Watermark for Large Language Models",
+      "source_url": "https://proceedings.mlr.press/v202/kirchenbauer23a.html",
+      "kind": "research_paper",
+      "import_mode": "direct_pdf_required",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 3",
+      "title": "Cooperative AI via Decentralized Commitment Devices",
+      "source_url": "https://arxiv.org/abs/2311.07815",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 3",
+      "title": "Game Manipulators: the Strategic Implications of Binding Contracts",
+      "source_url": "https://arxiv.org/abs/2311.10586",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 3",
+      "title": "Formal Contracts Mitigate Social Dilemmas in Multi-Agent RL",
+      "source_url": "https://arxiv.org/abs/2208.10469",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 3",
+      "title": "Program Equilibrium",
+      "source_url": "https://www.sciencedirect.com/science/article/pii/S0899825604000314",
+      "kind": "research_paper",
+      "import_mode": "direct_pdf_required",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 4",
+      "title": "Secret Collusion among AI Agents",
+      "source_url": "https://proceedings.neurips.cc/paper_files/paper/2024/hash/861f7dad098aec1c3560fb7add468d41-Abstract-Conference.html",
+      "kind": "research_paper",
+      "import_mode": "direct_pdf_required",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 4",
+      "title": "Detecting Multi-Agent Collusion Through Multi-Agent Interpretability",
+      "source_url": "https://arxiv.org/abs/2604.01151",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 4",
+      "title": "AI Control: Improving Safety Despite Intentional Subversion",
+      "source_url": "https://arxiv.org/abs/2312.06942",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "linked",
+      "paper_id": "39a02fd5-6d03-4a93-aa45-fd8e08f421bc",
+      "association_verification": "unverified_in_release_session"
+    },
+    {
+      "section": "Track 4",
+      "title": "Attributing failures in multi-agent systems",
+      "source_url": "https://openreview.net/forum?id=GazlTYxZss",
+      "kind": "research_paper",
+      "import_mode": "openreview",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 4",
+      "title": "Emergent communication between agents",
+      "source_url": "https://openreview.net/forum?id=SRn1MtMPRq",
+      "kind": "research_paper",
+      "import_mode": "openreview",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 4",
+      "title": "CaMeLs Can Use Computers Too",
+      "source_url": "https://arxiv.org/abs/2601.09923",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 4",
+      "title": "Mediated Multi-Agent Reinforcement Learning",
+      "source_url": "https://arxiv.org/pdf/2306.08419.pdf",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "pending",
+      "paper_id": null
+    },
+    {
+      "section": "Track 4",
+      "title": "Stackelberg Attacks on Auctions and Transaction Fee Mechanisms",
+      "source_url": "https://arxiv.org/abs/2305.02178",
+      "kind": "research_paper",
+      "import_mode": "arxiv",
+      "status": "pending",
+      "paper_id": null
+    }
+  ],
+  "association_verification": "Project and linked-paper IDs are reported by the source branch and unverified in this release session; confirm with authenticated project/paper readback before ingestion."
+}
