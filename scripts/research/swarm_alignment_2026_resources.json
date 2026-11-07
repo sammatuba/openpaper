@@ -10,7 +10,8 @@
       "kind": "research_paper",
       "import_mode": "arxiv",
       "status": "linked",
-      "paper_id": "9cd116b6-a2e8-4904-84a5-7001a14ffabd"
+      "paper_id": "9cd116b6-a2e8-4904-84a5-7001a14ffabd",
+      "association_verification": "unverified_in_release_session"
     },
     {
       "section": "General",
@@ -244,7 +245,8 @@
       "kind": "research_paper",
       "import_mode": "arxiv",
       "status": "linked",
-      "paper_id": "39a02fd5-6d03-4a93-aa45-fd8e08f421bc"
+      "paper_id": "39a02fd5-6d03-4a93-aa45-fd8e08f421bc",
+      "association_verification": "unverified_in_release_session"
     },
     {
       "section": "Track 4",
@@ -291,5 +293,6 @@
       "status": "pending",
       "paper_id": null
     }
-  ]
+  ],
+  "association_verification": "Project and linked-paper IDs are reported by the source branch and unverified in this release session; confirm with authenticated project/paper readback before ingestion."
 }

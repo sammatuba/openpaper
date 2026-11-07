@@ -22,3 +22,11 @@ Executed acceptance:
 - git diff --check passes. Logs /tmp/openpaper-import-{focused,required,full}.log. Existing server .venv uses Python3.12.13, lockfile unchanged. Tests use dummy environment with .env disabled and no production service calls. Sandbox initial async run timed out; executed acceptance outside sandbox.
 
 Independent review, clean source commit/build, production migration/deployment, updated CORS, and final public probes pending. No production import, new credentials, key rotation or automatic PR merge.
+
+## Independent review corrections
+
+Initial independent review .meos/reviews/20261107T152938Z.md requested rework for outstanding upload quota capacity. Fixed by serializing MCP admission on the authenticated user row through the reservation commit and job-claim commit, with no lock held over remote I/O. A single SQL snapshot counts completed/direct papers, outstanding upload jobs (including browser jobs), ambiguous jobs, and orphaned durable reservations, avoiding double count and completion races. The active request excludes its existing reservation when transitioning to a job. Same-request/source replay still runs before capacity rejection. Browser admission behavior itself is not changed by this importer release.
+
+Required PostgreSQL43 tests now pass with zero skips (5.054s), including concurrent distinct-source requests across two projects competing for the user's last slot and existing reserved/pending/ambiguous/completed occupancy. Focused13 pass (0.146s). Full regression after this fix409 tests passes (5.742s),33 skips:27 guarded PostgreSQL cases covered by required runner,6 baseline browser OAuth-state checks not run.
+
+Minor findings corrected: manifest project/paper association claims explicitly labeled unverified in this session; bounded bucket-only CORS recipe documented. CORS update succeeded, adding the new origin while preserving the prior origin, methods, headers and max age. Google public authorization checks return redirect_uri_mismatch for both new callbacks; user registration confirmation is pending. Full hostname build447ff95f-7723-4f3a-b96e-c8c4192fdbca uses clean1732aac2 source and is in progress; its backend must be superseded by a build of the quota correction before deployment. No deployment of unaccepted code.

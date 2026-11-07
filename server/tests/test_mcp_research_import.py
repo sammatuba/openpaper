@@ -34,6 +34,7 @@ class TestImportLedger(unittest.IsolatedAsyncioTestCase):
         self.db.query.return_value.filter.return_value.with_for_update.return_value.one_or_none.return_value = SimpleNamespace()
         self.db.query.return_value.filter.return_value.one_or_none.return_value = previous
         with patch.object(research_import, "_require_editor"), \
+             patch.object(research_import, "_lock_import_admissions"), \
              patch.object(research_import, "fetch_research_pdf", new_callable=AsyncMock) as fetch:
             with self.assertRaisesRegex(ValueError, "different import"):
                 await research_import.import_paper_from_url(
@@ -65,6 +66,7 @@ class TestImportLedger(unittest.IsolatedAsyncioTestCase):
         third.filter.return_value.one_or_none.return_value = previous
         self.db.query.side_effect = [first, second, third]
         with patch.object(research_import, "_require_editor"), \
+             patch.object(research_import, "_lock_import_admissions"), \
              patch.object(research_import, "fetch_research_pdf", new_callable=AsyncMock) as fetch, \
              patch.object(research_import.jobs_client, "submit_pdf_processing_job_with_upload", new_callable=AsyncMock) as submit:
             result = await research_import.import_paper_from_url(

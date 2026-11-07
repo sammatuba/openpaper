@@ -119,6 +119,47 @@ class ImportPostgresTests(unittest.TestCase):
             self.assertEqual(db.query(MCPPaperImportRequest).filter_by(user_id=user.id).count(),1)
             self.assertEqual(db.query(PaperUploadJob).filter_by(user_id=user.id).count(),1)
 
+    def seed_completed(self,user,count):
+        with self.Session() as db:
+            db.add_all(Paper(user_id=user.id,file_url="x",status="reading") for _ in range(count))
+            db.commit()
+
+    def test_distinct_sources_across_projects_compete_for_last_user_slot(self):
+        user,pid=self.fixture()
+        other_pid=self.create(user)["id"]
+        self.seed_completed(user,9)
+        def call(i):
+            try:
+                return self.invoke(user, pid if i%2 else other_pid, str(uuid4()), f"https://arxiv.org/abs/2512.1685{i}")["status"]
+            except PermissionError:
+                return "denied"
+        with patch.object(research_import,"fetch_research_pdf",new_callable=AsyncMock,return_value=b"fixture") as fetch, patch.object(pdf_jobs.jobs_client,"submit_pdf_processing_job_with_upload",new_callable=AsyncMock,return_value="task") as dispatch:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                results=list(pool.map(call,range(4)))
+            self.assertEqual(sorted(results),["denied"]*3+["submitted"])
+            self.assertEqual((fetch.await_count,dispatch.await_count),(1,1))
+        with self.Session() as db:
+            self.assertEqual(db.query(MCPPaperImportRequest).filter_by(user_id=user.id).count(),1)
+
+    def test_reserved_pending_and_ambiguous_capacity_and_completion(self):
+        for kind in ("reserved","pending","needs_reconciliation","completed"):
+            with self.subTest(kind=kind):
+                user,pid=self.fixture()
+                self.seed_completed(user,9)
+                with self.Session() as db:
+                    job=None
+                    if kind != "reserved":
+                        job=PaperUploadJob(user_id=user.id,status="failed" if kind == "needs_reconciliation" else kind)
+                        db.add(job);db.flush()
+                    if kind in ("reserved","needs_reconciliation"):
+                        db.add(MCPPaperImportRequest(user_id=user.id,request_id=uuid4(),project_id=UUID(pid),source_key="prior",source_url="prior",status=kind,upload_job_id=job.id if job else None))
+                    if kind == "completed":
+                        db.add(Paper(user_id=user.id,file_url="x",status="reading",upload_job_id=job.id))
+                    db.commit()
+                with patch.object(research_import,"fetch_research_pdf",new_callable=AsyncMock) as fetch, self.assertRaisesRegex(PermissionError,"outstanding"):
+                    self.invoke(user,pid,str(uuid4()))
+                fetch.assert_not_awaited()
+
     def test_owned_arxiv_identity_is_exact_and_version_aware(self):
         user,pid = self.fixture()
         with self.Session() as db:

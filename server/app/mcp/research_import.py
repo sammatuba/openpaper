@@ -3,18 +3,18 @@ import uuid
 import re
 from datetime import datetime, timezone
 
-from sqlalchemy import func
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.database.models import (
     JobStatus, MCPPaperImportRequest, Paper, PaperUploadJob, Project,
-    ProjectPaper, ProjectRole, ProjectRoles,
+    ProjectPaper, ProjectRole, ProjectRoles, User,
 )
 from app.helpers.pdf_jobs import jobs_client
 from app.helpers.paper_search import normalize_doi
 from app.helpers.subscription_limits import (
     can_user_access_knowledge_base, can_user_add_papers_to_project,
-    can_user_upload_paper,
+    get_user_subscription_plan, get_plan_limits, PAPER_UPLOAD_KEY,
 )
 from app.mcp.research_url import fetch_research_pdf, normalize_research_pdf_url
 
@@ -95,6 +95,48 @@ def _check_limit(db, user, func_check, *args, **kwargs):
         raise PermissionError(reason or "Subscription limit reached")
 
 
+def _lock_import_admissions(db, user):
+    # Held only through the durable reservation/job commit, never remote I/O.
+    if db.query(User.id).filter(User.id == user.id).with_for_update().one_or_none() is None:
+        raise PermissionError("User not found")
+
+
+def _check_upload_capacity(db, user, exclude_request=None):
+    limit = get_plan_limits(get_user_subscription_plan(db, user))[PAPER_UPLOAD_KEY]
+    if limit == float("inf"):
+        return
+    completed = select(func.count(Paper.id)).outerjoin(
+        PaperUploadJob, PaperUploadJob.id == Paper.upload_job_id
+    ).where(Paper.user_id == user.id, or_(
+        Paper.upload_job_id.is_(None), PaperUploadJob.status == JobStatus.COMPLETED
+    ))
+    ambiguous = exists().where(
+        MCPPaperImportRequest.user_id == user.id,
+        MCPPaperImportRequest.upload_job_id == PaperUploadJob.id,
+        MCPPaperImportRequest.status.in_(("submitting", "submitted", "needs_reconciliation")),
+    )
+    outstanding = select(func.count(PaperUploadJob.id)).where(
+        PaperUploadJob.user_id == user.id,
+        or_(PaperUploadJob.status.notin_((JobStatus.COMPLETED, JobStatus.FAILED)),
+            and_(PaperUploadJob.status != JobStatus.COMPLETED, ambiguous)),
+    )
+    unbacked = select(func.count()).select_from(MCPPaperImportRequest).where(
+        MCPPaperImportRequest.user_id == user.id,
+        MCPPaperImportRequest.status.notin_(("failed", "linked_existing")),
+        ~exists().where(PaperUploadJob.id == MCPPaperImportRequest.upload_job_id,
+                        PaperUploadJob.user_id == user.id),
+    )
+    if exclude_request is not None:
+        unbacked = unbacked.where(MCPPaperImportRequest.request_id != exclude_request)
+    # One SQL snapshot avoids a completion between separate count queries
+    # disappearing from both completed and pending occupancy.
+    occupied = db.execute(select(completed.scalar_subquery()
+                                 + outstanding.scalar_subquery()
+                                 + unbacked.scalar_subquery())).scalar_one()
+    if occupied >= limit:
+        raise PermissionError("Paper upload limit reached, including outstanding imports")
+
+
 async def import_paper_from_url(db, user, project_id: str, request_id: str, url: str) -> dict:
     """Start at most one ingestion for a project/source; expose job status separately.
 
@@ -104,6 +146,7 @@ async def import_paper_from_url(db, user, project_id: str, request_id: str, url:
     pid, rid = _uuid(project_id, "project_id"), _uuid(request_id, "request_id")
     source_key, pdf_url = normalize_research_pdf_url(url)
     _require_editor(db, user, pid)
+    _lock_import_admissions(db, user)
 
     # The project lock serializes same-project admissions and paper-count quotas.
     project = db.query(Project).filter(Project.id == pid).with_for_update().one_or_none()
@@ -151,7 +194,7 @@ async def import_paper_from_url(db, user, project_id: str, request_id: str, url:
         db.commit()
         return {**_summary(db, row), "replay": False}
 
-    _check_limit(db, user, can_user_upload_paper)
+    _check_upload_capacity(db, user)
     _check_limit(db, user, can_user_access_knowledge_base)
     _check_limit(db, user, can_user_add_papers_to_project, pid, paper_count=1)
     row = MCPPaperImportRequest(
@@ -178,8 +221,9 @@ async def import_paper_from_url(db, user, project_id: str, request_id: str, url:
     try:
         data = await fetch_research_pdf(pdf_url)
         # Membership can change during remote retrieval.
+        _lock_import_admissions(db, user)
         _require_editor(db, user, pid)
-        _check_limit(db, user, can_user_upload_paper)
+        _check_upload_capacity(db, user, exclude_request=rid)
         _check_limit(db, user, can_user_access_knowledge_base)
         job = PaperUploadJob(
             user_id=user.id, status=JobStatus.PENDING,

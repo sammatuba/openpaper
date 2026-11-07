@@ -30,12 +30,12 @@ Pinned exact sprint resource links:
 
 Counts at collection time (7 Nov 2026):
 - **32** entries total, including **28** research papers and **4** supporting resources.
-- **2** papers already linked to SwarmLab via OpenPaper, no new ingestion needed.
+- **2** papers are marked already linked in the source manifest; verify these associations through authenticated readback before importing.
 - **19** pending papers use arXiv/OpenReview source URLs and can be attempted with this tool after release.
 - **7** pending paper publisher landing pages require an explicitly verified direct PDF URL or an authorized local PDF upload workflow. Do **not** guess publisher PDF paths.
 - **4** references (ARIA, CRUX, Concordia, A2A) are not papers; preserve as source links rather than importing them as PDFs.
 
-SwarmLab project ID: `075d0311-79ed-5852-8a2c-151831ccfbd7`.
+Manifest-reported SwarmLab project ID (unverified in this release session): `075d0311-79ed-5852-8a2c-151831ccfbd7`. Confirm the current user can access it.
 
 ## Local checks
 
@@ -64,6 +64,8 @@ bash deploy/deploy.sh build  # full build required when the public hostname chan
 bash deploy/deploy.sh migrate
 bash deploy/deploy.sh deploy
 ```
+
+Update the existing PDF bucket CORS policy to include `https://papers.sammatuba.workers.dev`, retaining the current methods/headers and existing origins as needed. Use `gcloud storage buckets describe gs://openpaper-sammatuba-papers --configuration=personal --format=json` to inspect it, prepare a CORS JSON file, then run `gcloud storage buckets update gs://openpaper-sammatuba-papers --configuration=personal --project=openpaper-sammatuba --cors-file=/path/to/cors.json`. This bucket-only operation does not require infrastructure bootstrap. Verify the saved policy and a browser PDF fetch from the new origin.
 
 Read `deploy/README.md` and confirm `deploy/config.env` still targets the correct account, project, region, origin and `MCP_ENABLED=true`. Deploy from the exact feature commit; do not merge automatically or run infrastructure bootstrap. Health, auth rejection and OAuth discovery alone do not establish successful new-tool authorization.
 
