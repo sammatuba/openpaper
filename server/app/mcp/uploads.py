@@ -48,6 +48,7 @@ def upload_status(db, user, job_id, origin):
 async def import_pdf(db, user, origin, url, project_id=None):
     # Lazy imports avoid initializing processing/storage in retrieval-only tests.
     from app.api.paper_upload_api import check_subscription_limits, upload_raw_file_microservice
+    from app.mcp.research_import import _lock_import_admissions, _check_upload_capacity
     project = project_write_access(db, user, project_id)
     data = await asyncio.to_thread(download_pdf, url)
     valid, error = await validate_pdf_content(data, 'MCP import')
@@ -56,9 +57,14 @@ async def import_pdf(db, user, origin, url, project_id=None):
     digest = hashlib.sha256(data).hexdigest()
     # A content+user+destination identity survives signed URL changes and retries.
     job_id = uuid.uuid5(uuid.NAMESPACE_URL, f"openpaper:mcp:pdf:v1:{user.id}:{project}:{digest}")
+    # Share the deployed URL importer's admission lock and occupancy count so
+    # attachment uploads cannot race pending imports for the user's last slot.
+    _lock_import_admissions(db, user)
+    project_write_access(db, user, project_id)  # Access may change during retrieval.
     existing = db.query(PaperUploadJob).filter(PaperUploadJob.id == job_id, PaperUploadJob.user_id == user.id).first()
     if existing:
         return {**upload_status(db, user, str(job_id), origin), "reused": True}
+    _check_upload_capacity(db, user)
     error = await check_subscription_limits(user, db, str(project) if project else None)
     if error:
         raise ValueError(error)
@@ -72,6 +78,7 @@ async def import_pdf(db, user, origin, url, project_id=None):
         return {**upload_status(db, user, str(job_id), origin), "reused": True}
     # Durable claim precedes side effects. If this call dies, retries report the
     # claim for reconciliation and do not repeat storage or expensive processing.
-    await upload_raw_file_microservice(data, 'Imported paper.pdf', job, user, db, project)
+    await upload_raw_file_microservice(data, 'Imported paper.pdf', job, user, db, project,
+                                      preserve_on_dispatch_error=True)
     db.expire_all()
     return {**upload_status(db, user, str(job_id), origin), "reused": False}

@@ -16,6 +16,7 @@ from app.helpers.email import (
     send_project_invite_email,
 )
 from app.schemas.user import CurrentUser
+from app.helpers.project_admission import lock_project_admissions, require_project_capacity
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session, joinedload
 
@@ -218,9 +219,11 @@ class ProjectRoleInvitationCRUD(
     ) -> Optional[ProjectRole]:
         """Accept a project invitation."""
         try:
+            lock_project_admissions(db, user)
             invitation: ProjectRoleInvitation | None = (
                 db.query(ProjectRoleInvitation)
                 .filter(ProjectRoleInvitation.id == invitation_id)
+                .with_for_update()
                 .first()
             )
 
@@ -229,6 +232,16 @@ class ProjectRoleInvitationCRUD(
                     f"Invalid invitation {invitation_id} for user {user.id} ({user.email})"
                 )
                 return None
+
+            existing = db.query(ProjectRole).filter(
+                ProjectRole.project_id == invitation.project_id,
+                ProjectRole.user_id == user.id,
+            ).first()
+            if existing is not None:
+                db.delete(invitation)
+                db.commit()
+                return existing
+            require_project_capacity(db, user)
 
             # Create a project role for the user
             project_role = ProjectRole(
@@ -244,6 +257,9 @@ class ProjectRoleInvitationCRUD(
 
             return project_role
 
+        except PermissionError:
+            db.rollback()
+            raise
         except Exception as e:
             db.rollback()
             logger.error(

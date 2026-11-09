@@ -97,7 +97,7 @@ class ProjectResearchBriefPostgresTests(unittest.IsolatedAsyncioTestCase):
         def db_session():
             with self.Session() as db: yield db
         app.dependency_overrides[get_db] = db_session
-        with patch('app.api.projects.projects_api.can_user_create_project', return_value=(True, None)), patch('app.api.projects.projects_api.track_event'):
+        with patch('app.api.projects.projects_api.track_event'):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
                 payload = {'title': 'Research', 'description': 'Original source', 'research_brief': document()}
                 created = await client.post('/api/projects', json=payload)

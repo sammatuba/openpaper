@@ -264,7 +264,7 @@ cmd_migrate() {
   gcloud run jobs "$verb" openpaper-migrate --region="$REGION" \
     --image="${IMAGE_BASE}/server:${TAG}" --service-account="$RUNTIME_SA" \
     --command=alembic --args=upgrade,head \
-    --set-secrets=DATABASE_URL=DATABASE_URL:latest \
+    --set-secrets=DATABASE_URL=DATABASE_URL_DIRECT:latest \
     --memory=1Gi --max-retries=0 --task-timeout=15m >/dev/null
   gcloud run jobs execute openpaper-migrate --region="$REGION" --wait
 }

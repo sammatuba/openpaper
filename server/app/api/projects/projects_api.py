@@ -10,7 +10,6 @@ from app.database.crud.projects.project_crud import (
 from app.database.database import get_db
 from app.database.models import ProjectRoles
 from app.database.telemetry import track_event
-from app.helpers.subscription_limits import can_user_create_project
 from app.schemas.user import CurrentUser
 from app.schemas.textfold import TextFoldDocument
 from fastapi import APIRouter, Depends
@@ -43,19 +42,6 @@ async def create_project(
 ) -> JSONResponse:
     """Create a new project"""
     try:
-        can_create, reason = can_user_create_project(db, current_user)
-
-        if not can_create:
-            logger.warning(
-                f"User {current_user.id} attempted to create a project but was denied: {reason}"
-            )
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "message": "Project creation limit reached. Please upgrade your subscription plan."
-                },
-            )
-
         project = project_crud.create(
             db,
             obj_in=ProjectCreate(
@@ -75,6 +61,10 @@ async def create_project(
             status_code=201,
             content=project.to_dict(),
         )
+    except PermissionError:
+        return JSONResponse(status_code=403, content={
+            "message": "Project creation limit reached. Please upgrade your subscription plan."
+        })
     except Exception as e:
         logger.error(f"Error creating project: {e}")
         return JSONResponse(

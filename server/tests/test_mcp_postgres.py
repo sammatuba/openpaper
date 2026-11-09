@@ -35,8 +35,8 @@ class MCPPostgresTests(unittest.TestCase):
                 PaperUploadJob.__table__.create(conn)
                 Paper.__table__.create(conn)
                 PaperNote.__table__.create(conn)
-                from app.database.models import Project, ProjectRole, ProjectPaper, Highlight, Annotation, PaperPassage
-                for model in (Project, ProjectRole, ProjectPaper, Highlight, Annotation, PaperPassage):
+                from app.database.models import Project, ProjectRole, ProjectPaper, Highlight, Annotation, PaperPassage, Subscription, MCPPaperImportRequest
+                for model in (Project, ProjectRole, ProjectPaper, Highlight, Annotation, PaperPassage, Subscription, MCPPaperImportRequest):
                     model.__table__.create(conn)
                 conn.execute(text("CREATE TABLE mcp_note_requests (user_id uuid NOT NULL, request_id uuid NOT NULL, paper_id uuid NOT NULL, content_hash text NOT NULL, PRIMARY KEY(user_id, request_id))"))
             cls.Session = sessionmaker(bind=cls.engine)
@@ -183,7 +183,8 @@ class MCPPostgresTests(unittest.TestCase):
             conn.execute(self.text("INSERT INTO project (id,admin_id,title) VALUES (:p,:u,'Upload test')"),{"p":project,"u":owner})
             conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'viewer')"),{"id":uuid4(),"p":project,"u":other})
         calls=[]
-        async def dispatch(data,filename,job,user,db,project):
+        async def dispatch(data,filename,job,user,db,project,**options):
+            self.assertTrue(options['preserve_on_dispatch_error'])
             calls.append(str(job.id))
             job.status='running';job.task_id='test-task';db.commit()
         def call():
@@ -329,7 +330,7 @@ class MCPPostgresTests(unittest.TestCase):
                         from pathlib import Path
                         pdf=(Path(__file__).resolve().parents[1]/'evals/seed_data/publicusegeneralhealthchatbots.pdf').read_bytes()
                         with patch('app.mcp.uploads.download_pdf',return_value=pdf) as download,patch.object(paper_upload_api,'check_subscription_limits',new=AsyncMock(return_value=None)),patch.object(paper_upload_api,'track_event'),patch.object(paper_upload_api.jobs_client,'submit_pdf_processing_job_with_upload',new=AsyncMock(return_value='processing-task')) as dispatch:
-                            imported=await rpc('import_paper_from_url',{'url':'https://paper.test/paper.pdf'})
+                            imported=await rpc('upload_paper_file',{'file':{'download_url':'https://file.test/first.pdf','file_id':'file-first'}})
                             attached=await rpc('upload_paper_file',{'file':{'download_url':'https://file.test/signed.pdf','file_id':'file-test'}})
                             self.assertEqual(imported['job_id'],attached['job_id'])
                             self.assertTrue(attached['reused']);self.assertEqual(dispatch.await_count,1)

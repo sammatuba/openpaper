@@ -336,6 +336,7 @@ class JobsClient:
         user: CurrentUser,
         project_id: Optional[UUID] = None,
         original_filename: Optional[str] = None,
+        preserve_on_dispatch_error: bool = False,
     ) -> str:
         """
         Upload a PDF file to S3 and submit a processing job.
@@ -446,6 +447,10 @@ class JobsClient:
             return task_id
 
         except Exception as e:
+            if db_committed and preserve_on_dispatch_error:
+                # A task RPC can succeed remotely before its response is lost.
+                # Preserve the committed paper/link/object for reconciliation.
+                raise RuntimeError("PDF dispatch outcome requires reconciliation") from e
             error_msg = str(e)
             logger.error(
                 f"PDF upload and job submission failed: {error_msg}", exc_info=True

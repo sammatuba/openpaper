@@ -23,6 +23,11 @@ SOCKET = Path("/tmp/.s.PGSQL.55439")
 PORT = "55439"
 SUITES = (
     "tests.test_mcp_postgres",
+    "tests.test_mcp_import_postgres",
+    "tests.test_mcp_project_postgres",
+    "tests.test_mcp_project_tools",
+    "tests.test_mcp_projects_database",
+    "tests.test_mcp_protocol",
     "tests.test_pdf_webhook_postgres",
     "tests.test_table_webhook_postgres",
     "tests.test_google_oauth_state_claim",

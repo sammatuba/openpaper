@@ -1,6 +1,6 @@
 {
-  "intent": "docs/work/INTENT-project-workflow.md",
-  "phase": "Project dossier workflow verified locally; independent review finding resolved",
+  "intent": "docs/work/INTENT-dossier-release.md",
+  "phase": "Release integration: preserving deployed MCP importer before dossier deployment",
   "branch": "master",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,7 +8,7 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Review the local dossier workflow and desktop/mobile previews before separately authorized commit/push/deploy work. Use Compare the evidence → Resolve the tension → explicitly update the working brief → Plan the next experiment. Existing Textfold migration project_research_brief_01 must precede a web release; preserve unrelated pending work.",
+  "next_action": "Resolve merge and migration integration, verify the combined release, then push and deploy under the user authorization of 2026-11-09.",
   "blocked_on": [
     "Register new Google OAuth callbacks",
     "Reconnect/refresh existing ChatGPT OpenPaper integration and run authenticated acceptance"

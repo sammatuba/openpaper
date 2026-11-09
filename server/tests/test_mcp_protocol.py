@@ -15,7 +15,14 @@ class MCPProtocolTests(unittest.IsolatedAsyncioTestCase):
         async def verify(_self, token):
             return AccessToken(token=token, client_id="test", scopes=["openid", "https://www.googleapis.com/auth/userinfo.email"],
                                claims={"email":"owner@example.test", "email_verified": True, "aud":"test-client"}) if token == "valid" else None
-        with patch.object(GoogleProvider, "verify_token", verify):
+        settings = {
+            "CLIENT_DOMAIN":"https://papers.example.workers.dev",
+            "GOOGLE_CLIENT_ID":"test-client", "GOOGLE_CLIENT_SECRET":"test-secret",
+            "DATABASE_URL":"postgresql://test:test@localhost/test",
+            "MCP_JWT_SIGNING_KEY":"testing-signing-key-with-32-characters",
+            "MCP_STORAGE_ENCRYPTION_KEY":"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+        }
+        with patch.dict(os.environ, settings), patch.object(GoogleProvider, "verify_token", verify):
             from fastapi import FastAPI
             mcp_app = create_mcp_app()
             app = FastAPI(lifespan=mcp_app.lifespan)
@@ -36,7 +43,10 @@ class MCPProtocolTests(unittest.IsolatedAsyncioTestCase):
                     import json
                     result=listing.json() if listing.headers.get("content-type","").startswith("application/json") else json.loads(next(line[6:] for line in listing.text.splitlines() if line.startswith("data: ")))
                     tools={t['name']:t for t in result['result']['tools']}
-                    self.assertEqual(len(tools),15)
+                    self.assertEqual(len(tools),21)
+                    self.assertEqual(set(tools['import_paper_from_url']['inputSchema']['required']),
+                                     {'project_id', 'request_id', 'url'})
+                    self.assertIn('get_paper_import_status', tools)
                     tool=tools['upload_paper_file']
                     self.assertEqual(tool['_meta']['openai/fileParams'],['file'])
                     schema=tool['inputSchema'];file=schema['properties']['file']

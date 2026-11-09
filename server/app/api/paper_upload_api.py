@@ -323,6 +323,8 @@ async def upload_raw_file_microservice(
     current_user: CurrentUser,
     db: Session,
     project_id: Optional[UUID] = None,
+    *,
+    preserve_on_dispatch_error: bool = False,
 ) -> None:
     """
     Helper function to upload a raw file using the microservice.
@@ -343,6 +345,7 @@ async def upload_raw_file_microservice(
             user=current_user,
             project_id=project_id,
             original_filename=filename,
+            **({"preserve_on_dispatch_error": True} if preserve_on_dispatch_error else {}),
         )
 
         # Update job with task_id
@@ -365,6 +368,11 @@ async def upload_raw_file_microservice(
 
     except Exception as e:
         logger.error(f"Error submitting file to microservice: {str(e)}", exc_info=True)
+        if preserve_on_dispatch_error:
+            # A queued task may already exist. Keep its durable claim/resources
+            # for reconciliation rather than declaring failure or freeing quota.
+            db.rollback()
+            raise
         paper_upload_job_crud.mark_as_failed(
             db=db,
             job_id=str(paper_upload_job.id),

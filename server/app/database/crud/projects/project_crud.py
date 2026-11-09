@@ -18,6 +18,7 @@ from app.database.models import (
 )
 from app.schemas.user import CurrentUser
 from app.schemas.textfold import TextFoldDocument
+from app.helpers.project_admission import lock_project_admissions, require_project_capacity
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session, defer
@@ -62,6 +63,8 @@ class ProjectCRUD(ProjectBaseCRUD[Project, ProjectCreate, ProjectUpdate]):
             raise ValueError("user parameter is required for ProjectCRUD.create")
 
         try:
+            lock_project_admissions(db, user)
+            require_project_capacity(db, user)
             # Create the project
             db_obj = Project(
                 title=obj_in.title,
@@ -70,8 +73,7 @@ class ProjectCRUD(ProjectBaseCRUD[Project, ProjectCreate, ProjectUpdate]):
                 admin_id=user.id,
             )
             db.add(db_obj)
-            db.commit()
-            db.refresh(db_obj)
+            db.flush()
 
             # Assign the creator the admin role
             project_role = ProjectRole(
@@ -81,8 +83,12 @@ class ProjectCRUD(ProjectBaseCRUD[Project, ProjectCreate, ProjectUpdate]):
             )
             db.add(project_role)
             db.commit()
+            db.refresh(db_obj)
 
             return db_obj
+        except PermissionError:
+            db.rollback()
+            raise
         except Exception as e:
             db.rollback()
             logger.error(f"Error creating {Project.__name__}: {str(e)}", exc_info=True)
