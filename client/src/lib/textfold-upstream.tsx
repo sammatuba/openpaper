@@ -145,7 +145,12 @@ export function toUpstreamDocument(doc: TextFoldDocument, userId: string, questi
 export function upstreamPage(template: string, data: ReturnType<typeof toUpstreamDocument>, theme: string) {
     const base = new URL('/vendor/textfold/', location.href).href;
     const csp = "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'";
-    const head = `<meta http-equiv="Content-Security-Policy" content="${csp}"><link rel="stylesheet" href="${base}reader.css"><style>.tagline,.langpick,.paper-head .authors,.chatbtn,.chat,[data-act="ask"]{display:none!important}.tk pre,.tk table{max-width:100%;overflow:auto}.topbar{padding:10px 16px}.doc{padding-top:12px}</style>`;
+    const head = `<meta http-equiv="Content-Security-Policy" content="${csp}"><link rel="stylesheet" href="${base}reader.css"><style>
+      :root { --surface:#fff; --card:#fff; --ink:#171717; --ink-2:#404040; --muted:#737373; --line:#e5e5e5; --line-2:#f0f0f0; --accent:#2563eb; --accent-soft:#eff6ff; --accent-deep:#1d4ed8; --sans:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; --serif:var(--sans); }
+      :root[data-theme="dark"] { --surface:#101416; --card:#191d20; --ink:#f2f2f2; --ink-2:#d0d3d6; --muted:#a1aab3; --faint:#707980; --line:#30363a; --line-2:#242a2d; --accent:#60a5fa; --accent-soft:#172554; --accent-deep:#93c5fd; }
+      .tagline,.langpick,.paper-head .authors,.chatbtn,.chat,[data-act="ask"],.brand{display:none!important}
+      .tk pre,.tk table{max-width:100%;overflow:auto}.topbar{padding:4px 8px;justify-content:flex-end}.doc{padding-top:12px}.paper-head h1{font-size:clamp(1.2rem,2.5vw,1.65rem);line-height:1.35;letter-spacing:-.02em}footer.zoom{background:var(--surface)}
+    </style>`;
     const scripts = `<script src="${base}i18n.js"></script><script src="${base}reader.js"></script><script>document.documentElement.dataset.theme=${JSON.stringify(theme)};window.__reader.setLevel(0);document.querySelector('[data-view="map"]')?.click();window.parent.postMessage({type:'openpaper:textfold-ready',commit:${JSON.stringify(TEXTFOLD_COMMIT)},revision:${JSON.stringify(data.saved)}},${JSON.stringify(location.origin)});</script>`;
     const parts: Record<string, string> = {TITLE:escape(data.meta.title),HEAD:head,CLASS:'static',SIDEBAR:'',
         DATA:JSON.stringify(data).replace(/</g,'\\u003c'),SCRIPTS:scripts};

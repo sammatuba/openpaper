@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from 'react';
-import { useTheme } from 'next-themes';
 import { Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -32,13 +31,20 @@ export function downloadFold(doc: TextFoldDocument) {
 
 export function TextFoldReader({document:doc,question}: {document:TextFoldDocument;question?:string}) {
     const {user} = useAuth();
-    const {resolvedTheme} = useTheme();
+    const [dark, setDark] = useState(false);
     const [page, setPage] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [ready, setReady] = useState(false);
     const [warnings, setWarnings] = useState(0);
     const frame = useRef<HTMLIFrameElement>(null);
     const expectedRevision = useRef('');
+    useEffect(() => {
+        const sync = () => setDark(document.documentElement.classList.contains('dark'));
+        sync();
+        const observer = new MutationObserver(sync);
+        observer.observe(document.documentElement, {attributes:true, attributeFilter:['class']});
+        return () => observer.disconnect();
+    }, []);
     useEffect(() => {
         if (!user?.id) return;
         let active = true;
@@ -53,10 +59,10 @@ export function TextFoldReader({document:doc,question}: {document:TextFoldDocume
             data.saved = data.meta.version = revision;
             expectedRevision.current = revision;
             setWarnings(data.openpaper.warnings.length);
-            setPage(upstreamPage(template,data,resolvedTheme === 'dark' ? 'dark' : 'light'));
+            setPage(upstreamPage(template,data,dark ? 'dark' : 'light'));
         }).catch(() => { if (active) setError('Could not open the Textfold reader. Reload to try again; the original brief is below.'); });
         return () => {active=false;};
-    },[doc,user?.id,resolvedTheme,question]);
+    },[doc,user?.id,dark,question]);
     useEffect(() => {
         const receive = (event: MessageEvent) => {
             if (event.source === frame.current?.contentWindow && event.origin === location.origin && event.data?.type === 'openpaper:textfold-ready' && event.data.commit === TEXTFOLD_COMMIT && event.data.revision === expectedRevision.current) setReady(true);
@@ -71,13 +77,13 @@ export function TextFoldReader({document:doc,question}: {document:TextFoldDocume
     },[page,ready]);
     return <div className="min-w-0 space-y-3" aria-label="Folded research brief">
         <div className="flex flex-wrap items-center justify-between gap-2">
-            <div><h2 className="text-sm font-semibold">Explore with Textfold</h2><p className="mt-1 text-xs text-muted-foreground">Zoom from the map to every word. Click a paragraph to unfold it.</p></div>
+            <div><h2 className="text-sm font-semibold">Explore the brief</h2><p className="mt-1 text-xs text-muted-foreground">Move between the map and full text, or open a paragraph for more detail.</p></div>
             <Button variant="ghost" size="sm" className="gap-1.5 text-xs" onClick={() => downloadFold(doc)}><Download className="h-3.5 w-3.5" />Export Textfold</Button>
         </div>
         <p className="text-xs text-muted-foreground">{doc.provenance.local ? 'Local excerpts · first sentences, no new assessment' : doc.provenance.ai_generated ? `AI-written summaries${doc.provenance.model ? ` · ${doc.provenance.model}` : ''}` : 'Provided reading levels'}. Full and Brief preserve source wording.</p>
         {warnings > 0 && <p className="text-xs text-muted-foreground">{warnings} passage{warnings === 1 ? '' : 's'} use full source context at Brief because their Markdown crosses sentence boundaries.</p>}
         {error && <p role="alert" className="rounded-md border p-3 text-sm">{error}</p>}
-        {!error && <div className="overflow-hidden rounded-xl border" data-textfold-commit={TEXTFOLD_COMMIT} data-reader-ready={ready}>
+        {!error && <div className="overflow-hidden" data-textfold-commit={TEXTFOLD_COMMIT} data-reader-ready={ready}>
             {!ready && <p role="status" className="p-3 text-xs text-muted-foreground">Opening Textfold…</p>}
             {page && <iframe ref={frame} title="Textfold research reader" srcDoc={page} sandbox="allow-scripts allow-same-origin allow-downloads allow-popups allow-modals allow-forms" className="h-[75svh] min-h-80 max-h-[760px] w-full border-0" />}
         </div>}

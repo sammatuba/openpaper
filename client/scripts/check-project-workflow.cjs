@@ -101,6 +101,15 @@ const base = process.env.OPENPAPER_BROWSER_BASE || 'http://127.0.0.1:3011';
             // The existing native brief remains accessible from the task workspace.
             await main.getByRole('button',{name:'Read or update the brief',exact:true}).click();
             await page.locator('[data-reader-ready="true"]').waitFor();
+            const readerFrame = page.frames().find(frame => frame !== page.mainFrame());
+            assert.equal(await readerFrame.evaluate(() => document.documentElement.dataset.theme), width === 1440 ? 'dark' : 'light', 'reader follows OpenPaper theme');
+            if (width === 1440) {
+                await page.evaluate(() => document.documentElement.classList.remove('dark'));
+                await page.waitForFunction(() => document.querySelector('iframe')?.contentDocument?.documentElement?.dataset.theme === 'light');
+                await page.evaluate(() => document.documentElement.classList.add('dark'));
+                await page.waitForFunction(() => document.querySelector('iframe')?.contentDocument?.documentElement?.dataset.theme === 'dark');
+                await page.locator('[data-reader-ready="true"]').waitFor();
+            }
             await main.getByRole('button',{name:'Edit brief',exact:true}).waitFor();
             await home();
             role='viewer'; await home();
