@@ -1,6 +1,6 @@
 {
   "intent": "docs/work/INTENT-dossier-release.md",
-  "phase": "Release integration: preserving deployed MCP importer before dossier deployment",
+  "phase": "Research dossier released and publicly verified",
   "branch": "master",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,12 +8,12 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Resolve merge and migration integration, verify the combined release, then push and deploy under the user authorization of 2026-11-09.",
+  "next_action": "Open the project in the live app and verify the authenticated workspace with your account; reconnect ChatGPT MCP if needed. The review finding on pre-dispatch failures was fixed and regression-tested.",
   "blocked_on": [
     "Register new Google OAuth callbacks",
     "Reconnect/refresh existing ChatGPT OpenPaper integration and run authenticated acceptance"
   ],
-  "updated": "2026-11-09T00:54:06.232784+00:00",
+  "updated": "2026-11-09T02:14:43.109949+00:00",
   "done": [
     "bootstrap (project, billing, APIs, registry, SA, queue, GCS bucket+CORS+HMAC)",
     "Cloud Build 98fc719b: 5 images",
@@ -319,5 +319,16 @@
     "browser_log": "/tmp/openpaper-workflow-final-browser.log",
     "material_unresolved_findings": [],
     "local_frontend": "stopped after verification"
+  },
+  "dossier_release": {
+    "source_commit": "80c12b43",
+    "build": "0fa0a36a-8a5e-40a9-a274-063146382e21",
+    "migration": "openpaper-migrate-mgm27",
+    "web_revision": "openpaper-00012-8xx",
+    "jobs_revision": "openpaper-jobs-00009-fdw",
+    "origin": "https://papers.sammatuba.workers.dev",
+    "checks": "68 isolated PostgreSQL tests pass; 450 server tests 45 skipped; 21 jobs tests; frontend build and desktop/mobile browser checks; live homepage, health, Textfold asset and MCP discovery HTTP 200",
+    "review": "20261109T013645Z rework: pre-dispatch failures fixed in 80c12b43 with regression, author verified; no second independent verdict",
+    "limitations": "Authenticated project UI and ChatGPT connector not exercised in this release."
   }
 }
