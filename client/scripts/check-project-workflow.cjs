@@ -103,6 +103,12 @@ const base = process.env.OPENPAPER_BROWSER_BASE || 'http://127.0.0.1:3011';
             await page.locator('[data-reader-ready="true"]').waitFor();
             const readerFrame = page.frames().find(frame => frame !== page.mainFrame());
             assert.equal(await readerFrame.evaluate(() => document.documentElement.dataset.theme), width === 1440 ? 'dark' : 'light', 'reader follows OpenPaper theme');
+            const reader = page.frameLocator('iframe[title="Textfold research reader"]');
+            await page.locator('iframe').scrollIntoViewIfNeeded();
+            await reader.locator('.typebtn').click();
+            await reader.locator('.typemenu [data-step="1"]').click();
+            await readerFrame.waitForFunction(expected => document.documentElement.dataset.theme === expected, width === 1440 ? 'dark' : 'light');
+            await reader.locator('.typebtn').click();
             if (width === 1440) {
                 await page.evaluate(() => document.documentElement.classList.remove('dark'));
                 await page.waitForFunction(() => document.querySelector('iframe')?.contentDocument?.documentElement?.dataset.theme === 'light');
