@@ -120,6 +120,23 @@ class ImportPostgresTests(unittest.TestCase):
             dispatch.assert_called_once()
             delete.assert_not_called()
 
+    def test_pre_dispatch_storage_failure_releases_capacity_for_both_imports(self):
+        from app.mcp import uploads
+        user, pid = self.fixture()
+        with patch.object(uploads, 'download_pdf', return_value=b'fixture'), \
+             patch.object(uploads, 'validate_pdf_content', new_callable=AsyncMock, return_value=(True, None)), \
+             patch.object(research_import, 'fetch_research_pdf', new_callable=AsyncMock, return_value=b'fixture'), \
+             patch.object(pdf_jobs.s3_service, 'upload_file', new_callable=AsyncMock, side_effect=RuntimeError('storage unavailable')):
+            with self.Session() as db:
+                attachment = asyncio.run(uploads.import_pdf(db, user, 'https://test.invalid', 'https://files.example/file.pdf', pid))
+                self.assertEqual(attachment['status'], 'failed')
+            result = self.invoke(user, pid, str(uuid4()))
+            self.assertEqual(result['status'], 'failed')
+            with self.Session() as db:
+                self.assertEqual(db.query(Paper).filter_by(user_id=user.id).count(), 0)
+                with patch.object(research_import, 'get_plan_limits', return_value={research_import.PAPER_UPLOAD_KEY: 1}):
+                    research_import._check_upload_capacity(db, user)
+
     def test_ambiguous_dispatch_preserves_resources_and_no_retry(self):
         user,pid = self.fixture()
         rid = str(uuid4())

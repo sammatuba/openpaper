@@ -10,7 +10,7 @@ from app.database.models import (
     JobStatus, MCPPaperImportRequest, Paper, PaperUploadJob, Project,
     ProjectPaper, ProjectRole, ProjectRoles, User,
 )
-from app.helpers.pdf_jobs import jobs_client
+from app.helpers.pdf_jobs import jobs_client, PDFPreDispatchError
 from app.helpers.paper_search import normalize_doi
 from app.helpers.subscription_limits import (
     can_user_access_knowledge_base, can_user_add_papers_to_project,
@@ -256,7 +256,12 @@ async def import_paper_from_url(db, user, project_id: str, request_id: str, url:
         # A task may already have been dispatched. Never assert that it failed
         # or schedule a second task merely because the MCP request failed.
         # The operator must reconcile the durable upload_job_id and its state.
-        row.status = "needs_reconciliation" if row.upload_job_id else "failed"
+        row.status = "needs_reconciliation" if row.upload_job_id and not isinstance(exc, PDFPreDispatchError) else "failed"
+        if isinstance(exc, PDFPreDispatchError) and row.upload_job_id:
+            job = db.get(PaperUploadJob, row.upload_job_id)
+            if job:
+                job.status = JobStatus.FAILED
+                job.completed_at = datetime.now(timezone.utc)
         row.error_message = type(exc).__name__  # No secrets or untrusted exception text.
         db.commit()
         return {**_summary(db, row), "replay": False}

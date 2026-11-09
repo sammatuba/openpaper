@@ -34,6 +34,9 @@ from sqlalchemy.orm import Session
 
 load_dotenv()
 
+class PDFPreDispatchError(RuntimeError):
+    """Upload failed before any task dispatch was attempted."""
+
 logger = logging.getLogger(__name__)
 
 
@@ -499,6 +502,8 @@ class JobsClient:
                 except Exception as rollback_error:
                     logger.error(f"Failed to rollback S3 file: {rollback_error}")
 
+            if not db_committed and preserve_on_dispatch_error:
+                raise PDFPreDispatchError("PDF upload failed before dispatch") from e
             raise Exception(
                 f"Failed to upload PDF and submit processing job: {error_msg}"
             ) from e

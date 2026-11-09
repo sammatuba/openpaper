@@ -368,7 +368,8 @@ async def upload_raw_file_microservice(
 
     except Exception as e:
         logger.error(f"Error submitting file to microservice: {str(e)}", exc_info=True)
-        if preserve_on_dispatch_error:
+        from app.helpers.pdf_jobs import PDFPreDispatchError
+        if preserve_on_dispatch_error and not isinstance(e, PDFPreDispatchError):
             # A queued task may already exist. Keep its durable claim/resources
             # for reconciliation rather than declaring failure or freeing quota.
             db.rollback()
