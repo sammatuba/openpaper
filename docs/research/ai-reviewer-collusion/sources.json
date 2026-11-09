@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "project_id": "a5cf0e26-f8dd-424c-a452-dbcf6ebba946",
+  "scope": "staged packet; source identity reference, not an import or canonical-dossier replacement",
+  "sources": [
+    {
+      "reference_id": "R11",
+      "title": "AI Control: Improving Safety Despite Intentional Subversion",
+      "version": "arXiv:2312.06942v5",
+      "version_date": "2024-07-23",
+      "landing_url": "https://proceedings.mlr.press/v235/greenblatt24a.html",
+      "full_text_url": "https://arxiv.org/html/2312.06942v5",
+      "retrieved_date": "2026-11-04",
+      "basis": "full-text targeted method/result/limitation reading",
+      "sections_inspected": [
+        "2 Setting",
+        "3.4 Untrusted Monitoring",
+        "3.6 Comments on These Experimental Results"
+      ],
+      "raw_file": "R11.html",
+      "raw_sha256": "0637032d81c1d161c588dbf5dfc4e1b1d910b4edd6c4408ed65756d6dc850858",
+      "raw_bytes": 697958,
+      "normalized_text_sha256": "c82ed099b6c9069308f5df5eaf716ccb8c8fee3d5c286c7e7334c2903cdd932d",
+      "normalized_text_characters": 143824,
+      "normalization": "html-block-text-v1",
+      "canonical_dossier": "../ai-safety/literature/papers/r11-ai-control.md",
+      "canonical_dossier_updated": false
+    },
+    {
+      "reference_id": "R12",
+      "title": "Secret Collusion among AI Agents: Multi-Agent Deception via Steganography",
+      "version": "NeurIPS 2024 proceedings PDF",
+      "version_date": "2024",
+      "landing_url": "https://proceedings.neurips.cc/paper_files/paper/2024/hash/861f7dad098aec1c3560fb7add468d41-Abstract-Conference.html",
+      "full_text_url": "https://proceedings.neurips.cc/paper_files/paper/2024/file/861f7dad098aec1c3560fb7add468d41-Paper-Conference.pdf",
+      "retrieved_date": "2026-11-04",
+      "basis": "full-text targeted method/result/limitation reading",
+      "sections_inspected": [
+        "3.1 Collusion and Secret Collusion",
+        "sections 6–7: evaluations and countermeasures"
+      ],
+      "raw_file": "R12.pdf",
+      "raw_sha256": "1efbc4d91e61eb2141f36f1e1747fdd6d159d1d201978bf4741b986550226922",
+      "raw_bytes": 1111170,
+      "normalized_text_sha256": "63bbe7eac4210f733e724fb339883cb021a894c5a0138e5f32a83bdbe860dce3",
+      "normalized_text_characters": 183619,
+      "normalization": "pypdf-plain-pages-v1",
+      "canonical_dossier": "../ai-safety/literature/papers/r12-secret-collusion-steganography.md",
+      "canonical_dossier_updated": false
+    },
+    {
+      "reference_id": "R14",
+      "title": "Lying with Truths: Open-Channel Multi-Agent Collusion for Belief Manipulation via Generative Montage",
+      "version": "ACL 2026 proceedings PDF; DOI 10.18653/v1/2026.acl-long.270",
+      "version_date": "2026-07",
+      "landing_url": "https://aclanthology.org/2026.acl-long.270/",
+      "full_text_url": "https://aclanthology.org/2026.acl-long.270.pdf",
+      "retrieved_date": "2026-11-04",
+      "basis": "full-text targeted method/result/limitation reading",
+      "sections_inspected": [
+        "3 Problem Formulation",
+        "4 Generative Montage",
+        "5 Experiments",
+        "Limitations"
+      ],
+      "raw_file": "R14.pdf",
+      "raw_sha256": "f617ebbac8e88a1a66c577277d7c3a77063a882e90aa56085fca352c5c8acc72",
+      "raw_bytes": 11122964,
+      "normalized_text_sha256": "c4a7e4fb77cec73da18a1df053ffe894613563e7300d9898220fd1b6952828ed",
+      "normalized_text_characters": 75289,
+      "normalization": "pypdf-plain-pages-v1",
+      "canonical_dossier": "../ai-safety/literature/papers/r14-lying-with-truths.md",
+      "canonical_dossier_updated": false
+    },
+    {
+      "reference_id": "R15",
+      "title": "Emergence of Biased Consensus in Multi-Agent LLM Debates",
+      "version": "ICML 2026; PMLR 306 proceedings PDF",
+      "version_date": "2026-07",
+      "landing_url": "https://proceedings.mlr.press/v306/okawa26a.html",
+      "full_text_url": "https://raw.githubusercontent.com/mlresearch/v306/main/assets/okawa26a/okawa26a.pdf",
+      "retrieved_date": "2026-11-04",
+      "basis": "full-text targeted method/result/limitation reading",
+      "sections_inspected": [
+        "section 5: social dynamics model",
+        "section 6: empirical comparisons",
+        "discussion and limitations"
+      ],
+      "raw_file": "R15.pdf",
+      "raw_sha256": "b7fbecbb98167c5040439a755d9745d286ecd2f2562def0f1a4d9a83aa5a5ed3",
+      "raw_bytes": 9330231,
+      "normalized_text_sha256": "736b87d9b1f66152578ec1e0a726f8151bbb316345b2942be95a2c36434ba0b1",
+      "normalized_text_characters": 94663,
+      "normalization": "pypdf-plain-pages-v1",
+      "canonical_dossier": "../ai-safety/literature/papers/r15-biased-consensus-debates.md",
+      "canonical_dossier_updated": false
+    },
+    {
+      "reference_id": "R17",
+      "title": "Detecting Multi-Agent Collusion Through Multi-Agent Interpretability",
+      "version": "arXiv:2604.01151v5",
+      "version_date": "2026-10-15",
+      "landing_url": "https://arxiv.org/abs/2604.01151v5",
+      "full_text_url": "https://arxiv.org/html/2604.01151v5",
+      "retrieved_date": "2026-11-04",
+      "basis": "full-text targeted method/result/limitation reading",
+      "sections_inspected": [
+        "5 NARCBench",
+        "6 Results",
+        "Appendix A",
+        "J.3",
+        "J.7",
+        "K.9"
+      ],
+      "raw_file": "R17.html",
+      "raw_sha256": "775455bd4afd851230f3cdb5a6f292d05eb6e4c65d8a4904835023a87f48a29f",
+      "raw_bytes": 889944,
+      "normalized_text_sha256": "c01949d84893772284749f93a2d1a33cc73ffcf5779fa835258dab6a168dd66e",
+      "normalized_text_characters": 175073,
+      "normalization": "html-block-text-v1",
+      "canonical_dossier": "../ai-safety/literature/papers/r17-narcbench-collusion-interpretability.md",
+      "canonical_dossier_updated": false
+    },
+    {
+      "reference_id": "S1",
+      "title": "Colosseum: Auditing Collusion in Cooperative Multi-Agent Systems",
+      "version": "arXiv:2602.15198v2",
+      "version_date": "2026-05-27",
+      "landing_url": "https://arxiv.org/abs/2602.15198v2",
+      "full_text_url": "https://arxiv.org/html/2602.15198v2",
+      "retrieved_date": "2026-11-04",
+      "basis": "full-text targeted method/result/limitation reading",
+      "sections_inspected": [
+        "4 Formalizing Collusion",
+        "5.3 Metrics",
+        "5.4 Emergent Collusion in Benign Settings",
+        "Limitations and Future Work"
+      ],
+      "raw_file": "S1.html",
+      "raw_sha256": "5da757ff4efbfcd459a7b10390c51c54ce7365d7998ffc50df07e8be62a1ca6d",
+      "raw_bytes": 370198,
+      "normalized_text_sha256": "a8a8648951a87527c12f92eba9beab3ad01e6a27724497b7e40f68d5b0954d9a",
+      "normalized_text_characters": 88226,
+      "normalization": "html-block-text-v1",
+      "canonical_dossier": "../ai-safety/literature/papers/s1-colosseum.md",
+      "canonical_dossier_updated": false
+    },
+    {
+      "reference_id": "T17",
+      "title": "Systematic Failures in Collective Reasoning under Distributed Information in Multi-Agent LLMs",
+      "version": "arXiv:2505.11556v4",
+      "version_date": "2026-05-13",
+      "landing_url": "https://arxiv.org/abs/2505.11556v4",
+      "full_text_url": "https://arxiv.org/html/2505.11556v4",
+      "retrieved_date": "2026-11-04",
+      "basis": "full-text targeted method/result/limitation reading",
+      "sections_inspected": [
+        "3.1 Task setup",
+        "5 Assessing Collective Reasoning",
+        "6.3 Isolating the Bottleneck",
+        "6.4 Structured Communication"
+      ],
+      "raw_file": "T17.html",
+      "raw_sha256": "90114ba5310ea608fe65b38329173eb5db15fe5ceed48126f8189675c5ca9239",
+      "raw_bytes": 471027,
+      "normalized_text_sha256": "34e0d9c455669d494a1be24cfe07bca8dccf7d1b03ae2d0f2d602d0e40b292d9",
+      "normalized_text_characters": 75123,
+      "normalization": "html-block-text-v1",
+      "canonical_dossier": "../ai-safety/literature/papers/t17-hiddenbench.md",
+      "canonical_dossier_updated": false
+    }
+  ]
+}

@@ -1,1 +1,3 @@
 client/public/pdf.worker.mjs linguist-vendored
+# Unified patch context uses a single space for blank source lines.
+client/public/vendor/textfold/openpaper-takeaway.patch -whitespace

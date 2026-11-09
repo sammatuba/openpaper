@@ -1,0 +1,39 @@
+{
+  "repository": "https://github.com/chenxiachan/textfold",
+  "commit": "92ad625ab6887bf0060374c1fd86a558513baed2",
+  "files": {
+    "reader.js": {
+      "source": "textfold/web/reader.js",
+      "upstream_sha256": "c1d33f612347c6d8735ec1ef364284fefb7e5637703ff3512387e4f38fd68d09",
+      "sha256": "54295ddcbc4caa1ee204952ecd7a3b219f2338e0cab8f969da8b39224fc609ff"
+    },
+    "reader.css": {
+      "source": "textfold/web/reader.css",
+      "upstream_sha256": "4dcdc47084e1f7129a0b9c875dd17125d4e8aa49c7fd52b5e46667314e9d2875",
+      "sha256": "4dcdc47084e1f7129a0b9c875dd17125d4e8aa49c7fd52b5e46667314e9d2875"
+    },
+    "i18n.js": {
+      "source": "textfold/web/i18n.js",
+      "upstream_sha256": "19920ab7c7353713aab49ea7aa49935acbddf87220fbd75697f8b9c80034ff10",
+      "sha256": "19920ab7c7353713aab49ea7aa49935acbddf87220fbd75697f8b9c80034ff10"
+    },
+    "template.html": {
+      "source": "textfold/web/template.html",
+      "upstream_sha256": "d5e2f47b5c412cbd63baf75fb5c9e16f7e16bba4de1122d254e07eea098406cd",
+      "sha256": "d5e2f47b5c412cbd63baf75fb5c9e16f7e16bba4de1122d254e07eea098406cd"
+    },
+    "LICENSE": {
+      "source": "LICENSE",
+      "upstream_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "NOTICE": {
+      "source": "NOTICE",
+      "upstream_sha256": "2476bf8ce74f3abdff8334ca65a040bcdb24cc5eaa94e193d4d2cb23466202f9",
+      "sha256": "2476bf8ce74f3abdff8334ca65a040bcdb24cc5eaa94e193d4d2cb23466202f9"
+    }
+  },
+  "patches": [
+    "reader.js: optional independent lad.take tokens for textfold/doc v0, including stable piece IDs, peek text, level-aware note selection/restoration/highlighting. Original prefix/legacy path preserved. All zoom/layout/gesture/map code remains upstream."
+  ]
+}

@@ -1,103 +1,136 @@
-"""The claim state machine, against a real database.
+"""OAuth claim transactions on the explicitly isolated socket-only PostgreSQL.
 
-`claim` is a conditional UPDATE, and the property that matters — exactly one of
-several concurrent callbacks may talk to Google — only exists at the database.
-Mocking the session would assert nothing, so these run against the configured
-Postgres and skip when it isn't reachable.
+Imports do not initialize or probe the configured application database. The
+suite opts in to the same disposable cluster contract as other integration
+checks and creates only its own random schema, preserving real model behavior.
 """
 
 import datetime
+import getpass
+import os
 import secrets
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-
-from sqlalchemy import text
-
-try:
-    from app.database.crud.google_oauth_crud import (
-        ClaimOutcome,
-        google_oauth_state_crud,
-    )
-    from app.database.database import SessionLocal, engine
-    from app.database.models import GoogleOAuthState
-
-    with engine.connect() as probe:
-        probe.execute(text("SELECT 1 FROM google_oauth_state LIMIT 1"))
-    DB_AVAILABLE = True
-except Exception:  # pragma: no cover - depends on the developer's environment
-    DB_AVAILABLE = False
+from uuid import uuid4
 
 
-@unittest.skipUnless(DB_AVAILABLE, "requires a migrated Postgres")
+@unittest.skipUnless(os.environ.get("OPENPAPER_ISOLATED_PG_TEST") == "1", "requires isolated /tmp PostgreSQL")
 class TestClaim(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        username = getpass.getuser()
+        expected = f"postgresql://{username}@/postgres?host=/tmp&port=55439"
+        if (os.getcwd() != "/tmp" or os.environ.get("PYTHON_DOTENV_DISABLED") != "1"
+                or os.environ.get("DATABASE_URL") != expected):
+            raise RuntimeError("Requires /tmp, disabled dotenv and the dedicated local database")
+        from sqlalchemy import create_engine, text
+        from sqlalchemy.engine import URL
+        from sqlalchemy.orm import sessionmaker
+        from app.database.crud.google_oauth_crud import ClaimOutcome, google_oauth_state_crud
+        from app.database.models import GoogleOAuthState
+
+        cls.Outcome, cls.crud, cls.State = ClaimOutcome, google_oauth_state_crud, GoogleOAuthState
+        cls.text = staticmethod(text)
+        url = URL.create("postgresql+psycopg2", username=username, database="postgres",
+                         query={"host": "/tmp", "port": "55439"})
+        cls.admin = create_engine(url)
+        with cls.admin.connect() as connection:
+            if (connection.execute(text("SHOW data_directory")).scalar_one() != "/tmp/openpaper-pg-transaction-test"
+                    or connection.execute(text("SHOW listen_addresses")).scalar_one()):
+                raise RuntimeError("Refusing non-isolated PostgreSQL cluster")
+        cls.schema = "google_oauth_claim_" + uuid4().hex
+        with cls.admin.begin() as connection:
+            connection.execute(text("CREATE SCHEMA " + cls.schema))
+        cls.engine = create_engine(url, connect_args={"options": "-csearch_path=" + cls.schema})
+        try:
+            with cls.engine.begin() as connection:
+                # The optional session FK is not exercised by claim/release;
+                # its parent exists only inside this suite's disposable schema.
+                connection.execute(text("CREATE TABLE sessions (id uuid PRIMARY KEY)"))
+                GoogleOAuthState.__table__.create(connection)
+            cls.Session = sessionmaker(bind=cls.engine)
+        except BaseException:
+            cls.tearDownClass()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.engine.dispose()
+        with cls.admin.begin() as connection:
+            connection.execute(cls.text("DROP SCHEMA " + cls.schema + " CASCADE"))
+        cls.admin.dispose()
+
     def setUp(self) -> None:
-        self.db = SessionLocal()
+        self.db = self.Session()
         self.state = f"test-{secrets.token_urlsafe(16)}"
         self.addCleanup(self._cleanup)
 
     def _cleanup(self) -> None:
-        self.db.query(GoogleOAuthState).filter(
-            GoogleOAuthState.state.like("test-%")
-        ).delete(synchronize_session=False)
-        self.db.commit()
-        self.db.close()
+        try:
+            self.db.rollback()
+            self.db.query(self.State).filter(
+                self.State.state.in_([self.state, self.state + "-stale"])
+            ).delete(synchronize_session=False)
+            self.db.commit()
+        finally:
+            self.db.close()
 
     def test_first_claim_wins_second_is_a_replay(self) -> None:
-        google_oauth_state_crud.create(self.db, state=self.state)
+        self.crud.create(self.db, state=self.state)
 
-        first = google_oauth_state_crud.claim(self.db, state=self.state)
-        second = google_oauth_state_crud.claim(self.db, state=self.state)
+        first = self.crud.claim(self.db, state=self.state)
+        second = self.crud.claim(self.db, state=self.state)
 
-        self.assertIs(first.outcome, ClaimOutcome.CLAIMED)
-        self.assertIs(second.outcome, ClaimOutcome.REPLAY)
+        self.assertIs(first.outcome, self.Outcome.CLAIMED)
+        self.assertIs(second.outcome, self.Outcome.REPLAY)
         self.assertIsNotNone(second.record)
 
     def test_unissued_state(self) -> None:
-        result = google_oauth_state_crud.claim(self.db, state="test-never-issued")
-        self.assertIs(result.outcome, ClaimOutcome.UNKNOWN)
+        result = self.crud.claim(self.db, state="test-never-issued")
+        self.assertIs(result.outcome, self.Outcome.UNKNOWN)
 
     def test_expired_state(self) -> None:
-        record = google_oauth_state_crud.create(self.db, state=self.state)
+        record = self.crud.create(self.db, state=self.state)
         record.expires_at = datetime.datetime.now(  # type: ignore[assignment]
             datetime.timezone.utc
         ) - datetime.timedelta(minutes=1)
         self.db.commit()
 
-        result = google_oauth_state_crud.claim(self.db, state=self.state)
-        self.assertIs(result.outcome, ClaimOutcome.EXPIRED)
+        result = self.crud.claim(self.db, state=self.state)
+        self.assertIs(result.outcome, self.Outcome.EXPIRED)
 
     def test_release_lets_a_retry_through(self) -> None:
-        google_oauth_state_crud.create(self.db, state=self.state)
-        claimed = google_oauth_state_crud.claim(self.db, state=self.state)
+        self.crud.create(self.db, state=self.state)
+        claimed = self.crud.claim(self.db, state=self.state)
         assert claimed.record is not None
 
-        google_oauth_state_crud.release(self.db, record=claimed.record)
+        self.crud.release(self.db, record=claimed.record)
 
         # After a failure that never spent the code, the user retrying the same
         # URL must be able to complete rather than being told it's a replay.
-        retry = google_oauth_state_crud.claim(self.db, state=self.state)
-        self.assertIs(retry.outcome, ClaimOutcome.CLAIMED)
+        retry = self.crud.claim(self.db, state=self.state)
+        self.assertIs(retry.outcome, self.Outcome.CLAIMED)
 
     def test_concurrent_callbacks_yield_exactly_one_winner(self) -> None:
         """A scanner and the browser hitting the callback at the same instant."""
-        google_oauth_state_crud.create(self.db, state=self.state)
+        self.crud.create(self.db, state=self.state)
 
-        def attempt() -> ClaimOutcome:
-            db = SessionLocal()
+        def attempt():
+            db = self.Session()
             try:
-                return google_oauth_state_crud.claim(db, state=self.state).outcome
+                return self.crud.claim(db, state=self.state).outcome
             finally:
                 db.close()
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             outcomes = list(pool.map(lambda _: attempt(), range(8)))
 
-        self.assertEqual(outcomes.count(ClaimOutcome.CLAIMED), 1)
-        self.assertEqual(outcomes.count(ClaimOutcome.REPLAY), 7)
+        self.assertEqual(outcomes.count(self.Outcome.CLAIMED), 1)
+        self.assertEqual(outcomes.count(self.Outcome.REPLAY), 7)
 
     def test_delete_stale_spares_rows_still_in_retention(self) -> None:
-        fresh = google_oauth_state_crud.create(self.db, state=self.state)
-        stale = google_oauth_state_crud.create(self.db, state=f"{self.state}-stale")
+        fresh = self.crud.create(self.db, state=self.state)
+        stale = self.crud.create(self.db, state=f"{self.state}-stale")
         stale.expires_at = datetime.datetime.now(  # type: ignore[assignment]
             datetime.timezone.utc
         ) - datetime.timedelta(days=1)
@@ -106,12 +139,12 @@ class TestClaim(unittest.TestCase):
         # Read the values off before the delete; the instances go stale with it.
         fresh_state, stale_state = str(fresh.state), str(stale.state)
 
-        google_oauth_state_crud.delete_stale(self.db)
+        self.crud.delete_stale(self.db)
 
         remaining = {
             row.state
-            for row in self.db.query(GoogleOAuthState).filter(
-                GoogleOAuthState.state.like("test-%")
+            for row in self.db.query(self.State).filter(
+                self.State.state.like("test-%")
             )
         }
         self.assertIn(fresh_state, remaining)

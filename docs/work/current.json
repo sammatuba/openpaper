@@ -1,6 +1,6 @@
 {
-  "intent": "docs/work/INTENT-research-ecosystem.md",
-  "phase": "Reviewed stack deployed; pilot complete; implementation committed and merged to origin/master",
+  "intent": "docs/work/INTENT-project-workflow.md",
+  "phase": "Project dossier workflow verified locally; independent review finding resolved",
   "branch": "master",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,9 +8,12 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Resume on master from origin/master; read docs/work/HANDOFF-research-ecosystem.md and this pointer. Collect new pilot PDF/Notes browser confirmation; verify second login after 30 minutes idle; review one-week GCP/Neon costs. Validate citations/project chat before corpus expansion. Preserve stale duplicate pending separate reconciliation. Completed pilot entries must not be resubmitted.",
-  "blocked_on": null,
-  "updated": "2026-11-04",
+  "next_action": "Review the local dossier workflow and desktop/mobile previews before separately authorized commit/push/deploy work. Use Compare the evidence → Resolve the tension → explicitly update the working brief → Plan the next experiment. Existing Textfold migration project_research_brief_01 must precede a web release; preserve unrelated pending work.",
+  "blocked_on": [
+    "Register new Google OAuth callbacks",
+    "Reconnect/refresh existing ChatGPT OpenPaper integration and run authenticated acceptance"
+  ],
+  "updated": "2026-11-09T00:54:06.232784+00:00",
   "done": [
     "bootstrap (project, billing, APIs, registry, SA, queue, GCS bucket+CORS+HMAC)",
     "Cloud Build 98fc719b: 5 images",
@@ -18,7 +21,7 @@
     "secrets: DATABASE_URL, DATABASE_URL_DIRECT, GCS_HMAC_* set",
     "all 9 secrets set",
     "deploy: openpaper + openpaper-jobs live; /api/health 200 via Caddy, client 200, jobs 403 anon / 200 with identity token",
-    "X-Jobs-Secret rollout; scheduler \u2192 server 200",
+    "X-Jobs-Secret rollout; scheduler → server 200",
     "services pinned by digest (revision openpaper-00002)",
     "backup job verified end to end: dump, upload to gs://openpaper-sammatuba-papers/backups/, prune (14 days)",
     "OAuth redirect URI registered; Google sign-in verified in operator browser (callback 302, /api/auth/me 200)",
@@ -36,7 +39,11 @@
       "Idle-login and week-long cost observations remain open",
       "Before corpus expansion, validate citations/project chat; no expansion authorized or run"
     ],
-    "followup": ".meos/reviews/terra-focused-recovery-cors.md accepts disposition of all three full-review findings and the importer User-Agent fix. Locked Cloud Build and documented live checks subsequently passed; remaining observations are listed explicitly."
+    "followup": ".meos/reviews/terra-focused-recovery-cors.md accepts disposition of all three full-review findings and the importer User-Agent fix. Locked Cloud Build and documented live checks subsequently passed; remaining observations are listed explicitly.",
+    "continuation": {
+      "report": ".meos/reviews/20261104T002648Z.md",
+      "verdict": "accept; no findings. Prior runtime-evidence finding resolved. Independently passed typecheck, diff/JSON checks and exact viewer-move comparison; reviewer could not rerun browser/build in read-only sandbox."
+    }
   },
   "verification": "Frontend tsc, production build, desktop/mobile mocked Notes checks pass; locked Cloud Build all five images passes; corpus/operator14, Worker, shell and diff checks pass; focused recovery/CORS7 and isolated actual PostgreSQL PDF crash/replay pass. Full-review findings and importer User-Agent fix independently accepted. Live health, MCP discovery/auth boundaries, Google login/PDF/Notes, ChatGPT search and deployed Exa pass; pilot API readbacks pass.",
   "strategy": {
@@ -66,7 +73,7 @@
   },
   "pilot_session_authorization": "Operator explicitly approved temporary owner session, at most 30 minutes, token memory-only, delete on finish, in resumed session",
   "rollout": {
-    "worker_url": "https://papers.jansammat26.workers.dev",
+    "worker_url": "https://papers.sammatuba.workers.dev",
     "worker_version": "984b0013-26c3-458a-a190-563b65b62872",
     "cloud_build": "01c4c5da-c4d8-4ed9-abb9-9584aa1bd2a4",
     "bootstrap": "complete including hostname CORS and queue",
@@ -74,7 +81,7 @@
     "cloud_run": "web and jobs deployed successfully; schedules updated",
     "cloud_build_status": "SUCCESS (14m13s; all five locked images published)",
     "migration": "openpaper-migrate-wbpvx succeeded",
-    "web_revision": "openpaper-00006-gfh",
+    "web_revision": "openpaper-00009-fb9",
     "smoke": "homepage200, health200, MCP discovery200, unauthorized MCP401/no-store, jobs anonymous403, MCP enabled and Exa secret reference verified",
     "exa": "Bounded one-result search passed using deployed server image and runtime identity; temporary verification job deleted"
   },
@@ -82,7 +89,7 @@
     "typecheck": "passed",
     "production_build": "passed locally after native-package repair; exact locked frontend image also passed Cloud Build",
     "mocked_browser": "desktop/mobile Notes create, ETag edit, 412 draft preservation and cancel refresh passed",
-    "ssr_followup": "Existing unchanged PDF viewer import produces background window/document errors; route HTTP200 and mocked UI renders. Baseline runtime not rebuilt. Operator confirmed existing PDF rendering live; browser rendering of the two new pilot PDFs remains pending."
+    "ssr_followup": "Local shared browser-only dynamic import implemented; typecheck/build, six production routes with clean server logs, and real fixture PDF rendering plus Notes conflict/edit checks at desktop/mobile passed. Independently accepted in .meos/reviews/20261104T002648Z.md; local, uncommitted and not deployed."
   },
   "pilot": {
     "status": "completed",
@@ -111,7 +118,9 @@
       "Existing 55-page PDF renders",
       "Notes panel works",
       "ChatGPT OAuth connection completed",
-      "ChatGPT paper search works"
+      "ChatGPT paper search works",
+      "All three expected pilot titles visible in library (2026-11-04)",
+      "Login working on resume (idle duration unspecified)"
     ],
     "pending": [
       "New pilot PDFs/Notes operator browser check",
@@ -129,6 +138,186 @@
     "integration_branch": "master",
     "source_branch": "feat/cloud-run-personal",
     "implementation_commit": "0a1cffe77bf844691f08897fd18361f2016b8a08",
-    "handoff": "docs/work/HANDOFF-research-ecosystem.md"
+    "handoff": "docs/work/HANDOFF-research-ecosystem.md",
+    "uncommitted_continuation": "Earlier viewer/MCP/routing/upload implementation and this strategy remain uncommitted on master at 40e390800668; previous commit information describes the baseline only"
+  },
+  "upload_fix": {
+    "cause": "MCP catch-all root mount consumed slashless upload requests before Starlette slash redirects",
+    "review": ".meos/reviews/20261104T004919Z.md",
+    "verdict": "accept; no findings; both focused tests independently passed",
+    "status": "deployed and operator actual upload confirmed working",
+    "prior_revision": "openpaper-00006-gfh",
+    "prior_server_digest": "sha256:e13af62ecaef7174621754d2770a20f6c7ef559b275825c90a47a9f275df1b7f",
+    "cloud_build": "d27fb2b8-c26d-442f-a123-24c84029f279",
+    "cloud_build_status": "SUCCESS",
+    "server_digest": "sha256:8ee17f67cc4eb81f6af91526e294ed7ae54551fee99724555c63255aeab53fc8",
+    "revision": "openpaper-00007-gvn",
+    "live_verification": "Both hosts: file and URL slashless POST307 to same-origin canonical path with query retained; canonical unauthenticated POST401. Health200, OAuth resource discovery200/no-store, MCP POST401/no-store. No import performed.",
+    "operator_confirmed": "Upload works now (operator confirmation on 2026-11-04)"
+  },
+  "mcp_expansion": {
+    "status": "deployed; operator confirms all12 tools visible and read-only project/metadata search works; exact passage and live explicit note-save acceptance pending",
+    "scope": "indexed evidence search/fetch, project context, private highlights/annotation context, paginated note readback and save ETag",
+    "guide": "docs/work/CHATGPT-research-workflow.md",
+    "review": ".meos/reviews/20261104T014941Z.md",
+    "cloud_build": "5d5ca13d-39b0-4145-956b-51340d2a22da",
+    "server_digest": "sha256:8062f28a8ac53ea5a6c34bac6e128bda89abe43e4b82027eb5d4cbbbfc8fd0a9",
+    "local_verification": "PostgreSQL6 passes including wire search/fetch/save readback, private context/revocation and added bounds/provenance regressions. Reviewer independently passed protocol/routing2 and accepted remaining DB execution evidence; no DB rerun in read-only review.",
+    "revision": "openpaper-00008-lxc",
+    "connected_readback": "OpenPaper plugin get_paper_note for existing pilot note returned content, ETag and pagination metadata successfully (2829 characters); no content mutation",
+    "tool_additions": [
+      "search",
+      "fetch",
+      "search_evidence",
+      "get_project_context",
+      "list_highlights"
+    ],
+    "operator_confirmed": [
+      "ChatGPT connection exposes all12 tools after refresh",
+      "Connection returns1 accessible project and13 title/abstract matches for AI"
+    ]
+  },
+  "mcp_uploads": {
+    "status": "deployed; review accept; local integration and live smoke pass; real ChatGPT URL/attachment upload acceptance pending",
+    "tools": [
+      "import_paper_from_url",
+      "upload_paper_file",
+      "get_paper_upload_status"
+    ],
+    "attachments": "official openai/fileParams download_url/file_id with optional mime_type/file_name",
+    "deduplication": "MCP-only deterministic content/user/project job claim; no automatic retry after uncertainty",
+    "review": ".meos/reviews/20261104T032017Z.md",
+    "cloud_build": "a735fa15-6a90-4d6d-8667-46cef54ea304",
+    "server_digest": "sha256:f42646d3721dc785f15e2abe782dd24cc931d32a164b2a265813edd2451e8e3f",
+    "verification": "PostgreSQL7 passed8.162s incl real PDF validation and dispatch helper for independent URL and attachment calls; downloader/protocol/routing6 pass and independently rerun. Hard deadline subprocess test passes.",
+    "revision": "openpaper-00009-fb9",
+    "final_review": ".meos/reviews/20261104T032017Z.md",
+    "final_tests": "PostgreSQL7 passes8.162s; downloader/protocol/routing6 independently pass. Real public PDF5,355,095bytes passes validation through isolated subprocess. No live paper import."
+  },
+  "strategy_expansion": {
+    "record": "docs/work/STRATEGY-project-workspaces-and-research.md",
+    "status": "strategy independently accepted; subsequent implementation proposed, not executed",
+    "operator_priorities": [
+      "research outputs",
+      "local project workspaces",
+      "reliability"
+    ],
+    "recommended_model": "OpenPaper for reading state; local versioned research directories for hypotheses, decisions, experiments and results; explicit ID mapping and deliberate pull/save",
+    "research_snapshot": {
+      "dossiers": 48,
+      "frontmatter_stub": 43,
+      "frontmatter_pass1": 5,
+      "landscape_sources": 3598,
+      "search_hits": 4405,
+      "snapshot_records": 583,
+      "exported_claim_rows": 0,
+      "limits": "Counts are local records, not a new full-text audit or proof that written research lacks evidence"
+    },
+    "connector_observation": {
+      "tools_exposed_here": 7,
+      "project_listing": "authenticated read succeeded",
+      "project_id": "a5cf0e26-f8dd-424c-a452-dbcf6ebba946",
+      "description": "empty",
+      "server_tools_in_source": 15,
+      "account_upload_acceptance": "pending"
+    },
+    "confirmed_defect": "Backfill dry_run issues committed mutations and repeats the same nonempty batch; reproduced with actual function and fake database only",
+    "review": {
+      "report": ".meos/reviews/20261104T042621Z.md",
+      "verdict": "accept; no material strategy findings",
+      "limits": "Independent source/JSON/link/diff checks; fake-database reproduction and application suites not independently rerun. No implementation acceptance claimed."
+    },
+    "verification": "MEOS startup, source/adjacent read-only inspection, authenticated connector listing, local data counts, fake-database backfill reproduction; JSON/pointer/local Markdown links and git diff --check pass. Independent strategy review accepts.",
+    "boundaries": "No application code, sibling research files, imports, real database maintenance, cloud jobs, paid inference/search, commit, push or deployment in this strategy pass",
+    "implementation_authorization": "Operator explicitly requested autonomous execution and parallel subagents after strategy acceptance"
+  },
+  "workspace_implementation": {
+    "intent": "docs/work/INTENT-project-workspaces-and-research.md",
+    "verification": "docs/work/VERIFICATION-project-workspaces-and-research.md",
+    "review": ".meos/reviews/20261104T054504Z.md",
+    "review_status": "pending",
+    "implemented": [
+      "shared secure downloader",
+      "finite read-only backfill",
+      "isolated database CI including OAuth tests",
+      "workspace CLI and race fixes",
+      "seven-source fourteen-candidate packet and synthetic harness"
+    ],
+    "binding_created": false,
+    "source_artifacts": ".meos/artifacts/collusion-r1-sources (ignored;7 hash-verified files)",
+    "checks": "Server393 OK21skipped; required PG21 zero skips; jobs21; research36; launcher5; Worker1; tsc; source re-extraction14/14; diff/link/JSON checks",
+    "live_connector": {
+      "tools": 15,
+      "project_context": "success;2 papers",
+      "project_id": "a5cf0e26-f8dd-424c-a452-dbcf6ebba946",
+      "mt_bench_paper_id": "bcd665b8-c545-4586-8dee-baf54d4ccfa1",
+      "evidence_search": "success",
+      "imports_run": false
+    },
+    "boundaries": "Local uncommitted implementation; no new deployment, production maintenance, import, paid inference or sibling edits"
+  },
+  "mcp_import_release": {
+    "status": "deployed; public checks and independent review pass; Google callback registration/ChatGPT acceptance pending",
+    "source_pr": 2,
+    "source_branch": "feat/mcp-url-import",
+    "runtime_commit": "36066d53c089e54b6f21cae496bb1c08436c54e0",
+    "canonical_origin": "https://papers.sammatuba.workers.dev",
+    "mcp_url": "https://papers.sammatuba.workers.dev/api/mcp",
+    "intent": "docs/work/INTENT-mcp-import-release.md",
+    "verification": "docs/work/VERIFICATION-mcp-import-release.md",
+    "handoff": "docs/work/CHATGPT-mcp-import-release.md",
+    "review": "docs/work/REVIEW-mcp-import-release.md",
+    "review_verdict": "accept",
+    "web_revision": "openpaper-00011-wx8",
+    "jobs_revision": "openpaper-jobs-00008-plm",
+    "migration_execution": "openpaper-migrate-894c8",
+    "checks": "Required PostgreSQL44 zero skips; focused13; full410 OK34skips; real public PDF validation; final live health/discovery/auth/digest/compiled-origin/CORS checks pass",
+    "google_callback_status": "redirect_uri_mismatch for both new callbacks",
+    "production_imports": false,
+    "prs_merged": false,
+    "implementation_checkout": "/tmp/openpaper-mcp-deploy"
+  },
+  "project_research_overview": {
+    "intent": "docs/work/INTENT-project-research-overview.md",
+    "verification": "docs/work/VERIFICATION-project-research-overview.md",
+    "prior_intent": "docs/work/INTENT-mcp-import-release.md",
+    "status": "implemented and verified locally; uncommitted and undeployed",
+    "deployment": "not deployed; requires project_research_brief_01 migration before web rollout",
+    "baseline_review": ".meos/reviews/20261108T162801Z.md",
+    "baseline_review_verdict": "accept for custom reader baseline only",
+    "upstream_checkout": "/tmp/openpaper-textfold-source",
+    "upstream_commit": "92ad625ab6887bf0060374c1fd86a558513baed2",
+    "vendor": "client/public/vendor/textfold",
+    "integration": "app-hosted upstream reader with storage-format adapter and documented optional takeaway patch",
+    "review": ".meos/reviews/20261109T000403Z.md",
+    "review_disposition": "Independent code findings resolved; reviewer requested final browser evidence, now closed by author-executed complete desktop/mobile run",
+    "checks": "Production build/tsc; parser/vendor hashes/licenses; required PG28 zero skips; launcher5; native browser1440/390 normal/reduced motion incl highlight/reload/export; patch application and diff checks",
+    "browser_log": "/tmp/openpaper-textfold-final-browser.log",
+    "usage": "docs/PROJECT-RESEARCH-BRIEFS.md",
+    "material_unresolved_findings": []
+  },
+  "project_workflow": {
+    "status": "implemented and verified locally; review finding fixed and regression-verified; uncommitted and undeployed",
+    "intent": "docs/work/INTENT-project-workflow.md",
+    "verification": "docs/work/VERIFICATION-project-workflow.md",
+    "direction": "User chose research dossier: questions → evidence → synthesis → experiment plan",
+    "checks": [
+      "production build including lint/TypeScript",
+      "Textfold parser/source fidelity and upstream vendor checks",
+      "default-layout workflow browser checks at 1440px dark and 390px light, including mocked conversation/model stream, source scope, failure/retry and roles/credits/empty states",
+      "existing upstream reader browser suite at 1440px and 390px through new brief disclosure",
+      "git diff --check"
+    ],
+    "screenshots": [
+      "/tmp/openpaper-workflow-1440.png",
+      "/tmp/openpaper-workflow-390.png"
+    ],
+    "review": ".meos/reviews/20261109T004539Z.md",
+    "limitations": "Guided saved discussions and a manually edited brief; no automatically verified evidence, novelty verdict or experiment execution.",
+    "review_verdict": "rework on the reviewed snapshot; one important finding resolved by author verification, no subsequent reviewer acceptance claimed",
+    "review_disposition": "Refreshed the persistent conversation list before navigation. Added mutable-create mock and actual create → workspace return → resume saved discussion check; it reproduced the old failure and passed after the fix on desktop/mobile. Final production build also passed.",
+    "browser_log": "/tmp/openpaper-workflow-final-browser.log",
+    "material_unresolved_findings": [],
+    "local_frontend": "stopped after verification"
   }
 }

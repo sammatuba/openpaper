@@ -25,6 +25,7 @@ interface MentionInputProps {
 	// Providing this enables @-mentions; omit it for a plain input.
 	onSelectionChange?: (selection: MentionSelection) => void;
 	placeholder?: string;
+	inputLabel?: string;
 	disabled?: boolean;
 	// Extra condition to disable just the send button (e.g. empty input).
 	sendDisabled?: boolean;
@@ -50,6 +51,7 @@ export function MentionInput({
 	selection = EMPTY_MENTION_SELECTION,
 	onSelectionChange,
 	placeholder,
+	inputLabel,
 	disabled = false,
 	sendDisabled = false,
 	busy = false,
@@ -96,6 +98,7 @@ export function MentionInput({
 				</div>
 			)}
 			<Textarea
+				aria-label={inputLabel}
 				value={value}
 				onChange={
 					mentionsEnabled
@@ -139,6 +142,7 @@ export function MentionInput({
 					type="button"
 					size="sm"
 					onClick={onSubmit}
+					aria-label="Send message"
 					className="h-8 w-8 p-0 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
 					disabled={disabled || sendDisabled}
 				>

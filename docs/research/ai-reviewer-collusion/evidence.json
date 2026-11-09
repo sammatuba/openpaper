@@ -1,0 +1,300 @@
+{
+  "schema_version": 1,
+  "status": "candidate evidence; not promoted into canonical landscape claims",
+  "entries": [
+    {
+      "id": "R1-R11-01",
+      "reference_id": "R11",
+      "review_status": "candidate",
+      "statement_kind": "author_method",
+      "author_claim": "The red team coordinates policy backdoors and monitor false negatives using shared input features.",
+      "excerpt": "Both the monitor and the policy misbehave only when",
+      "excerpt_sha256": "cd7c2fc4608a75b74d417ec7589f5308fdceabf35f92807f50b695113e971390",
+      "source_location": {
+        "section": "3.4.2 Collusion Techniques and Countermeasures",
+        "html_anchor": "S3.SS4.SSS2",
+        "pdf_page_1based": null,
+        "normalized_character_start_0based": 39150,
+        "normalized_character_end_exclusive": 39201,
+        "normalized_line_1based": 381,
+        "location_basis": "Exact excerpt in the normalized full text specified by sources.json; HTML line numbers are not PDF pages."
+      },
+      "our_interpretation": "Shared visible inputs can provide a coordination mechanism without a private message.",
+      "related_existing_hypothesis_id": "H-CORE-2",
+      "supports_hypothesis_empirically": false
+    },
+    {
+      "id": "R1-R11-02",
+      "reference_id": "R11",
+      "review_status": "candidate",
+      "statement_kind": "author_method",
+      "author_claim": "The protocol changes monitor observations to reduce differences between synthetic and deployment inputs.",
+      "excerpt": "We only distort observations for monitoring.",
+      "excerpt_sha256": "4eecedac02a69135a07e01a511922f91a185998233f9f19de72fa6657a269d83",
+      "source_location": {
+        "section": "3.4.1 Making It Difficult to Distinguish Synthetic and Real Inputs",
+        "html_anchor": "S3.SS4.SSS1",
+        "pdf_page_1based": null,
+        "normalized_character_start_0based": 38072,
+        "normalized_character_end_exclusive": 38116,
+        "normalized_line_1based": 351,
+        "location_basis": "Exact excerpt in the normalized full text specified by sources.json; HTML line numbers are not PDF pages."
+      },
+      "our_interpretation": "Match evaluation and deployment presentation before attributing success to oversight reliability.",
+      "related_existing_hypothesis_id": "H-CORE-3",
+      "supports_hypothesis_empirically": false
+    },
+    {
+      "id": "R1-R12-01",
+      "reference_id": "R12",
+      "review_status": "candidate",
+      "statement_kind": "author_definition",
+      "author_claim": "The paper ties collusion to coordinated action that departs from system objectives.",
+      "excerpt": "Collusion occurs when agents coordinate their actions",
+      "excerpt_sha256": "b88b7e108c539bb7c202db8b0f164a6ea71e766184fd710eb6e6101e4e1a3dcf",
+      "source_location": {
+        "section": "3.1 Collusion and Secret Collusion",
+        "html_anchor": null,
+        "pdf_page_1based": 4,
+        "normalized_character_start_0based": 11944,
+        "normalized_character_end_exclusive": 11997,
+        "normalized_line_1based": 4,
+        "location_basis": "Exact excerpt in the normalized full text specified by sources.json; HTML line numbers are not PDF pages."
+      },
+      "our_interpretation": "Our working definition additionally requires an identified coalition and outside cost.",
+      "related_existing_hypothesis_id": "H-CORE-2",
+      "supports_hypothesis_empirically": false
+    },
+    {
+      "id": "R1-R12-02",
+      "reference_id": "R12",
+      "review_status": "candidate",
+      "statement_kind": "author_claim",
+      "author_claim": "The authors identify semantic capacity and task costs as limits of paraphrasing defenses.",
+      "excerpt": "as it leaves semantic entropy and often decreases task performance",
+      "excerpt_sha256": "6f767bbda6ee2298ec17dddbb46d8ef22539e3573d233cf8b9685d6b1e6d80d8",
+      "source_location": {
+        "section": "Introduction contribution summary; detailed countermeasures in section 7",
+        "html_anchor": null,
+        "pdf_page_1based": 3,
+        "normalized_character_start_0based": 8638,
+        "normalized_character_end_exclusive": 8704,
+        "normalized_line_1based": 3,
+        "location_basis": "Exact excerpt in the normalized full text specified by sources.json; HTML line numbers are not PDF pages."
+      },
+      "our_interpretation": "A failed text-based audit cannot establish that no coordination mechanism exists.",
+      "related_existing_hypothesis_id": "H-CORE-2",
+      "supports_hypothesis_empirically": false
+    },
+    {
+      "id": "R1-R14-01",
+      "reference_id": "R14",
+      "review_status": "candidate",
+      "statement_kind": "author_method",
+      "author_claim": "The attack coordinates public truthful fragments to induce an unsupported victim conclusion.",
+      "excerpt": "truthful evidence fragments distributed through public channels",
+      "excerpt_sha256": "fe4ab317b804178d1a63ff4c04523f25176de7030af62fd09c00813062f470a3",
+      "source_location": {
+        "section": "Abstract; methods in sections 3–4",
+        "html_anchor": null,
+        "pdf_page_1based": 1,
+        "normalized_character_start_0based": 833,
+        "normalized_character_end_exclusive": 896,
+        "normalized_line_1based": 1,
+        "location_basis": "Exact excerpt in the normalized full text specified by sources.json; HTML line numbers are not PDF pages."
+      },
+      "our_interpretation": "Track joint evidence composition and provenance, alongside checking each fragment for truth.",
+      "related_existing_hypothesis_id": "H-SPRINT-3",
+      "supports_hypothesis_empirically": false
+    },
+    {
+      "id": "R1-R14-02",
+      "reference_id": "R14",
+      "review_status": "candidate",
+      "statement_kind": "author_limitation",
+      "author_claim": "The authors identify simulated text-only rumor environments as a limit on deployment generalization.",
+      "excerpt": "our controlled setting enables",
+      "excerpt_sha256": "7c137445bf042cb38773516756ccef7cd59509f49905a9919f5fe79266cf2a86",
+      "source_location": {
+        "section": "Limitations",
+        "html_anchor": null,
+        "pdf_page_1based": 9,
+        "normalized_character_start_0based": 38545,
+        "normalized_character_end_exclusive": 38575,
+        "normalized_line_1based": 9,
+        "location_basis": "Exact excerpt in the normalized full text specified by sources.json; HTML line numbers are not PDF pages."
+      },
+      "our_interpretation": "Use the attack as a controlled comparison; do not infer operational incidence.",
+      "related_existing_hypothesis_id": "H-CORE-2",
+      "supports_hypothesis_empirically": false
+    },
+    {
+      "id": "R1-R15-01",
+      "reference_id": "R15",
+      "review_status": "candidate",
+      "statement_kind": "author_claim",
+      "author_claim": "The authors study biased group outcomes through conformity, noise and agent heterogeneity.",
+      "excerpt": "interaction can amplify the biases of single LLMs",
+      "excerpt_sha256": "755a7480e69d1c67fcccdfcc52beeb5378006c9982a5a7d26098e3620af8c2ab",
+      "source_location": {
+        "section": "Abstract; model and experiments in sections 5–6",
+        "html_anchor": null,
+        "pdf_page_1based": 1,
+        "normalized_character_start_0based": 269,
+        "normalized_character_end_exclusive": 318,
+        "normalized_line_1based": 1,
+        "location_basis": "Exact excerpt in the normalized full text specified by sources.json; HTML line numbers are not PDF pages."
+      },
+      "our_interpretation": "Biased agreement requires a non-collusive comparison condition in the audit set.",
+      "related_existing_hypothesis_id": "H-CORE-2",
+      "supports_hypothesis_empirically": false
+    },
+    {
+      "id": "R1-R15-02",
+      "reference_id": "R15",
+      "review_status": "candidate",
+      "statement_kind": "author_limitation",
+      "author_claim": "The study simplifies conversational memory, interaction topology and output states.",
+      "excerpt": "we adopt a simplified debate protocol",
+      "excerpt_sha256": "14e222625297b54b76efd03eea2472edaad09d61225ec5badc8288d2b0e1449a",
+      "source_location": {
+        "section": "Discussion and Conclusion: limitations",
+        "html_anchor": null,
+        "pdf_page_1based": 8,
+        "normalized_character_start_0based": 39849,
+        "normalized_character_end_exclusive": 39886,
+        "normalized_line_1based": 8,
+        "location_basis": "Exact excerpt in the normalized full text specified by sources.json; HTML line numbers are not PDF pages."
+      },
+      "our_interpretation": "Match debate structure before transferring its explanations to a different review protocol.",
+      "related_existing_hypothesis_id": "H-CORE-2",
+      "supports_hypothesis_empirically": false
+    },
+    {
+      "id": "R1-R17-01",
+      "reference_id": "R17",
+      "review_status": "candidate",
+      "statement_kind": "author_method",
+      "author_claim": "NARCBench-Core filters instructed runs using target choices and observed coordination.",
+      "excerpt": "we drop any run where the two colluders",
+      "excerpt_sha256": "8da862624d6edca789342f9eaf2908bf6c7530120ca7c9cf8d1574f3429b9fa4",
+      "source_location": {
+        "section": "J.7 Ground-truth labels",
+        "html_anchor": "A10.SS7",
+        "pdf_page_1based": null,
+        "normalized_character_start_0based": 135697,
+        "normalized_character_end_exclusive": 135736,
+        "normalized_line_1based": 1755,
+        "location_basis": "Exact excerpt in the normalized full text specified by sources.json; HTML line numbers are not PDF pages."
+      },
+      "our_interpretation": "Instruction labels and behavior labels must remain separate in our evaluation.",
+      "related_existing_hypothesis_id": "H-TARA-1",
+      "supports_hypothesis_empirically": false
+    },
+    {
+      "id": "R1-R17-02",
+      "reference_id": "R17",
+      "review_status": "candidate",
+      "statement_kind": "author_limitation",
+      "author_claim": "The authors cannot directly isolate role understanding from other activation features.",
+      "excerpt": "We cannot verify this assumption directly",
+      "excerpt_sha256": "c292a20c2505e2d306ab557a2a093a71364849bd032c718c45c8f7a941b4495d",
+      "source_location": {
+        "section": "J.3 Structural safeguards against prompt confound",
+        "html_anchor": "A10.SS3",
+        "pdf_page_1based": null,
+        "normalized_character_start_0based": 125664,
+        "normalized_character_end_exclusive": 125705,
+        "normalized_line_1based": 1710,
+        "location_basis": "Exact excerpt in the normalized full text specified by sources.json; HTML line numbers are not PDF pages."
+      },
+      "our_interpretation": "An activation signal alone does not establish a unique causal account of coordination.",
+      "related_existing_hypothesis_id": "H-TARA-2",
+      "supports_hypothesis_empirically": false
+    },
+    {
+      "id": "R1-S1-01",
+      "reference_id": "S1",
+      "review_status": "candidate",
+      "statement_kind": "author_method",
+      "author_claim": "The authors introduce a private communication channel as a controlled behavioral intervention.",
+      "excerpt": "We study emergent collusion by applying a behavioral probe",
+      "excerpt_sha256": "0ccda8e5464f430ef27f5d6cdc6c16f334fd51bc2208e332d811292cdc290f1b",
+      "source_location": {
+        "section": "5.4 Emergent Collusion in Benign Settings",
+        "html_anchor": "S5.SS4",
+        "pdf_page_1based": null,
+        "normalized_character_start_0based": 31015,
+        "normalized_character_end_exclusive": 31073,
+        "normalized_line_1based": 205,
+        "location_basis": "Exact excerpt in the normalized full text specified by sources.json; HTML line numbers are not PDF pages."
+      },
+      "our_interpretation": "Channel-on/off comparisons need matched tasks and an explicit outside-cost measure.",
+      "related_existing_hypothesis_id": "H-SPRINT-4",
+      "supports_hypothesis_empirically": false
+    },
+    {
+      "id": "R1-S1-02",
+      "reference_id": "S1",
+      "review_status": "candidate",
+      "statement_kind": "author_claim",
+      "author_claim": "The authors report divergence between collusive plans in text and resulting actions.",
+      "excerpt": "agents plan to collude in text but often pick non-collusive actions",
+      "excerpt_sha256": "6ea8d32d763aec0646248524568a16a7d6dd85bd033abdf6eee19649653426f1",
+      "source_location": {
+        "section": "Abstract; formal distinction in section 4",
+        "html_anchor": null,
+        "pdf_page_1based": null,
+        "normalized_character_start_0based": 3370,
+        "normalized_character_end_exclusive": 3437,
+        "normalized_line_1based": 83,
+        "location_basis": "Exact excerpt in the normalized full text specified by sources.json; HTML line numbers are not PDF pages."
+      },
+      "our_interpretation": "Score attempted coordination, executed coordination and harm separately.",
+      "related_existing_hypothesis_id": "H-SPRINT-1",
+      "supports_hypothesis_empirically": false
+    },
+    {
+      "id": "R1-T17-01",
+      "reference_id": "T17",
+      "review_status": "candidate",
+      "statement_kind": "author_method",
+      "author_claim": "Hidden Profile tasks require pooling facts distributed across agents.",
+      "excerpt": "no agent can identify the correct option",
+      "excerpt_sha256": "fc019c569658054eb0898e08929c2bdc9b15eb02215c2c4886c305f9daa83e23",
+      "source_location": {
+        "section": "3.1 Task setup",
+        "html_anchor": "S3.SS1",
+        "pdf_page_1based": null,
+        "normalized_character_start_0based": 12678,
+        "normalized_character_end_exclusive": 12718,
+        "normalized_line_1based": 124,
+        "location_basis": "Exact excerpt in the normalized full text specified by sources.json; HTML line numbers are not PDF pages."
+      },
+      "our_interpretation": "Poor group decisions can arise from information distribution without strategic coordination.",
+      "related_existing_hypothesis_id": "H-CORE-2",
+      "supports_hypothesis_empirically": false
+    },
+    {
+      "id": "R1-T17-02",
+      "reference_id": "T17",
+      "review_status": "candidate",
+      "statement_kind": "author_method",
+      "author_claim": "Reveal-All forces initial disclosure to isolate the information-sharing bottleneck.",
+      "excerpt": "Each agent discloses all information in the first round",
+      "excerpt_sha256": "813a2f2eac835e3702c099764c9cb4d9b3ad938b8a508a35515afddb839baf16",
+      "source_location": {
+        "section": "6.3 Isolating the Bottleneck",
+        "html_anchor": "S6.SS3",
+        "pdf_page_1based": null,
+        "normalized_character_start_0based": 33787,
+        "normalized_character_end_exclusive": 33842,
+        "normalized_line_1based": 435,
+        "location_basis": "Exact excerpt in the normalized full text specified by sources.json; HTML line numbers are not PDF pages."
+      },
+      "our_interpretation": "A matched information-complete control separates missing evidence from downstream decision failure.",
+      "related_existing_hypothesis_id": "H-CORE-1",
+      "supports_hypothesis_empirically": false
+    }
+  ]
+}

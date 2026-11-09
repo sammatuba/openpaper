@@ -1,0 +1,136 @@
+--- a/textfold/web/reader.js
++++ b/textfold/web/reader.js
+@@ -1,3 +1,5 @@
++// OpenPaper integration patch: optional explicit unit takeaways from textfold/doc v0.
++// Upstream: 92ad625ab6887bf0060374c1fd86a558513baed2; Apache-2.0.
+ // TextFold: the paper at five zoom levels, morphing word by word.
+ // Level 4 Full · 3 Brief (the author's key sentences) · 2 Key (written: takeaway and reason) · 1 Takeaway · 0 Topic.
+ // (Until v0.9 the reader called 3 "Key" and 2 "Brief"; the code's comments still say so.) Every visible piece
+@@ -120,9 +122,16 @@
+     const z = trOf(u);
+     const l = z ? z.lad : u.lad;
+     // glue: the half of a sentence a page break left in the unit before this one (ladder.dress)
+-    if (z) return { toks: z.toks, sents: z.sents, ev: u.lad.ev.filter((s) => s < z.sents.length), brief: l.brief, tn: l.tn, topic: l.topic, glue: l.glue, p: `${lang}~` };
+-    return { toks: u.toks, sents: u.sents, ev: u.lad.ev, brief: l.brief, tn: l.tn, topic: l.topic, glue: l.glue, p: '' };
+-  }
++    if (z) return { toks: z.toks, sents: z.sents, ev: u.lad.ev.filter((s) => s < z.sents.length), brief: l.brief, take: l.take, tn: l.tn, topic: l.topic, glue: l.glue, p: `${lang}~` };
++    return { toks: u.toks, sents: u.sents, ev: u.lad.ev, brief: l.brief, take: l.take, tn: l.tn, topic: l.topic, glue: l.glue, p: '' };
++  }
++
++  // OpenPaper: independent public-format Takeaway tokens also own their note indices.
++  const writtenLine = (v, L) => L === 1 && v.take ? v.take : v.brief;
++  const takeawayOf = (v) => v.take || v.brief.slice(0, v.tn);
++  const takeSharesKey = (v) => !v.take || (v.take.length <= v.brief.length && v.take.every((t, i) => {
++    const k = v.brief[i]; return t.t === k.t && t.a === k.a && t.x === k.x;
++  }));
+ 
+   // ── pieces: what a unit shows at a level ─────────────────────────────
+   let review = null;   // an edit's places shown (setReview, below)
+@@ -131,7 +140,7 @@
+     const ev = new Set(v.ev);
+     // with "keep my highlights" on, the passages the reader marked are a level of their own: they stay as the paper
+     // zooms out (the sentences at Brief, the author's words after the written line at Key and Takeaway)
+-    const mk = marksFor(uid), mine = keepMine && mk && L > 0 && L < 4 ? [...new Set([...mk.exact, ...mk.soft])].sort((a, b) => a - b) : null;
++    const mk = marksFor(uid, L), mine = keepMine && mk && L > 0 && L < 4 ? [...new Set([...mk.exact, ...mk.soft])].sort((a, b) => a - b) : null;
+     let out;
+     if (L >= 4) {
+       out = [];
+@@ -169,13 +178,14 @@
+       // i: the token of the full text a written word came from (none for the model's own words); j: its place in
+       // the written line (Key's: Takeaway is the line's first sentence, so its words keep their places)
+       const brief = v.brief.map((t, j) => ({ id: t.m !== undefined ? p + t.m : `${p}w${j}`, i: t.m, j, tok: t }));
+-      if (L === 2) out = brief.map((x, j) => ({ ...x, lead: j < v.tn }));
++      const take = v.take && !takeSharesKey(v) ? v.take.map((t, j) => ({ id: t.m !== undefined ? p + t.m : `${p}take${j}`, i: t.m, j, tok: t })) : brief.slice(0, v.tn);
++      if (L === 2) out = brief.map((x, j) => ({ ...x, lead: v.take && !takeSharesKey(v) ? take.some((t) => t.id === x.id) : j < v.tn }));
+       else if (L === 1) {
+         // topic words carry k, the takeaway word they slide from; a topic the model phrased itself may have none
+         const inTopic = new Set(v.topic.map((t) => t.k).filter((k) => k !== undefined));
+-        out = brief.slice(0, v.tn).map((x, j) => ({ ...x, lead: inTopic.has(j) }));
++        out = take.map((x, j) => ({ ...x, lead: inTopic.has(j) }));
+       } else if (CJK_DOC && !v.tn) out = [];   // a takeaway that stepped down (ladder.fold_background): its topic with it
+-      else out = v.topic.map((t, j) => ({ id: t.k !== undefined ? brief[t.k].id : `${p}t${j}`, i: t.k !== undefined ? brief[t.k].i : undefined, tok: t, lead: true }));
++      else out = v.topic.map((t, j) => ({ id: t.k !== undefined ? take[t.k].id : `${p}t${j}`, i: t.k !== undefined ? take[t.k].i : undefined, tok: t, lead: true }));
+       if (mine && L > 0) {   // the reader's passages after the written line, in the author's words (same ids: they stay put)
+         const used = new Set(out.map((x) => x.id));
+         let prev = null;
+@@ -1925,7 +1935,7 @@
+     if (el.matches('.box')) {
+       const first = el.querySelector('.u');
+       const v = first && view(first.dataset.u);
+-      return `<div class="pk-h">${el.querySelector('.box-h').innerHTML}</div>${v ? `<div class="pk-t">${toksHtml(v.brief.slice(0, v.tn))}</div>` : ''}`;
++      return `<div class="pk-h">${el.querySelector('.box-h').innerHTML}</div>${v ? `<div class="pk-t">${toksHtml(takeawayOf(v))}</div>` : ''}`;
+     }
+     if (el.matches('.hd')) {
+       const c = D.chunks.find((x) => x.id === el.closest('section.chunk').id);
+@@ -1940,7 +1950,7 @@
+     const key = v.ev.map((s) => toksHtml(v.toks.slice(v.sents[s][0], v.sents[s][1]))).join(' … ');
+     return `<div class="pk-where"><i class="pk-dot" style="background:var(--r-${u.lad.role})"></i>${esc(figLabel(uid) || secLabel(uid))}</div>` +
+       (img ? `<img src="${img.getAttribute('src')}" alt="">` : '') +
+-      `<div class="pk-t">${toksHtml(v.brief.slice(0, v.tn))}</div><div class="pk-k">${key}</div>`;
++      `<div class="pk-t">${toksHtml(takeawayOf(v))}</div><div class="pk-k">${key}</div>`;
+   }
+   function showPeek(trigger) {
+     let el, html;
+@@ -2027,15 +2037,16 @@
+   function shownAt(a) {
+     if (!a.shown || a.lang !== lang || !a.unit || !U[a.unit]) return null;
+     const v = view(a.unit), [x, y] = a.shown.words || [];
+-    if (!(x >= 0 && y >= x && y < v.brief.length)) return null;
+-    return toksText(v.brief, x, y) === a.shown.exact ? [x, y] : null;
++    const line = writtenLine(v, a.level);
++    if (!(x >= 0 && y >= x && y < line.length)) return null;
++    return toksText(line, x, y) === a.shown.exact ? [x, y] : null;
+   }
+   // what to mark in a unit, in the language being read. A passage marked at Full or Brief: its tokens, or in another
+   // language its sentences (soft), lit at Full and Brief, and after a written line when the reader keeps their
+   // highlights. One marked on a written line: those words of the line (line: place -> its colour), lit on the line
+   // alone. One marked on a line before the line's words were kept (no anchor.shown): as it was lit then, its tokens
+   // at Full and Brief and the written words that came from them (old: token -> its mark)
+-  function marksFor(uid) {
++  function marksFor(uid, L = levelOf(uid)) {
+     const list = notesOf.get(uid);
+     if (!list) return null;
+     // (sh, lineSh: the shade of the note a token or a place of the line is marked by, the latest's)
+@@ -2043,6 +2054,7 @@
+     for (const n of list) {
+       const a = n.anchor, c = shadeOf(n);
+       if (a.shown) {
++        if (v.take && !takeSharesKey(v) && a.level !== L) continue;
+         const at = shownAt(a);
+         if (at) for (let j = at[0]; j <= at[1]; j++) { line.set(j, a.level === 1 ? 4 : 3); lineSh.set(j, c); }
+         continue;
+@@ -2208,7 +2220,7 @@
+       // on a written line (Key, Takeaway): the words of the line selected, the model's too, to mark them as they
+       // were selected; the author's words kept after the line, alone, are a passage of the full text
+       const line = L >= 1 && L <= 2 && jlo <= jhi;
+-      const shown = line ? { words: [jlo, jhi], exact: toksText(v.brief, jlo, jhi) } : null;
++      const shown = line ? { words: [jlo, jhi], exact: toksText(writtenLine(v, L), jlo, jhi) } : null;
+       const sents = tokens ? v.sents.map((r, k) => [r, k]).filter(([r]) => r[1] > tokens[0] && r[0] <= tokens[1]).map(([, k]) => k) : null;
+       // the quote in plain text, from the tokens (a formula as $LaTeX$), not from the page, which also holds each
+       // formula's hidden source; words the model wrote itself are taken from the page as they are
+@@ -2720,6 +2732,7 @@
+     const u = mark.closest('.u'), list = u && notesOf.get(u.dataset.u);
+     if (!list) return null;
+     const v = view(u.dataset.u), j = piece ? piece._j : undefined;
++    const eligible = list.filter((n) => !n.anchor.shown || takeSharesKey(v) || n.anchor.level === levelOf(u.dataset.u));
+     const holds = (n) => {
+       const a = n.anchor;
+       if (a.shown) { const at = shownAt(a); return !!at && j !== undefined && j >= at[0] && j <= at[1]; }   // a word of the line it marks
+@@ -2727,7 +2740,7 @@
+       if (a.lang === lang && a.tokens) return i >= a.tokens[0] && i <= a.tokens[1];
+       return (a.sents || []).some((k) => v.sents[k] && i >= v.sents[k][0] && i < v.sents[k][1]);
+     };
+-    return list.filter(holds).sort((x, y) => (y.updated || '').localeCompare(x.updated || ''))[0] || list[list.length - 1];
++    return eligible.filter(holds).sort((x, y) => (y.updated || '').localeCompare(x.updated || ''))[0] || eligible[eligible.length - 1];
+   }
+ 
+   // ── links to a note (#n=), a paragraph (#u=) or a section (#s=), and from the address to one ──
+@@ -3350,7 +3363,7 @@
+         const L = levelOf(uid), u = U[uid], marks = mine.get(uid) || [], under = [];
+         let text = unitEl.has(uid) ? piecesText(pieces(uid, L)) : '';
+         for (const n of marks) {
+-          const a = n.anchor, ex = kindOf(n) === 'hl' && (a.shown ? L <= 2 && shownAt(a) && flat(a.shown.exact) : L >= 3 && flat(a.quote && a.quote.exact)), at = ex ? text.indexOf(ex) : -1;
++          const a = n.anchor, ex = kindOf(n) === 'hl' && (a.shown ? L <= 2 && (takeSharesKey(view(uid)) || a.level === L) && shownAt(a) && flat(a.shown.exact) : L >= 3 && flat(a.quote && a.quote.exact)), at = ex ? text.indexOf(ex) : -1;
+           if (at >= 0) text = `${text.slice(0, at)}==${ex}==${text.slice(at + ex.length)}`; else under.push(n);
+         }
+         if (!text && !under.length) continue;

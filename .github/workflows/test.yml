@@ -18,6 +18,17 @@ jobs:
           run:
               working-directory: server
       env:
+          PYTHON_DOTENV_DISABLED: "1"
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:1/unused
+          CLIENT_DOMAIN: https://papers.example.workers.dev
+          GOOGLE_CLIENT_ID: test-client
+          GOOGLE_CLIENT_SECRET: test-secret
+          MCP_JWT_SIGNING_KEY: testing-signing-key-with-32-characters
+          MCP_STORAGE_ENCRYPTION_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+          AWS_ACCESS_KEY_ID: ci-placeholder
+          AWS_SECRET_ACCESS_KEY: ci-placeholder
+          AWS_EC2_METADATA_DISABLED: "true"
+          LANGFUSE_TRACING_ENABLED: "false"
           # Presence-only guards: several modules raise at import time when
           # these are unset (see app/helpers/unit_conversion.py), but the suite
           # mocks every client, so no call is ever made. Placeholders keep it
@@ -46,3 +57,87 @@ jobs:
 
           - name: Run tests
             run: uv run python -m unittest discover -s tests
+
+    postgres:
+      name: PostgreSQL transactions and maintenance
+      runs-on: ubuntu-latest
+      timeout-minutes: 15
+      defaults:
+          run:
+              working-directory: server
+      steps:
+          - uses: actions/checkout@v7
+          - uses: astral-sh/setup-uv@v10.0.1
+            with:
+                working-directory: server
+                python-version: "3.12"
+          - run: uv sync --locked
+          # Creates its own socket-only cluster, rejects existing paths and
+          # cleans up only that cluster. Required suites fail on any skip.
+          - name: Run isolated integration suites
+            run: uv run python ../scripts/ci/run_isolated_postgres.py
+
+    jobs:
+      name: Jobs tests
+      runs-on: ubuntu-latest
+      timeout-minutes: 15
+      defaults:
+          run:
+              working-directory: jobs
+      env:
+          PYTHON_DOTENV_DISABLED: "1"
+          TASK_BACKEND: cloudtasks
+          GOOGLE_API_KEY: ci-placeholder
+          OPENAI_API_KEY: ci-placeholder
+          AWS_ACCESS_KEY_ID: ci-placeholder
+          AWS_SECRET_ACCESS_KEY: ci-placeholder
+          AWS_EC2_METADATA_DISABLED: "true"
+          AWS_DEFAULT_REGION: us-east-1
+          LANGFUSE_TRACING_ENABLED: "false"
+      steps:
+          - uses: actions/checkout@v7
+          - uses: astral-sh/setup-uv@v10.0.1
+            with:
+                working-directory: jobs
+                python-version: "3.12"
+          - run: uv sync --locked
+          - run: uv run python -m unittest discover -s tests
+
+    tools:
+      name: Worker and local research tools
+      runs-on: ubuntu-latest
+      timeout-minutes: 10
+      steps:
+          - uses: actions/checkout@v7
+          - uses: actions/setup-node@v7
+            with:
+                node-version: "24"
+                package-manager-cache: false
+          - run: node --test deploy/cloudflare/worker.test.mjs
+          - run: python3 -m unittest discover -s scripts/research -p 'test_*.py'
+          - run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+
+    client:
+      name: Client typecheck and production build
+      runs-on: ubuntu-latest
+      timeout-minutes: 20
+      defaults:
+          run:
+              working-directory: client
+      env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          NEXT_PUBLIC_API_URL: https://papers.example.workers.dev
+          NEXT_PUBLIC_POSTHOG_KEY: ""
+          NEXT_PUBLIC_POSTHOG_HOST: ""
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ""
+      steps:
+          - uses: actions/checkout@v7
+          - uses: actions/setup-node@v7
+            with:
+                node-version: "24"
+                package-manager-cache: false
+          - name: Install locked Yarn Classic dependencies
+            run: npm install --global yarn@1.22.22
+          - run: yarn install --frozen-lockfile
+          - run: yarn tsc --noEmit
+          - run: yarn build

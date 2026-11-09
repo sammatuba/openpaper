@@ -116,7 +116,7 @@ export function ProjectHeader() {
                                 <BreadcrumbPage className="truncate font-medium">{project?.title}</BreadcrumbPage>
                             </TitleWithDescription>
                         )}
-                        {project && project.role !== ProjectRole.Viewer && (
+                        {project && project.role === ProjectRole.Admin && (
                             <EditProjectButton className="ml-0.5 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/crumb:opacity-100" />
                         )}
                     </BreadcrumbItem>

@@ -6,6 +6,7 @@ import { useParams, usePathname } from "next/navigation";
 import {
     ExternalLink,
     FileText,
+    LayoutDashboard,
     MessageCircle,
     MoreHorizontal,
     Plus,
@@ -127,8 +128,7 @@ function PaperRow({ paper, onNavigate }: { paper: PaperItem; onNavigate?: () => 
     );
 }
 
-// Persistent left navigation for the project workspace: papers on top,
-// chats below. Every project route is reachable from here.
+// Keep the research home distinct from the source library and discussions.
 export function ProjectRail({ onNavigate }: ProjectRailProps) {
     const pathname = usePathname();
     const params = useParams();
@@ -161,6 +161,11 @@ export function ProjectRail({ onNavigate }: ProjectRailProps) {
 
     return (
         <div className="flex h-full w-64 shrink-0 flex-col bg-muted/20">
+            <Link href={`/projects/${projectId}`} onClick={onNavigate}
+                aria-current={pathname === `/projects/${projectId}` ? "page" : undefined}
+                className={cn("mx-2 mt-2 flex items-center gap-2 rounded-md px-2 py-2 text-sm font-medium hover:bg-accent", pathname === `/projects/${projectId}` && "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300")}>
+                <LayoutDashboard aria-hidden className="h-4 w-4" />Research workspace
+            </Link>
             {/* Papers */}
             <div className="flex min-h-0 flex-1 flex-col pt-2">
                 <SectionHeading label="Papers" count={papers.length}>
@@ -222,12 +227,12 @@ export function ProjectRail({ onNavigate }: ProjectRailProps) {
 
             {/* Chats */}
             <div className="flex min-h-0 flex-1 flex-col border-t pt-2">
-                <SectionHeading label="Chats" count={conversations.length} />
+                <SectionHeading label="Discussions" count={conversations.length} />
                 <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
-                    {/* Explicit path back to the project home (= the new-chat surface) */}
+                    {/* The home has explicit task selection and a free-form question. */}
                     {!isViewer && (
                         <Link
-                            href={`/projects/${projectId}`}
+                            href={`/projects/${projectId}#research-session`}
                             onClick={onNavigate}
                             className={cn(
                                 "flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors",
@@ -251,7 +256,7 @@ export function ProjectRail({ onNavigate }: ProjectRailProps) {
                                         : "text-foreground",
                                 )}
                             >
-                                New chat
+                                Start a discussion
                             </span>
                         </Link>
                     )}
@@ -304,11 +309,11 @@ export function ProjectRail({ onNavigate }: ProjectRailProps) {
                                     pathname.endsWith("/past") && "bg-blue-50 font-medium dark:bg-blue-900/30",
                                 )}
                             >
-                                {conversations.length > RAIL_CHAT_LIMIT ? `View all ${conversations.length}` : "Manage chats"}
+                                {conversations.length > RAIL_CHAT_LIMIT ? `View all ${conversations.length}` : "Manage discussions"}
                             </Link>
                         </>
                     ) : (
-                        <p className="px-2 pt-1 text-xs text-muted-foreground">No chats yet.</p>
+                        <p className="px-2 pt-1 text-xs text-muted-foreground">No discussions yet.</p>
                     )}
                 </div>
             </div>

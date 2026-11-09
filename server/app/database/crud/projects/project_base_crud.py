@@ -9,7 +9,7 @@ from app.database.crud.base_crud import (
 )
 from app.database.models import Project, ProjectPaper, ProjectRole, ProjectRoles
 from app.schemas.user import CurrentUser
-from sqlalchemy.orm import Query, Session
+from sqlalchemy.orm import Query, Session, defer
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,8 @@ class ProjectBaseCRUD(CRUDBase[ModelType, CreateSchemaType, UpdateSchemaType]):
         self, db: Session, *, user: CurrentUser, skip: int = 0, limit: int = 100
     ) -> List[ModelType]:
         query = self._get_base_query(db)
+        if self.model == Project:
+            query = query.options(defer(Project.research_brief))
         join_on = Project.id if self.model == Project else self.model.project_id
         return (
             query.join(ProjectRole, join_on == ProjectRole.project_id)
@@ -71,7 +73,14 @@ class ProjectBaseCRUD(CRUDBase[ModelType, CreateSchemaType, UpdateSchemaType]):
             if isinstance(obj_in, dict):
                 update_data = obj_in
             else:
-                update_data = obj_in.model_dump(exclude_unset=True)
+                update_data = obj_in.model_dump(exclude_unset=True, by_alias=True)
+
+            # Folds are snapshots. Any writer changing source text must either
+            # supply its replacement folds or invalidate the old snapshot.
+            if (self.model == Project and "description" in update_data
+                    and update_data["description"] != db_obj.description
+                    and "research_brief" not in update_data):
+                update_data["research_brief"] = None
 
             for field, value in update_data.items():
                 setattr(db_obj, field, value)

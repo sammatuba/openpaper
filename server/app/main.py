@@ -116,10 +116,12 @@ app.include_router(zotero_router, prefix="/api/zotero")
 
 setup_admin(app)  # Setup admin interface
 
-# Mount last: preserve FastMCP's authentication middleware and its root-level
-# OAuth discovery routes without shadowing the existing application routes.
+# Preserve FastMCP's authentication middleware and root-level OAuth routes.
+# A catch-all root mount would consume slashless application requests before
+# Starlette can redirect them to their trailing-slash routes (e.g. uploads).
 if mcp_app is not None:
-    app.mount("/", mcp_app)
+    from app.mcp.routing import MCPRouteMount
+    app.router.routes.append(MCPRouteMount("/", app=mcp_app))
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))

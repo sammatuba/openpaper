@@ -12,6 +12,7 @@ from app.database.models import ProjectRoles
 from app.database.telemetry import track_event
 from app.helpers.subscription_limits import can_user_create_project
 from app.schemas.user import CurrentUser
+from app.schemas.textfold import TextFoldDocument
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -25,11 +26,13 @@ projects_router = APIRouter()
 class CreateProjectRequest(BaseModel):
     title: str
     description: str | None = None
+    research_brief: TextFoldDocument | None = None
 
 
 class UpdateProjectRequest(BaseModel):
     title: str | None = None
     description: str | None = None
+    research_brief: TextFoldDocument | None = None
 
 
 @projects_router.post("")
@@ -58,6 +61,7 @@ async def create_project(
             obj_in=ProjectCreate(
                 title=request.title,
                 description=request.description,
+                research_brief=request.research_brief,
             ),
             user=current_user,
         )
@@ -97,7 +101,7 @@ async def get_projects(
             response_data = [project.model_dump() for project in annotated_projects]
         else:
             projects = project_crud.get_multi_by_user(db, user=current_user)
-            response_data = [project.to_dict() for project in projects]
+            response_data = [project.to_dict(exclude={"research_brief"}) for project in projects]
 
         return JSONResponse(
             status_code=200,
@@ -156,7 +160,7 @@ async def update_project(
         project = project_crud.update(
             db,
             id=uuid.UUID(project_id),
-            obj_in=ProjectUpdate(**request.model_dump(exclude_unset=True)),
+            obj_in=ProjectUpdate(**request.model_dump(exclude_unset=True, by_alias=True)),
             user=current_user,
         )
 

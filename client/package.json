@@ -8,6 +8,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test:textfold": "node scripts/test-textfold.cjs && node scripts/check-textfold-vendor.cjs",
+    "test:research-overview:browser": "node scripts/check-project-research-overview.cjs",
+    "test:project-workflow:browser": "node scripts/check-project-workflow.cjs",
     "go": "yarn install && yarn build && yarn start"
   },
   "dependencies": {

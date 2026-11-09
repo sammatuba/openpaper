@@ -1,0 +1,5 @@
+# MCP importer release intent
+
+Resolve missing ChatGPT PDF-import tools by checking PR #2 against the deployed project-management release, correcting material defects, running local acceptance and independent review, then deploying the reviewed importer with its additive migration to the existing personal OpenPaper stack. Preserve the original dirty checkout and both open PRs; no automatic merge, infrastructure bootstrap, credential creation/rotation, production paper ingestion, or unrelated research changes.
+
+Acceptance: canonical arXiv/OpenReview URLs; bounded public HTTPS download with no redirects; durable same-request/source replay; current owner/editor authorization; real PostgreSQL migration, concurrency and MCP HTTP import/status tests; full server regression; reviewed clean build; migration/deployment and public health/discovery/auth rejection probes. Real account-side tool refresh and authenticated paper pilot require the existing ChatGPT connection and remain explicitly pending if unavailable here. GitHub billing lock is recorded separately from test evidence.

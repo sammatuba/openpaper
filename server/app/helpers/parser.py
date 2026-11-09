@@ -1,14 +1,16 @@
+import asyncio
 import io
 import logging
 from datetime import datetime
 from typing import Tuple
 
-import requests
 from pypdf import PdfReader
+
+from app.helpers import pdf_download
 
 logger = logging.getLogger(__name__)
 
-MAX_UPLOAD_SIZE_MB = 30
+MAX_UPLOAD_SIZE_MB = pdf_download.MAX_UPLOAD_SIZE_MB
 DOCUMENT_PAGE_LIMIT = 800
 
 
@@ -115,60 +117,18 @@ async def validate_pdf_content(
 
 
 async def validate_url_and_fetch_pdf(url: str) -> tuple[bool, bytes, str]:
-    """
-    Validate URL and fetch PDF content with additional checks.
-    Returns (is_valid, pdf_bytes, error_message).
-    """
+    """Fetch with the common public-HTTPS policy, then validate PDF contents."""
     try:
-        # Make HEAD request first to check content type without downloading
-        head_response = requests.head(str(url), timeout=10, allow_redirects=True)
-
-        # Check if we were redirected to a non-PDF URL
-        if head_response.url != str(url):
-            logger.info(f"URL redirected from {url} to {head_response.url}")
-
-        # Check content type
-        content_type = head_response.headers.get("content-type", "").lower()
-        if "application/pdf" not in content_type and "pdf" not in content_type:
-            # Some servers don't set correct content-type, so we'll still try
-            logger.warning(f"URL content-type is {content_type}, not application/pdf")
-
-        # Check content length if available
-        content_length = head_response.headers.get("content-length")
-        if content_length:
-            size_mb = int(content_length) / (1024 * 1024)
-            if size_mb > MAX_UPLOAD_SIZE_MB:
-                return False, b"", f"File too large (max {MAX_UPLOAD_SIZE_MB}MB)"
-            if size_mb < 0.001:  # Less than 1KB
-                return False, b"", "File too small to be a valid PDF"
-
-        # Stream the download with a running size cap so we bail out early
-        # on servers that don't return a content-length header.
-        max_bytes = MAX_UPLOAD_SIZE_MB * 1024 * 1024
-        response = requests.get(str(url), timeout=30, stream=True)
-        response.raise_for_status()
-
-        chunks: list[bytes] = []
-        total = 0
-        for chunk in response.iter_content(chunk_size=65536):
-            total += len(chunk)
-            if total > max_bytes:
-                response.close()
-                return False, b"", f"File too large (max {MAX_UPLOAD_SIZE_MB}MB)"
-            chunks.append(chunk)
-        pdf_bytes = b"".join(chunks)
-
-        # Validate the downloaded content
+        # The process deadline includes DNS/TLS/slow reads; the thread keeps its
+        # subprocess wait off FastAPI's event loop. No ambient proxy/auth is used.
+        pdf_bytes = await asyncio.to_thread(pdf_download.download_pdf, str(url))
         is_valid, error_msg = await validate_pdf_content(pdf_bytes, "URL")
         if not is_valid:
             return False, b"", error_msg
-
         return True, pdf_bytes, ""
-
-    except requests.exceptions.RequestException as e:
-        return False, b"", f"Failed to download PDF from URL: {str(e)}"
-    except Exception as e:
-        return False, b"", f"Error processing URL: {str(e)}"
+    except Exception:
+        # Signed URLs and network diagnostics must not enter API errors/logs.
+        return False, b"", pdf_download.DOWNLOAD_ERROR
 
 
 def extract_pdf_page_dimensions(pdf_bytes: bytes) -> dict[int, tuple[float, float]]:

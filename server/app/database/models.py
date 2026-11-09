@@ -52,7 +52,7 @@ class Base(DeclarativeBase):
     def __repr__(self):
         return f"<{self.__class__.__name__} id={self.id}>"
 
-    def to_dict(self):
+    def to_dict(self, *, exclude=None):
         """
         Convert the SQLAlchemy model instance to a dictionary.
         """
@@ -71,6 +71,7 @@ class Base(DeclarativeBase):
         return {
             column.name: _to_json_friendly(getattr(self, column.name))
             for column in self.__table__.columns
+            if column.name not in (exclude or ())
         }
 
 
@@ -1193,6 +1194,7 @@ class Project(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title = Column(String, nullable=True)
     description = Column(Text, nullable=True)
+    research_brief = Column(JSONB, nullable=True)
     admin_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
     project_roles = relationship("ProjectRole", back_populates="project")

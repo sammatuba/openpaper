@@ -17,9 +17,10 @@ from app.database.models import (
     ProjectRoles,
 )
 from app.schemas.user import CurrentUser
+from app.schemas.textfold import TextFoldDocument
 from pydantic import BaseModel
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 class ProjectBase(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    research_brief: Optional[TextFoldDocument] = None
 
 
 class ProjectCreate(ProjectBase):
@@ -64,6 +66,7 @@ class ProjectCRUD(ProjectBaseCRUD[Project, ProjectCreate, ProjectUpdate]):
             db_obj = Project(
                 title=obj_in.title,
                 description=obj_in.description,
+                research_brief=obj_in.research_brief.model_dump(by_alias=True) if obj_in.research_brief else None,
                 admin_id=user.id,
             )
             db.add(db_obj)
@@ -144,6 +147,7 @@ class ProjectCRUD(ProjectBaseCRUD[Project, ProjectCreate, ProjectUpdate]):
                     & (DataTableExtractionJob.status == JobStatus.COMPLETED),
                 )
                 .filter(ProjectRole.user_id == user.id)
+                .options(defer(Project.research_brief))
                 .group_by(Project.id, ProjectRole.role, roles_subquery.c.num_roles)
                 .order_by(Project.updated_at.desc())
                 .limit(limit)

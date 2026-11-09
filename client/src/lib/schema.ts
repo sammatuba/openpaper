@@ -519,6 +519,7 @@ export interface Project {
     id: string;
     title: string;
     description: string;
+    research_brief?: TextFoldDocument | null;
     num_papers?: number;
     num_conversations?: number;
     num_audio_overviews?: number;
@@ -527,6 +528,43 @@ export interface Project {
     updated_at: string;
     role?: ProjectRole;
     num_roles?: number;
+}
+
+// Public Textfold v0 interchange format. Additional fields survive import/export.
+export type FoldLevel = 'topic' | 'takeaway' | 'key' | 'brief' | 'full';
+export interface TextFoldUnit {
+    id: string;
+    kind: string;
+    full: string;
+    sentences: string[];
+    evidence: number[];
+    brief: string[];
+    key: string;
+    takeaway: string;
+    topic: string;
+    [key: string]: unknown;
+}
+export interface TextFoldSection {
+    id: string;
+    title: string;
+    depth: number;
+    takeaway: string;
+    topic: string;
+    units: TextFoldUnit[];
+    [key: string]: unknown;
+}
+export interface TextFoldDocument {
+    format: 'textfold/doc';
+    version: 0;
+    id: string;
+    title: string;
+    lang: string;
+    levels: FoldLevel[];
+    written: FoldLevel[];
+    provenance: { ai_generated: boolean; local: boolean; model?: string | null; [key: string]: unknown };
+    sections: TextFoldSection[];
+    links: { from: string; to: string; rel: string; [key: string]: unknown }[];
+    [key: string]: unknown;
 }
 
 export interface PdfUploadResponse {

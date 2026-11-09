@@ -218,3 +218,58 @@ External documentation checked 2026-11-03:
 - [Work/Codex MCP settings](https://learn.chatgpt.com/docs/developer-settings)
 - [Subscription API credit eligibility](https://developers.openai.com/api/docs/guides/chatgpt-api-credits)
 - [Exa official MCP and authentication](https://exa.ai/docs/get-started/exa-mcp)
+
+## ChatGPT integration expansion proposal — 2026-11-04
+
+Status: first release approved by operator with “proceed accordingly” and
+deployed as openpaper-00008-lxc; account-side new-tool acceptance pending.
+Later phases remain proposals; no paid search or corpus expansion ran. Current MCP exposes seven tools: metadata search, paper
+metadata/text, project listing, notes, annotation listing and note append.
+
+Recommended order:
+1. Grounded retrieval: expose existing indexed passage search with bounded
+   excerpts, stable IDs, page/offset provenance and project filters; enrich
+   highlight/annotation context and project membership reads. Add standard
+   search/fetch compatibility alongside custom tools for ChatGPT research use.
+2. Persistent context and writes: complete live note-append acceptance, add
+   project context/session briefs and retry-safe project organization operations.
+   Keep general hypotheses/experiment records canonical in ai-safety; first
+   offer reviewed exports instead of introducing competing project-note storage.
+3. Explicit discovery/import: reuse Exa with result/spend caps; import only
+   user-selected sources through identity reconciliation and resumable jobs.
+4. Landscape/idea bridge: narrow read-only query adapter over existing exports
+   and stable corpus mappings; preserve authored relation/epistemic labels.
+5. Optional ChatGPT UI for source previews and evidence tables after the tool
+   workflow demonstrates value; this is a separate integration surface.
+
+Observable first release: retrieve an owner/project-authorized passage that
+is absent from metadata; resolve its citation against actual PDF text; recover
+project context in a fresh chat; explicitly save chosen paper notes and read
+them back without duplicate append. No claim that all are currently supported.
+
+Material unknowns: account-specific research-mode compatibility, live MCP
+write acceptance, project-collaborator read policy, passage-index coverage and
+PDF page mapping accuracy. Semantic search/embeddings are conditional on
+measured lexical retrieval failures. Reconsider project-note storage only if
+reviewed repository exports prove too cumbersome; reconsider new infrastructure
+only after concrete retrieval/evaluation evidence warrants it.
+
+Official documentation checked: https://developers.openai.com/api/docs/mcp
+(search/fetch compatibility for ChatGPT deep research/company knowledge) and
+https://developers.openai.com/api/docs/guides/custom-mcp-server
+(custom tool use and write confirmation). This is compatibility guidance,
+not proof of availability in the operator's particular workspace/mode.
+
+## Research workspaces and architecture assessment — 2026-11-04
+
+The operator requested productive use of the remaining Codex allowance and
+selected all three priorities: research enrichment, local project workspaces,
+and reliability. The current assessment and staged implementation proposal are
+in [Project workspaces, research enrichment, and fork architecture](STRATEGY-project-workspaces-and-research.md).
+That record supersedes earlier future-tense capability descriptions where the
+capabilities have since shipped. It distinguishes 15 tools in current server
+source from seven exposed in this conversation, and preserves outstanding live
+acceptance. The recommended local model binds OpenPaper project UUIDs to research
+directories while retaining shared dossiers and canonical research records in
+ai-safety. No new implementation, corpus expansion or paid run occurred in this
+strategy pass. Concrete maintenance/import/CI findings precede broader additions.

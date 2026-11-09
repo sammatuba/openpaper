@@ -98,13 +98,12 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
     const [activePaperId, setActivePaperId] = useState<string | null>(null);
     const [readerSearchTerm, setReaderSearchTerm] = useState<string | null>(null);
     const [crumb, setCrumb] = useState<string | null>(null);
-    // Artifacts pane is open by default on desktop; like the rail, an explicit
-    // close is remembered across sessions. On mobile the pane is a full-screen
-    // overlay, so it never defaults open.
+    // Leave room for research work on a first visit. Honor an explicit desktop
+    // preference; mobile never starts with a full-screen artifacts overlay.
     const [rightPanel, setRightPanel] = useState<RightPanelMode>(() => {
         if (typeof window === "undefined") return null;
         if (window.innerWidth < 768) return null;
-        return localStorage.getItem("project-artifacts-collapsed") === "true" ? null : "artifacts";
+        return localStorage.getItem("project-artifacts-collapsed") === "false" ? "artifacts" : null;
     });
     // Desktop rail collapse, persisted across sessions.
     const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
@@ -169,7 +168,7 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
     }, [openPaperIds.length]);
 
     // Get the artifacts panel out of the way (e.g. when sending a chat message)
-    // without persisting a "collapsed" preference — next session it defaults open again.
+    // without changing the user's saved preference.
     const collapseArtifacts = useCallback(() => {
         setRightPanel((mode) => {
             if (mode !== "artifacts") return mode;

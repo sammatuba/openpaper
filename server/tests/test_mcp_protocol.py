@@ -11,6 +11,7 @@ class MCPProtocolTests(unittest.IsolatedAsyncioTestCase):
         from fastmcp.server.auth.auth import AccessToken
         from fastmcp.server.auth.providers.google import GoogleProvider
         from app.mcp.server import create_mcp_app
+        from app.mcp.routing import MCPRouteMount
         async def verify(_self, token):
             return AccessToken(token=token, client_id="test", scopes=["openid", "https://www.googleapis.com/auth/userinfo.email"],
                                claims={"email":"owner@example.test", "email_verified": True, "aud":"test-client"}) if token == "valid" else None
@@ -18,7 +19,7 @@ class MCPProtocolTests(unittest.IsolatedAsyncioTestCase):
             from fastapi import FastAPI
             mcp_app = create_mcp_app()
             app = FastAPI(lifespan=mcp_app.lifespan)
-            app.mount("/", mcp_app)
+            app.router.routes.append(MCPRouteMount("/", app=mcp_app))
             async with mcp_app.lifespan(app):
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://papers.example.workers.dev") as client:
                     discovery = await client.get("/.well-known/oauth-protected-resource/api/mcp")
@@ -30,3 +31,17 @@ class MCPProtocolTests(unittest.IsolatedAsyncioTestCase):
                     response = await client.post("/api/mcp", json=payload, headers={**headers, "authorization":"Bearer valid"})
                     self.assertEqual(response.status_code, 200)
                     self.assertIn("protocolVersion", response.text)
+
+                    listing=await client.post("/api/mcp",headers={**headers,"authorization":"Bearer valid"},json={"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}})
+                    import json
+                    result=listing.json() if listing.headers.get("content-type","").startswith("application/json") else json.loads(next(line[6:] for line in listing.text.splitlines() if line.startswith("data: ")))
+                    tools={t['name']:t for t in result['result']['tools']}
+                    self.assertEqual(len(tools),15)
+                    tool=tools['upload_paper_file']
+                    self.assertEqual(tool['_meta']['openai/fileParams'],['file'])
+                    schema=tool['inputSchema'];file=schema['properties']['file']
+                    if '$ref' in file: file=schema['$defs'][file['$ref'].split('/')[-1]]
+                    self.assertEqual(set(file['properties']),{'download_url','file_id','mime_type','file_name'})
+                    self.assertEqual(set(file['required']),{'download_url','file_id'})
+                    self.assertFalse(tool['annotations']['readOnlyHint'])
+                    self.assertTrue(tools['get_paper_upload_status']['annotations']['readOnlyHint'])
