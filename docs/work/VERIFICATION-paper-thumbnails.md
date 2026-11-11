@@ -48,3 +48,10 @@ revision. Release timing was asked explicitly after verification/review. No
 imports, inference, production data updates, bucket permission changes or
 credential rotation. The repair needs only a server image rollout, with no
 migration or client/jobs rebuild.
+
+
+Release update,2026-11-11: this reviewed repair was preserved and bundled in
+source `c757bbf0`, independently reviewed with the complete feature and deployed
+as web `openpaper-00014-vjm` at 100%. Investigation required PG 100 zero skips includes
+the thumbnail regressions. No new authenticated production thumbnail API
+readback is claimed; current-account UI acceptance remains open.

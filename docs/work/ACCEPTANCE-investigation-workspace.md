@@ -2,8 +2,10 @@
 
 Intent: [INTENT-investigation-workspace.md](INTENT-investigation-workspace.md).
 Implementation contracts: [PLAN-investigation-workspace.md](PLAN-investigation-workspace.md).
-All checks below are **pending implementation**, not results of this planning
-session. Planning validation is recorded separately in the handoff.
+This matrix defines the contract. Executed results are recorded in
+[VERIFICATION-investigation-workspace.md](VERIFICATION-investigation-workspace.md).
+A01–A24 pass; A25 automated rollout/public checks pass, with current-account
+authenticated production UI acceptance still open.
 
 ## Reproducible fixture
 

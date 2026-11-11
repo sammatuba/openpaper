@@ -30,7 +30,7 @@ esbuild: `/home/sammatuba/.npm/_npx/fd45a72a545557e9/node_modules/esbuild`.
 | M4 | Pass | Manual sections/paragraphs/quotes/gaps, provenance, dependency pins and conflict recovery. |
 | M5 | Pass | Explicit fake-provider generation, durable single claim, quota/messages, proposal review and insertion. |
 | M6 | Pass | Access-checked exports, untrusted import/remapping, legacy discussion/brief and thumbnail regressions. |
-| M7 | Active | Acceptance execution passed; final independent review and authorized release pending. |
+| M7 | Deployed; account check open | Independent accept; locked build/migration/staged/public checks pass, web14 traffic100. Current-session authenticated UI remains unexercised. |
 
 ## Acceptance matrix
 
@@ -65,7 +65,7 @@ separate from actual PostgreSQL HTTP tests. Artifacts below are under
 | A22 | Pass | Existing research-overview browser1440/390 preserves upstream text/anchors/local annotation export/import; workflow browser preserves guided/freeform discussions, credits, roles, saved resume. Full suites include upload/MCP/citations/thumbnail regression. |
 | A23 | Pass | Single Alembic head `project_investigation_01`, direct parent `project_research_brief_01`; disposable upgrade/downgrade/upgrade leaves legacy project intact. Rollback policy retains additive data. |
 | A24 | Pass | All executed suites below pass. Final independent review accepts: docs/work/REVIEW-investigation-workspace.md. Reviewer reruns and author-log limits recorded below. |
-| A25 | Pending release | Current live revisions/images captured in `live-before.json`; release uses committed source, digest-pinned server/client and additive migration before traffic; account-only live UI not yet exercised. |
+| A25 | Public release pass; account check open | Buildd954bd84 SUCCESS from c757bbf0; migrationdl2kh succeeded; web00014-vjm Ready/traffic100, exact digests/runtime config/jobs preserved;57 staged +57 public checks pass. No current operator session for authenticated UI acceptance. |
 
 ## Exact execution
 
@@ -123,17 +123,17 @@ Visual follow-up also fixed actual OpenPaper theme-class observation (this app d
 
 Reviewer independently passed TypeScript, parser/vendor/native reproduction/client validation, Worker, diff and19 focused Python tests. Required PG refused existing cluster in its sandbox; a guarded PG test skipped. Full server stalled/stopped, jobs timed out, research/CI temp restrictions; build/browser not rerun. Author logs were assessed, not independently rerun.
 
-Rereview `.meos/reviews/20261111T012105Z.md` accepted the code corrections but returned **rework** because the claimed native preview attribution/navigation assertions were absent from the harness (a scripted edit had not matched). Corrected the evidence claim and added explicit executed assertions: rendered AI-authored/human-authored/captured-quotation labels, exact snapshot wording, actual native finding link callback into Evidence, then Draft return with unsaved prose retained. The production browser now reports these paths explicitly at1440/390. Assistant selected/omitted context and proposal-local source/PDF review also pass without another provider invocation. Stable block/claim links restore selection without scrolling on every keystroke.
+Rereview `.meos/reviews/20261111T012105Z.md` accepted the code corrections but returned **rework** because the claimed native preview attribution/navigation assertions were absent from the harness (a scripted edit had not matched). Corrected the evidence claim and added explicit executed assertions: rendered AI-authored/human-authored/captured-quotation labels, exact snapshot wording, actual native finding link callback into Evidence, then Draft return with unsaved prose retained. The production browser now reports these paths explicitly at 1440/390. Assistant selected/omitted context and proposal-local source/PDF review also pass without another provider invocation. Stable block/claim links restore selection without scrolling on every keystroke.
 
-Final evidence rereview `.meos/reviews/20261111T012737Z.md`: **accept, no findings**. Persistent copy: [REVIEW-investigation-workspace.md](REVIEW-investigation-workspace.md). Independently passed TypeScript, parser/vendor/native reproduction, client validation,19 focused Python tests, Worker and diff checks. PostgreSQL refused existing cluster; research/CI temp restrictions; full server/jobs timed out; production build/browser assessed from author logs/screenshots. No claim of independent rerun for those suites. Accepted proceeding to authorized release checks.
+Final evidence rereview `.meos/reviews/20261111T012737Z.md`: **accept, no findings**. Persistent copy: [REVIEW-investigation-workspace.md](REVIEW-investigation-workspace.md). Independently passed TypeScript, parser/vendor/native reproduction, client validation, 19 focused Python tests, Worker and diff checks. PostgreSQL refused existing cluster; research/CI temp restrictions; full server/jobs timed out; production build/browser assessed from author logs/screenshots. No claim of independent rerun for those suites. Accepted proceeding to authorized release checks.
 
-Deployment: authorized; committing reviewed source and building release images next.
+Deployment: completed from reviewed commitc757bbf0; exact record below. Authenticated current-account UI remains unexercised.
 
 ## Rollout and rollback
 
 Canonical origin `https://papers.sammatuba.workers.dev`; GCP project
 `openpaper-sammatuba`, region `asia-southeast1`. Fresh discovery:
-web `openpaper-00013-7qj`100%; jobs `openpaper-jobs-00009-fdw`100%.
+web `openpaper-00013-7qj` at 100%; jobs `openpaper-jobs-00009-fdw` at 100%.
 Exact original images and runtime identity retained in `live-before.json`.
 Build only a git archive of reviewed committed source with existing locked
 Dockerfiles/cloudbuild config. Migrate with resolved server digest; stage web
@@ -146,3 +146,57 @@ No paid inference is part of release acceptance.
 Rollback restores `openpaper-00013-7qj` traffic100 via Cloud Run. Keep additive
 schema and authored records. Never run production downgrade/drop to roll back
 the application. No research data or sibling repository modifications.
+
+
+## Executed release, 2026-11-11
+
+Source commit `c757bbf00d6d1223eb1e1c489086a24d3de9512a`, branch
+`feat/native-investigation-workspace`. Built only its git archive (763 uploaded
+files/13.3MiB, runtime env files excluded) using existing locked
+`deploy/cloudbuild.yaml` and canonical origin build args. Cloud Build
+`d954bd84-bcb0-47a5-9f23-0bd68205989e`: **SUCCESS**, all five images published.
+Only client/server images were rolled into web; Caddy/jobs/backup/schedules were
+preserved. Auxiliary built images were not deployed.
+
+- Client: `sha256:6fd6c133e197cdd194fd0dffaf239f87baaede9db2a36f807ef328885437aac6`.
+- Server: `sha256:8b1338998c474295c800b1a03cc690b50c25bec1c269e2bc4a88492cde7de5ea`.
+- Existing Caddy: `sha256:f786572dcc5017afcb41b1888d45af62b04dd266561568ffd3599704b64aa948`.
+- Existing jobs: `openpaper-jobs-00009-fdw`, `sha256:380a06af6b85c30e40e6f5598dc60460ab240652f6214759a9a51bdaee009931`.
+
+Migration job image was updated to that exact server digest. Execution
+`openpaper-migrate-dl2kh` completed successfully with `alembic upgrade head `,
+head `project_investigation_01`, direct DB secret reference and original runtime
+identity. No downgrade/data maintenance/production fixture import was run.
+
+Staged revision `openpaper-00014-vjm` became Ready with old revision100%, new
+tag0%. Its actual container digests were verified. Old/new revision specs were
+compared with only images removed: **identical runtime configuration**. The
+initial exported namespace field caused a CLI Resource Manager lookup error;
+omitting that field (as in the existing deploy template) resolved it without
+enabling another API. The first smoke used an incorrect OAuth metadata path;
+corrected to the actual advertised `/.well-known/oauth-protected-resource/api/mcp`.
+No application compatibility defect was observed.
+
+Stage and canonical public smoke each passed **57 HTTP/asset checks**, including
+45 served JS entry bundles, homepage/health200, Evidence/Draft route200, native
+vendor asset200, OAuth metadata200 with canonical issuer/resource, anonymous new
+investigation/source/export401, MCP401/no-store, credentialed PUT CORS with
+If-Match, compiled canonical API origin and new investigation code. Public origin:
+`https://papers.sammatuba.workers.dev`. Jobs anonymous access remains403.
+
+Traffic was explicitly moved to `openpaper-00014-vjm` at 100%. Public checks passed;
+exact images/Ready/traffic were checked again. The temporary staging tag was
+removed. Runtime settings and jobs revision remain unchanged. Release artifacts:
+`release.json`, `build.json`, `migration-execution.json`, `deployment-stage.json`,
+`traffic-final.json`, `smoke-stage.json`, `smoke-public.json` under the session
+artifact directory. Rollback remains prior web revision `openpaper-00013-7qj`100;
+keep the additive schema and authored records.
+
+No current operator browser/session is available here. Authenticated production
+Case/Evidence/Draft and Google account acceptance remain open; no old pilot
+session was reused and no owner session was manufactured. No live inference,
+production project/paper/note changes, or paid search was used. This is a stated
+limit of A25, not a passing authenticated acceptance claim.
+
+Source is committed locally; final documentation is committed separately.
+No branch push or merge was required/performed for this archive-based rollout.

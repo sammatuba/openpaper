@@ -1,6 +1,6 @@
 {
   "intent": "docs/work/INTENT-investigation-workspace.md",
-  "phase": "Investigation workspace accepted; authorized release building",
+  "phase": "Investigation workspace deployed; authenticated account acceptance remains open",
   "branch": "feat/native-investigation-workspace",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,9 +8,11 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Commit reviewed source, archive exact commit, Cloud Build; migrate with resolved server digest; stage server/client only and smoke before traffic.",
-  "blocked_on": [],
-  "updated": "2026-11-11T01:31:37.109529+00:00",
+  "next_action": "Operator current-session acceptance: sign in at canonical origin and exercise Case \u2192 Evidence \u2192 Draft save/reload, citation/PDF and export. Implementation/review/deployment/public gates are done; live AI requires a separate explicit action.",
+  "blocked_on": [
+    "No current operator browser/session exposed for authenticated production UI acceptance."
+  ],
+  "updated": "2026-11-11T01:56:13.570330+00:00",
   "done": [
     "bootstrap (project, billing, APIs, registry, SA, queue, GCS bucket+CORS+HMAC)",
     "Cloud Build 98fc719b: 5 images",
@@ -345,22 +347,23 @@
     "handoff": "docs/work/HANDOFF-investigation-workspace.md",
     "fixture": "docs/work/investigation-workspace-fixture.json",
     "baseline": "docs/work/BASELINE-investigation-workspace.json",
-    "status": "Implemented; full review findings corrected and regression-verified; final rereview/release active",
-    "next_milestone": "M7",
+    "status": "Implemented, independently accepted and deployed; authenticated current-account UI acceptance open",
+    "next_milestone": "Account-only production acceptance",
     "planning_scope": "Historical planning preserved; operator subsequently authorized end-to-end implementation and deployment",
     "implementation_scope": "M0\u2013M6 implemented; M7 review/release active",
-    "verification": "See VERIFICATION-investigation-workspace.md for executed A01\u2013A25 evidence; final rereview and rollout pending",
+    "verification": "See VERIFICATION-investigation-workspace.md; sourcec757bbf0, liveopenpaper-00014-vjm100%, migrationproject_investigation_01, independentaccept.",
     "verification_record": "docs/work/VERIFICATION-investigation-workspace.md"
   },
   "paper_thumbnails": {
     "intent": "docs/work/INTENT-paper-thumbnails.md",
-    "status": "local repair verified and independently accepted; uncommitted and undeployed; release timing asked",
+    "status": "Reviewed repair bundled in c757bbf0; deployed with investigation webopenpaper-00014-vjm100%",
     "cause": "Unsigned private preview URLs; project metadata list omitted previews",
     "production_read": "Existing PNG: unsigned403, signed200 using new helper; no production write; credentials/signature memory-only",
     "checks": "Required isolated suite75 zero skips, including final shared-paper/revocation check; full server459 tests OK48skips; signing/download8; git diff --check pass",
     "verification": "docs/work/VERIFICATION-paper-thumbnails.md",
     "review": ".meos/reviews/20261110T162653Z.md",
-    "review_verdict": "accept; no findings; reviewer independently passed8 signing/download checks and diff checks, inspected full execution logs; PostgreSQL rerun sandbox-blocked and full rerun stalled/stopped"
+    "review_verdict": "accept; no findings; reviewer independently passed8 signing/download checks and diff checks, inspected full execution logs; PostgreSQL rerun sandbox-blocked and full rerun stalled/stopped",
+    "deployment": "Bundled after explicit autonomous deployment authorization; no new authenticated production thumbnail readback claimed."
   },
   "investigation_execution": {
     "feature_base": "09bf3bae02ed55a1537b0f4a71a01e536f17b0b3",
@@ -373,17 +376,61 @@
       "M5",
       "M6"
     ],
-    "current_milestone": "M7 authorized rollout",
+    "current_milestone": "M7 deployed and public checks pass; account-only acceptance open",
     "deployment_authorized": true,
-    "deployed": false,
+    "deployed": true,
     "baseline_hashes": "all nine matched; original vendor inputs unchanged",
     "review_scope": "Full feature diff with new tests/docs and preserved thumbnail baseline",
-    "verification": "PG100 zero skips; server484 OK60 guarded integration skips; jobs21; Worker2; research36; CI5; production build/tsc/parser/native and desktop/mobile canonical source/PDF/manual/assistant/viewer/brief-only flows pass.",
+    "verification": "PG100 zero skips; server484 OK60 guarded integration skips; jobs21; Worker2; research36; CI5; client build/tsc/parser/native and desktop/mobile manual/assistant/PDF/viewer/legacy gates pass. Independent accept. Cloud Build SUCCESS; migration succeeded; live14 traffic100 exact digests;57 staged +57 public HTTP/assets checks pass.",
     "review_report": "docs/work/REVIEW-investigation-workspace.md",
     "review_verdict": "accept; no findings",
     "remaining_milestones": [
-      "M7 deployment/public verification/final report"
+      "M7 account-only authenticated production acceptance"
     ],
-    "acceptance": "A01\u2013A24 pass with independent acceptance; A25 rollout/account boundaries recorded"
+    "acceptance": "A01\u2013A24 pass; A25 rollout/readiness/public checks pass, authenticated current-account UI not exercised.",
+    "release": {
+      "source_commit": "c757bbf00d6d1223eb1e1c489086a24d3de9512a",
+      "source_directory": "/tmp/openpaper-investigation-release-c757bbf00d6d",
+      "tag": "investigation-c757bbf00d6d",
+      "canonical_origin": "https://papers.sammatuba.workers.dev",
+      "project": "openpaper-sammatuba",
+      "region": "asia-southeast1",
+      "build_id": "d954bd84-bcb0-47a5-9f23-0bd68205989e",
+      "build_status": "SUCCESS",
+      "build_finished": "2026-11-11T01:45:58.818102Z",
+      "images": {
+        "client": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/client@sha256:6fd6c133e197cdd194fd0dffaf239f87baaede9db2a36f807ef328885437aac6",
+        "server": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/server@sha256:8b1338998c474295c800b1a03cc690b50c25bec1c269e2bc4a88492cde7de5ea",
+        "jobs": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/jobs@sha256:0b6b4d113776afa4ead376305caf253cc8c09b0b14d6978eb60c3d2374fb8a97",
+        "caddy": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/caddy@sha256:fd7c03c93a0366e1bdccff528d3c999922c4a9d272b6099eab51ccdc68721e91",
+        "backup": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/backup@sha256:f4892c71de47b62509227ccd79eb602ba1a6f6f1489cfddab6ca6e0cf348d6e9"
+      },
+      "stage_tag": "investigation-c757bbf0",
+      "rollback_revision": "openpaper-00013-7qj",
+      "migration_execution": "openpaper-migrate-dl2kh",
+      "migration_head": "project_investigation_01",
+      "staged_revision": "openpaper-00014-vjm",
+      "stage_url": "https://investigation-c757bbf0---openpaper-rfv24u7kqa-as.a.run.app",
+      "runtime_configuration_preserved": true,
+      "runtime_images": {
+        "caddy": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/caddy@sha256:f786572dcc5017afcb41b1888d45af62b04dd266561568ffd3599704b64aa948",
+        "client": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/client@sha256:6fd6c133e197cdd194fd0dffaf239f87baaede9db2a36f807ef328885437aac6",
+        "server": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/server@sha256:8b1338998c474295c800b1a03cc690b50c25bec1c269e2bc4a88492cde7de5ea"
+      },
+      "jobs_revision": "openpaper-jobs-00009-fdw",
+      "web_revision": "openpaper-00014-vjm",
+      "traffic_percent": 100,
+      "traffic_switched_at": "2026-11-11T01:52:32.982689+00:00",
+      "jobs_anonymous_status": 403,
+      "deployed": true,
+      "verified_at": "2026-11-11T01:54:22.997517+00:00",
+      "stage_tag_removed": true,
+      "public_checks": 57,
+      "served_scripts": 45,
+      "public_health": 200,
+      "authenticated_ui": "Not exercised: no current operator browser/session available",
+      "live_inference": false
+    },
+    "local_frontend": "Stopped verified managed Next3011 PID436600 after browser acceptance"
   }
 }

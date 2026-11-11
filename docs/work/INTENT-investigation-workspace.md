@@ -1,8 +1,9 @@
 # Native investigation workspace and paper drafter
 
-Status: implementation intent prepared on 2026-11-11. This session is planning
-only. The operator requested a precise packet that a new session can execute
-end to end; no implementation of this feature has started.
+Status: implemented, independently accepted and deployed on 2026-11-11
+(source `c757bbf0`, web `openpaper-00014-vjm` at 100%). Current-account authenticated
+production UI acceptance remains open. See REPORT-investigation-workspace-session.md
+and VERIFICATION-investigation-workspace.md for actual results and limits.
 
 ## Outcome
 
