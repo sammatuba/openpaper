@@ -8,10 +8,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:textfold": "node scripts/test-textfold.cjs && node scripts/check-textfold-vendor.cjs",
+    "test:textfold": "node scripts/test-textfold.cjs && node scripts/check-textfold-vendor.cjs && node scripts/build-textfold-native.cjs --check && node scripts/test-investigation.cjs",
     "test:research-overview:browser": "node scripts/check-project-research-overview.cjs",
     "test:project-workflow:browser": "node scripts/check-project-workflow.cjs",
-    "go": "yarn install && yarn build && yarn start"
+    "go": "yarn install && yarn build && yarn start",
+    "test:textfold-native": "node scripts/build-textfold-native.cjs --check && node scripts/check-textfold-native.cjs",
+    "test:investigation:browser": "node scripts/check-investigation-workspace.cjs"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.10",

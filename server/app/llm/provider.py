@@ -461,8 +461,10 @@ class GeminiProvider(BaseLLMProvider):
         streams until their upstream gives up and closes the connection.
         """
 
+        single_attempt = kwargs.pop("single_attempt", False)
         config = GenerateContentConfig(
             system_instruction=system_prompt,
+            **({"http_options": HttpOptions(retry_options=HttpRetryOptions(attempts=1))} if single_attempt else {}),
         )
 
         # Start with file content for caching if present
@@ -496,6 +498,7 @@ class GeminiProvider(BaseLLMProvider):
         async for chunk in stream_with_retry(
             open_stream,
             description=f"gemini/{model}",
+            max_retries=0 if single_attempt else 2,
             on_complete=raise_if_no_answer,
         ):
             if chunk is STREAM_RESTART:
@@ -834,6 +837,8 @@ class OpenAIProvider(BaseLLMProvider):
         **kwargs,
     ) -> AsyncIterator[StreamChunk]:
         """Send streaming message to OpenAI"""
+        single_attempt = kwargs.pop("single_attempt", False)
+        client = self._async_client.with_options(max_retries=0) if single_attempt else self._async_client
         messages = self._prepare_openai_messages(history, message, system_prompt, file)
 
         # Same tally the Gemini path keeps: a stream that ends having produced
@@ -843,7 +848,7 @@ class OpenAIProvider(BaseLLMProvider):
 
         async def open_stream():
             state["saw_text"] = False
-            return await self._async_client.chat.completions.create(
+            return await client.chat.completions.create(
                 model=model,
                 messages=messages,
                 stream=True,
@@ -860,6 +865,7 @@ class OpenAIProvider(BaseLLMProvider):
         async for chunk in stream_with_retry(
             open_stream,
             description=f"openai/{model}",
+            max_retries=0 if single_attempt else 2,
             on_complete=raise_if_no_answer,
         ):
             if chunk is STREAM_RESTART:
@@ -1200,6 +1206,8 @@ class AnthropicProvider(BaseLLMProvider):
         file: FileContent | None = None,
         **kwargs,
     ) -> AsyncIterator[StreamChunk]:
+        single_attempt = kwargs.pop("single_attempt", False)
+        client = self._async_client.with_options(max_retries=0) if single_attempt else self._async_client
         params: Dict[str, Any] = {
             "model": model,
             "max_tokens": kwargs.pop("max_tokens", self.DEFAULT_MAX_TOKENS_STREAM),
@@ -1228,7 +1236,7 @@ class AnthropicProvider(BaseLLMProvider):
             state["saw_text"] = False
 
             async def text_chunks():
-                async with self._async_client.messages.stream(**params) as stream:
+                async with client.messages.stream(**params) as stream:
                     async for text in stream.text_stream:
                         yield text
                     # Surface usage after the stream completes; helpful for
@@ -1248,6 +1256,7 @@ class AnthropicProvider(BaseLLMProvider):
         async for text in stream_with_retry(
             open_stream,
             description=f"anthropic/{model}",
+            max_retries=0 if single_attempt else 2,
             on_complete=raise_if_no_answer,
         ):
             if text is STREAM_RESTART:

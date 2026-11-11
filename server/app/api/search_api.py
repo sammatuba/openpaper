@@ -5,6 +5,7 @@ from app.database.database import get_db
 from app.database.models import Annotation, Highlight, Paper
 from app.database.queries.search import search_knowledge_base
 from app.database.telemetry import track_event
+from app.helpers.s3 import s3_service
 from app.schemas.user import CurrentUser
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -77,6 +78,8 @@ async def search_knowledge_base_endpoint(
             db=db,
         )
 
+        for paper in results.papers:
+            paper.preview_url = s3_service.get_preview_url(paper.preview_url)
         return JSONResponse(status_code=200, content=results.model_dump(mode="json"))
 
     except HTTPException:

@@ -1,0 +1,5 @@
+{
+  "commit": "92ad625ab6887bf0060374c1fd86a558513baed2",
+  "engine_sha256": "de875786688cbced820f95a99a45da9f07bbec109540babb1840854903c2449c",
+  "patches": "scripts/build-textfold-native.cjs"
+}

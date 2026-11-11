@@ -1,19 +1,16 @@
 {
-  "intent": "docs/work/INTENT-dossier-release.md",
-  "phase": "Research dossier released and publicly verified",
-  "branch": "master",
+  "intent": "docs/work/INTENT-investigation-workspace.md",
+  "phase": "Investigation workspace accepted; authorized release building",
+  "branch": "feat/native-investigation-workspace",
   "gcp": {
     "project": "openpaper-sammatuba",
     "number": "1061746501640",
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Open the project in the live app and verify the authenticated workspace with your account; reconnect ChatGPT MCP if needed. The review finding on pre-dispatch failures was fixed and regression-tested.",
-  "blocked_on": [
-    "Register new Google OAuth callbacks",
-    "Reconnect/refresh existing ChatGPT OpenPaper integration and run authenticated acceptance"
-  ],
-  "updated": "2026-11-09T02:14:43.109949+00:00",
+  "next_action": "Commit reviewed source, archive exact commit, Cloud Build; migrate with resolved server digest; stage server/client only and smoke before traffic.",
+  "blocked_on": [],
+  "updated": "2026-11-11T01:31:37.109529+00:00",
   "done": [
     "bootstrap (project, billing, APIs, registry, SA, queue, GCS bucket+CORS+HMAC)",
     "Cloud Build 98fc719b: 5 images",
@@ -21,7 +18,7 @@
     "secrets: DATABASE_URL, DATABASE_URL_DIRECT, GCS_HMAC_* set",
     "all 9 secrets set",
     "deploy: openpaper + openpaper-jobs live; /api/health 200 via Caddy, client 200, jobs 403 anon / 200 with identity token",
-    "X-Jobs-Secret rollout; scheduler → server 200",
+    "X-Jobs-Secret rollout; scheduler \u2192 server 200",
     "services pinned by digest (revision openpaper-00002)",
     "backup job verified end to end: dump, upload to gs://openpaper-sammatuba-papers/backups/, prune (14 days)",
     "OAuth redirect URI registered; Google sign-in verified in operator browser (callback 302, /api/auth/me 200)",
@@ -120,7 +117,8 @@
       "ChatGPT OAuth connection completed",
       "ChatGPT paper search works",
       "All three expected pilot titles visible in library (2026-11-04)",
-      "Login working on resume (idle duration unspecified)"
+      "Login working on resume (idle duration unspecified)",
+      "2026-11-11: operator confirms sign-in, project dossier/reader and ChatGPT connector checks work; separately reports broken paper thumbnails"
     ],
     "pending": [
       "New pilot PDFs/Notes operator browser check",
@@ -300,7 +298,7 @@
     "status": "implemented and verified locally; review finding fixed and regression-verified; uncommitted and undeployed",
     "intent": "docs/work/INTENT-project-workflow.md",
     "verification": "docs/work/VERIFICATION-project-workflow.md",
-    "direction": "User chose research dossier: questions → evidence → synthesis → experiment plan",
+    "direction": "User chose research dossier: questions \u2192 evidence \u2192 synthesis \u2192 experiment plan",
     "checks": [
       "production build including lint/TypeScript",
       "Textfold parser/source fidelity and upstream vendor checks",
@@ -315,7 +313,7 @@
     "review": ".meos/reviews/20261109T004539Z.md",
     "limitations": "Guided saved discussions and a manually edited brief; no automatically verified evidence, novelty verdict or experiment execution.",
     "review_verdict": "rework on the reviewed snapshot; one important finding resolved by author verification, no subsequent reviewer acceptance claimed",
-    "review_disposition": "Refreshed the persistent conversation list before navigation. Added mutable-create mock and actual create → workspace return → resume saved discussion check; it reproduced the old failure and passed after the fix on desktop/mobile. Final production build also passed.",
+    "review_disposition": "Refreshed the persistent conversation list before navigation. Added mutable-create mock and actual create \u2192 workspace return \u2192 resume saved discussion check; it reproduced the old failure and passed after the fix on desktop/mobile. Final production build also passed.",
     "browser_log": "/tmp/openpaper-workflow-final-browser.log",
     "material_unresolved_findings": [],
     "local_frontend": "stopped after verification"
@@ -329,6 +327,63 @@
     "origin": "https://papers.sammatuba.workers.dev",
     "checks": "68 isolated PostgreSQL tests pass; 450 server tests 45 skipped; 21 jobs tests; frontend build and desktop/mobile browser checks; live homepage, health, Textfold asset and MCP discovery HTTP 200",
     "review": "20261109T013645Z rework: pre-dispatch failures fixed in 80c12b43 with regression, author verified; no second independent verdict",
-    "limitations": "Authenticated project UI and ChatGPT connector not exercised in this release."
+    "limitations": "Authenticated project UI and ChatGPT connector not exercised in this release.",
+    "authenticated_acceptance": "Operator confirmed working on 2026-11-11; no new agent-authenticated UI or connector exercise claimed.",
+    "theme_followup": {
+      "source_commit": "09bf3bae02ed55a1537b0f4a71a01e536f17b0b3",
+      "web_revision": "openpaper-00013-7qj",
+      "traffic_percent": 100,
+      "observed": "2026-11-11; Cloud Run Ready; public health HTTP200",
+      "client_digest": "sha256:75c84585bfa316f5e7fb8151efd277e947da840f63a04ee37bb82737269b1c89"
+    }
+  },
+  "investigation_workspace": {
+    "intent": "docs/work/INTENT-investigation-workspace.md",
+    "strategy": "docs/work/STRATEGY-investigation-workspace.md",
+    "plan": "docs/work/PLAN-investigation-workspace.md",
+    "acceptance": "docs/work/ACCEPTANCE-investigation-workspace.md",
+    "handoff": "docs/work/HANDOFF-investigation-workspace.md",
+    "fixture": "docs/work/investigation-workspace-fixture.json",
+    "baseline": "docs/work/BASELINE-investigation-workspace.json",
+    "status": "Implemented; full review findings corrected and regression-verified; final rereview/release active",
+    "next_milestone": "M7",
+    "planning_scope": "Historical planning preserved; operator subsequently authorized end-to-end implementation and deployment",
+    "implementation_scope": "M0\u2013M6 implemented; M7 review/release active",
+    "verification": "See VERIFICATION-investigation-workspace.md for executed A01\u2013A25 evidence; final rereview and rollout pending",
+    "verification_record": "docs/work/VERIFICATION-investigation-workspace.md"
+  },
+  "paper_thumbnails": {
+    "intent": "docs/work/INTENT-paper-thumbnails.md",
+    "status": "local repair verified and independently accepted; uncommitted and undeployed; release timing asked",
+    "cause": "Unsigned private preview URLs; project metadata list omitted previews",
+    "production_read": "Existing PNG: unsigned403, signed200 using new helper; no production write; credentials/signature memory-only",
+    "checks": "Required isolated suite75 zero skips, including final shared-paper/revocation check; full server459 tests OK48skips; signing/download8; git diff --check pass",
+    "verification": "docs/work/VERIFICATION-paper-thumbnails.md",
+    "review": ".meos/reviews/20261110T162653Z.md",
+    "review_verdict": "accept; no findings; reviewer independently passed8 signing/download checks and diff checks, inspected full execution logs; PostgreSQL rerun sandbox-blocked and full rerun stalled/stopped"
+  },
+  "investigation_execution": {
+    "feature_base": "09bf3bae02ed55a1537b0f4a71a01e536f17b0b3",
+    "completed_milestones": [
+      "M0",
+      "M1",
+      "M2",
+      "M3",
+      "M4",
+      "M5",
+      "M6"
+    ],
+    "current_milestone": "M7 authorized rollout",
+    "deployment_authorized": true,
+    "deployed": false,
+    "baseline_hashes": "all nine matched; original vendor inputs unchanged",
+    "review_scope": "Full feature diff with new tests/docs and preserved thumbnail baseline",
+    "verification": "PG100 zero skips; server484 OK60 guarded integration skips; jobs21; Worker2; research36; CI5; production build/tsc/parser/native and desktop/mobile canonical source/PDF/manual/assistant/viewer/brief-only flows pass.",
+    "review_report": "docs/work/REVIEW-investigation-workspace.md",
+    "review_verdict": "accept; no findings",
+    "remaining_milestones": [
+      "M7 deployment/public verification/final report"
+    ],
+    "acceptance": "A01\u2013A24 pass with independent acceptance; A25 rollout/account boundaries recorded"
   }
 }

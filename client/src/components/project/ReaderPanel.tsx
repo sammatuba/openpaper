@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { FileText, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,15 @@ export function ReaderPanel() {
             refreshPaperUrl(activePaper.id);
         }
     }, [activePaper, refreshPaperUrl]);
+
+    const opener = useRef<HTMLElement | null>(null);
+    const wasReading = useRef(false);
+    useEffect(() => {
+        const reading = rightPanel === "reader" && openPaperIds.length > 0;
+        if (reading && !wasReading.current) opener.current = document.activeElement as HTMLElement;
+        if (!reading && wasReading.current && opener.current?.isConnected) opener.current.focus();
+        wasReading.current = reading;
+    }, [rightPanel, openPaperIds.length]);
 
     if (openPapers.length === 0) {
         return null;
@@ -90,7 +99,7 @@ export function ReaderPanel() {
                     onClick={closeReader}
                     aria-label="Close reader"
                 >
-                    <X className="h-4 w-4" />
+                    <X className="h-4 w-4" /><span className="sr-only">Back to investigation</span>
                 </Button>
             </div>
             {/* Active paper */}

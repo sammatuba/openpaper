@@ -222,6 +222,7 @@ class ProjectPaperCRUD(
                     Paper.publish_date,
                     Paper.user_id,
                     Paper.created_at,
+                    Paper.preview_url,
                     # Needed by s3_service.get_cached_presigned_urls_bulk
                     Paper.s3_object_key,
                     Paper.cached_presigned_url,

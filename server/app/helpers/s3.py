@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import Dict, List, Optional
+from urllib.parse import unquote, urlsplit
 
 import boto3
 import requests
@@ -237,6 +238,30 @@ class S3Service:
         except ClientError as e:
             logger.error(f"Error generating presigned URL: {e}")
             return None
+
+    def get_preview_url(self, stored_url: Optional[str]) -> Optional[str]:
+        """Sign a stored preview in our bucket after the caller checks access.
+
+        Preview URLs predate private storage and contain no credentials. Keep
+        those durable URLs in the database, issuing a new signature on read,
+        just as for PDFs. Public previews hosted elsewhere remain compatible.
+        Signing is local; this does not fetch the image or update the database.
+        """
+        if not stored_url or not self.cloudflare_bucket_name:
+            return stored_url
+        try:
+            location = urlsplit(f"https://{self.cloudflare_bucket_name}")
+            preview = urlsplit(stored_url)
+        except ValueError:
+            return None
+        prefix = location.path.rstrip("/") + "/"
+        if (preview.scheme != location.scheme or preview.netloc != location.netloc
+                or not preview.path.startswith(prefix)):
+            return stored_url
+        # Ignore any old signature/query, and decode exactly once so boto3
+        # signs the original object key rather than double-escaping it.
+        object_key = unquote(preview.path[len(prefix):])
+        return self.generate_presigned_url(object_key) if object_key else None
 
     def get_file_size_in_kb(self, object_key: str) -> Optional[int]:
         """

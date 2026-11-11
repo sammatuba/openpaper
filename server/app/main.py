@@ -34,6 +34,7 @@ from app.api.projects.project_charts_api import project_charts_router
 from app.api.projects.project_conversations_api import project_conversations_router
 from app.api.projects.project_papers_api import project_papers_router
 from app.api.projects.projects_api import projects_router
+from app.api.projects.project_investigation_api import investigation_router
 from app.api.projects.projects_data_table_api import projects_data_table_router
 from app.api.projects.projects_invitation_api import (
     router as projects_invitation_router,
@@ -92,6 +93,7 @@ app.include_router(message_router, prefix="/api/message")
 app.include_router(highlight_router, prefix="/api/highlight")
 app.include_router(annotation_router, prefix="/api/annotation")
 app.include_router(projects_router, prefix="/api/projects")
+app.include_router(investigation_router, prefix="/api/projects")
 app.include_router(project_papers_router, prefix="/api/projects/papers")
 app.include_router(project_conversations_router, prefix="/api/projects/conversations")
 app.include_router(projects_invitation_router, prefix="/api/projects/invitations")

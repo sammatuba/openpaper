@@ -91,7 +91,7 @@ async def get_paper_ids(
             "authors": paper.authors,
             "institutions": paper.institutions,
             "status": paper.status,
-            "preview_url": paper.preview_url,
+            "preview_url": s3_service.get_preview_url(paper.preview_url),
             "size_in_kb": paper.size_in_kb,
             "publish_date": (str(paper.publish_date) if paper.publish_date else None),
             "file_url": file_urls.get(str(paper.id)),
@@ -130,7 +130,7 @@ async def get_active_paper_ids(
             "authors": paper.authors,
             "institutions": paper.institutions,
             "status": paper.status,
-            "preview_url": paper.preview_url,
+            "preview_url": s3_service.get_preview_url(paper.preview_url),
             "size_in_kb": paper.size_in_kb,
             "publish_date": (str(paper.publish_date) if paper.publish_date else None),
         }
@@ -400,7 +400,7 @@ async def get_relevant_papers(
                     "authors": paper.authors,
                     "institutions": paper.institutions,
                     "status": paper.status,
-                    "preview_url": paper.preview_url,
+                    "preview_url": s3_service.get_preview_url(paper.preview_url),
                     "size_in_kb": paper.size_in_kb,
                 }
                 for paper in papers
@@ -554,6 +554,7 @@ async def get_pdf(
         # Deleted while this request was loading it, e.g. by its upload failing.
         return JSONResponse(status_code=404, content={"message": "Document not found"})
     paper_data["file_url"] = signed_url
+    paper_data["preview_url"] = s3_service.get_preview_url(paper.preview_url)
     paper_data["summary_citations"] = [  # type: ignore
         ResponseCitation.model_validate(citation).model_dump()
         for citation in paper.summary_citations or []
@@ -697,6 +698,7 @@ async def get_shared_pdf(
     highlights = highlight_crud.get_public_highlights_data_by_paper_id(db, share_id=id)
 
     paper_data["file_url"] = signed_url
+    paper_data["preview_url"] = s3_service.get_preview_url(paper.preview_url)
     paper_data["summary_citations"] = [  # type: ignore
         ResponseCitation.model_validate(citation).model_dump()
         for citation in paper.summary_citations or []

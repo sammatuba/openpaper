@@ -281,6 +281,7 @@ async def get_project_papers(
                             str(paper.publish_date) if paper.publish_date else None
                         ),
                         "file_url": file_urls.get(str(paper.id)),
+                        "preview_url": s3_service.get_preview_url(paper.preview_url),
                         "is_owner": paper.user_id == current_user.id,
                     }
                     for paper in papers

@@ -33,6 +33,10 @@ SUITES = (
     "tests.test_google_oauth_state_claim",
     "tests.test_passage_backfill_postgres",
     "tests.test_project_research_brief",
+    "tests.test_paper_previews",
+    "tests.test_project_investigation",
+    "tests.test_project_investigation_postgres",
+    "tests.test_project_draft_requests",
 )
 
 RUNNER = """

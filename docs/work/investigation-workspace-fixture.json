@@ -1,0 +1,76 @@
+{
+  "fixture_version": 1,
+  "synthetic": true,
+  "notice": "All sources, rates and arguments are synthetic test data, not research evidence.",
+  "project": {
+    "id": "10000000-0000-4000-8000-000000000001",
+    "title": "Synthetic investigation of signaling and agreement"
+  },
+  "actors": {
+    "owner": "20000000-0000-4000-8000-000000000001",
+    "editor": "20000000-0000-4000-8000-000000000002",
+    "viewer": "20000000-0000-4000-8000-000000000003",
+    "outsider": "20000000-0000-4000-8000-000000000004"
+  },
+  "sources": [
+    {
+      "id": "30000000-0000-4000-8000-000000000001",
+      "title": "Fixture A: signaled condition",
+      "raw_content": "Fixture A — synthetic, not a publication.\nIn the signaled setup, agreement was 80%, versus 50% in the control.\nOnly one task family was tested.",
+      "selected_start_line": 2,
+      "selected_end_line": 2,
+      "quote": "In the signaled setup, agreement was 80%, versus 50% in the control.",
+      "replacement_raw_content": "Fixture A — synthetic, not a publication.\nIn the signaled setup, agreement was 60%, versus 50% in the control.\nOnly one task family was tested.",
+      "page_offset_map": null,
+      "expected_page_span": null
+    },
+    {
+      "id": "30000000-0000-4000-8000-000000000002",
+      "title": "Fixture B: unsignaled condition",
+      "raw_content": "Fixture B — synthetic, not a publication.\nIn the unsignaled setup, agreement was 51%, versus 50% in the control.\nThe task family differs from Fixture A.",
+      "selected_start_line": 2,
+      "selected_end_line": 2,
+      "quote": "In the unsignaled setup, agreement was 51%, versus 50% in the control.",
+      "page_offset_map": null,
+      "expected_page_span": null
+    }
+  ],
+  "claim": {
+    "id": "40000000-0000-4000-8000-000000000001",
+    "statement": "Signaling may increase agreement under the tested setup.",
+    "caveats": "The fixtures use different task families and do not establish a matched causal comparison."
+  },
+  "findings": [
+    {
+      "id": "50000000-0000-4000-8000-000000000001",
+      "paper_id": "30000000-0000-4000-8000-000000000001",
+      "label": "Higher agreement in the signaled fixture",
+      "relation_to_claim": "supports",
+      "setup": {"intervention": "Signaled condition", "task": "Task family A"}
+    },
+    {
+      "id": "50000000-0000-4000-8000-000000000002",
+      "paper_id": "30000000-0000-4000-8000-000000000002",
+      "label": "Near-control agreement in the unsignaled fixture",
+      "relation_to_claim": "qualifies",
+      "setup": {"intervention": "Unsignaled condition", "task": "Task family B"}
+    }
+  ],
+  "reconciliation": "Signaling is a candidate explanation, but task differences are a competing explanation.",
+  "discriminating_experiment": "Compare signaled and unsignaled conditions on the same tasks with matched controls. This experiment is proposed, not performed.",
+  "expected_paragraph": "The synthetic fixtures are consistent with signaling affecting agreement, but different task families prevent a causal conclusion. A matched comparison is needed.",
+  "assistant_output": "The synthetic fixtures differ in agreement [[finding:50000000-0000-4000-8000-000000000001]] [[finding:50000000-0000-4000-8000-000000000002]]. Task differences remain a competing explanation.",
+  "invalid_assistant_output": "An invented source establishes the answer [[finding:50000000-0000-4000-8000-000000000099]].",
+  "expected_after_source_a_change": {
+    "source_status": "source_changed",
+    "paragraph_review_needed": true,
+    "paragraph_text_unchanged": true,
+    "old_quote_retained_as_historical": true,
+    "automatic_reanchor": false
+  },
+  "expected_after_source_b_unlink": {
+    "source_status": "unavailable",
+    "source_quote_redacted_on_read_and_export": true,
+    "authored_paragraph_retained": true
+  }
+}

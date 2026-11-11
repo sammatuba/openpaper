@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { InvestigationWorkspace } from "@/components/project/InvestigationWorkspace";
 import { ArrowRight, BookOpen, ChevronRight, FlaskConical, MessagesSquare, Scale, Telescope } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -47,7 +48,7 @@ const RESEARCH_TASKS = [
     },
 ];
 
-export default function ProjectPage() {
+function ProjectPage() {
     const router = useRouter();
     const { projectId, project, isProjectLoading, projectError, papers, isPapersLoading,
         conversations, isConversationsLoading, refetchConversations, openAddPapers, openPaperIds } = useProjectWorkspace();
@@ -198,3 +199,5 @@ export default function ProjectPage() {
         </div>
     </div>;
 }
+
+export default function InvestigationCasePage(){return <div className="min-h-0 flex-1 overflow-y-auto"><InvestigationWorkspace view="case"/><ProjectPage/></div>;}

@@ -1,0 +1,17 @@
+{
+  "recorded_local_date": "2026-11-11",
+  "head": "09bf3bae02ed55a1537b0f4a71a01e536f17b0b3",
+  "branch": "master",
+  "purpose": "Pre-existing reviewed thumbnail repair; preserve during investigation-workspace implementation. Hash changes require inspection, never automatic reset.",
+  "files": {
+    "scripts/ci/run_isolated_postgres.py": "899d374fcd4c6b71ff306e92545a04ed10d879072ee9a26f32b502df11a8a954",
+    "server/app/api/paper_api.py": "a9ca60b578d7206d73bdb6aeb176a5db9b4ab51449b13b956385f63fdf800f42",
+    "server/app/api/projects/project_papers_api.py": "7d6e7c71140fa6c342b723b07a93dc6af916068153ee7c8bd4b479d0214731c3",
+    "server/app/api/search_api.py": "85b4cfc5e4657aa2e3379867050bdc4a0749b500c81c1612332da6b58435746a",
+    "server/app/database/crud/projects/project_paper_crud.py": "fb4e89e6dab6980bcbad0cbdbf086692ed314ba45f77a47ce93f6abfed390032",
+    "server/app/helpers/s3.py": "d674cd3f5c36e477a7101a7cbdc5fb6ac3ebb68f978b70ca019e28f7037645fd",
+    "server/tests/test_paper_previews.py": "0c6a3058af8cde63a34f5559a8a6a8e2a20a4baae25a66a308a096c6ab366493",
+    "docs/work/INTENT-paper-thumbnails.md": "c3228c0aa967051ad3c126bd2ef7e0ca290afa1b6731f8be0fcc1b89df786af3",
+    "docs/work/VERIFICATION-paper-thumbnails.md": "98693bf57f98213fd76a0ae0ea03764fcdc00a56761ced69a720b439b7895688"
+  }
+}

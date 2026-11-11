@@ -1813,3 +1813,29 @@ class DataTableRow(Base):
         Index("ix_data_table_rows_paper_id", "paper_id"),
         Index("ix_data_table_rows_data_table_id", "data_table_id"),
     )
+
+
+class ProjectInvestigation(Base):
+    __tablename__ = "project_investigations"
+    __table_args__ = (CheckConstraint("schema_version = 1 AND revision > 0", name="ck_investigation_version"),)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), primary_key=True)
+    schema_version = Column(Integer, nullable=False, default=1)
+    revision = Column(BigInteger, nullable=False)
+    document = Column(JSONB, nullable=False)
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class ProjectDraftRequest(Base):
+    __tablename__ = "project_draft_requests"
+    __table_args__ = (CheckConstraint("state IN ('pending','running','completed','failed','uncertain')",name="ck_draft_request_state"),)
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False, index=True)
+    requester_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    request_hash = Column(String(64), nullable=False)
+    snapshot = Column(JSONB, nullable=False)
+    base_revision = Column(BigInteger, nullable=False)
+    section_id = Column(UUID(as_uuid=True), nullable=False)
+    state = Column(String(16), nullable=False, default="pending")
+    error_code = Column(String(100), nullable=True)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)
+    message_id = Column(UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)

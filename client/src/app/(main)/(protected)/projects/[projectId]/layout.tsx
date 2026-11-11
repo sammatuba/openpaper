@@ -10,6 +10,7 @@ import { ProjectHeader } from "@/components/project/ProjectHeader";
 import { ProjectRail } from "@/components/project/ProjectRail";
 import { ReaderPanel } from "@/components/project/ReaderPanel";
 import { ArtifactsPanel } from "@/components/project/ArtifactsPanel";
+import { InvestigationProvider } from "@/components/project/InvestigationProvider";
 import { AddPapersSheet } from "@/components/project/AddPapersSheet";
 import PdfUploadTracker from "@/components/PdfUploadTracker";
 
@@ -53,7 +54,7 @@ export default function ProjectWorkspaceLayout({ children }: { children: ReactNo
 
     return (
         <ProjectWorkspaceProvider projectId={projectId}>
-            <WorkspaceShell>{children}</WorkspaceShell>
+            <InvestigationProvider key={projectId}><WorkspaceShell>{children}</WorkspaceShell></InvestigationProvider>
         </ProjectWorkspaceProvider>
     );
 }
