@@ -1,0 +1,47 @@
+# VERIFICATION: AI-native research platform — P00–P02 (2026-11-13)
+
+Intent: [INTENT-ai-native-research-platform.md](INTENT-ai-native-research-platform.md). Baseline: [BASELINE-ai-native-research-platform.md](BASELINE-ai-native-research-platform.md). Contract: [CONTRACT-ai-native-research-platform.md](CONTRACT-ai-native-research-platform.md). Fixture: [ai-native-research-fixture.json](ai-native-research-fixture.json). All work is local and uncommitted at execution time; no deployment, no live inference, no production change.
+
+## What was delivered
+
+- **P00** — baseline re-established: deployed/source divergence, seam inventory, boundary classifications (E2B has **no enforced network restriction**; webhook idempotency via row lock; three divergent owner/membership checks; single alembic head), test-command inventory. Required isolated PostgreSQL lane reproduced on the guarded cluster: **100 tests, zero skips, OK** (pre-change), matching the historical record.
+- **P01** — frozen contracts: schema/API proposals (typed entities/relations, review identities, provenance incl. external-AI, proposal/approval, metered admission), review count-policy, navigation model, **golden fixture** with stable IDs and exact §17.1 expected counts, compatibility/licensing verification (React Flow `@xyflow/react` 12.x MIT; Tiptap/ProseMirror core MIT — no packages installed), and a dependency-free fixture-backed loop prototype at `docs/prototypes/ai-native-loop.html`.
+- **P02** — versioned research identity and safe persistence:
+  - Additive migration `research_core_01` on `project_investigation_01` (single head maintained): 17 new tables — `research_projects` (storage generation + change sequence), `research_source_versions`, `research_entities`/`research_entity_revisions` (append-only history), `research_relations` (typed endpoints), `review_protocols`/`review_occurrences`/`review_reports`/`review_report_versions`/`review_studies`/`review_report_studies`/`review_candidates`/`review_decisions`/`review_mapping_events`, `research_proposals`, `metered_price_tables`/`metered_operations`.
+  - Services: shared authorization (`research_access`), entity/relation mutations with conditional revisions and receipts (`research_entities`), review identity + pure count derivation + adjudication rules (`research_review`), proposal/approval/apply core (`research_proposals`), metered admission/reservation/replay ledger (`metered`), deterministic v1 converter with in-transaction verification and atomic generation flip (`research_convert`).
+  - Existing v1 investigation path untouched; converted projects retain the v1 row read-only; unconverted projects refuse typed writes (one authoritative write path).
+
+## Executed checks (this session)
+
+| Check | Command (root) | Result |
+| --- | --- | --- |
+| Required isolated PG lane **with new suites** | `server/.venv/bin/python scripts/ci/run_isolated_postgres.py --run-existing` (cluster verified: owner/mode 700, `SHOW data_directory`, `SHOW listen_addresses` empty) | **Ran 120 tests, 0 skips, OK** (was 100; +20 research-core) |
+| Full server suite | runner env + `unittest discover` from `/tmp` | **504 tests, OK, 0 skips** |
+| Jobs | `cd jobs && TASK_BACKEND=cloudtasks uv run python -m unittest discover -s tests` | 21 tests OK |
+| Worker | `node --test deploy/cloudflare/worker.test.mjs` | 2 pass, 0 fail |
+| Research tools | `python3 -m unittest discover -s scripts/research -p 'test_*.py'` | 36 tests OK |
+| CI runner self-tests | `python3 -m unittest discover -s scripts/ci -p 'test_*.py'` | 5 tests OK |
+| Client | `tsc --noEmit`; `npm run build` (production) | both pass |
+| Diff hygiene | `git diff --check` | clean |
+
+## Acceptance mapping (strategy §17.3)
+
+| ID | Status | Evidence |
+| --- | --- | --- |
+| C01 | pass | Baseline record separates historical release evidence; work pointer values preserved |
+| C05 | pass (new code) | Integration tests: forged source version → 422; cross-project relation → 422; invalid endpoints → 422; missing rationale → 422; anchor quotation vs exact lines → 422/409 |
+| C08 | pass (new code) | Concurrent same-revision writes → [200, 412]; disjoint edits both 200; failed commit leaves revision + change sequence unchanged |
+| C10 | pass (new code) | Conversion: ids/payloads/quote hashes preserved; source version hash-bound or flagged unresolved; failed commit leaves zero rows and v1 revision 7 intact; second convert → 409 |
+| C17 | pass | Exact §17.1 counts reproduced twice: pure arithmetic over fixture (10 unit tests) and end-to-end service journey on real PostgreSQL (occurrence-map events, dual review, adjudication, v2 amendment reopening only D; v1 snapshot unchanged; merge with conflicting decisions requires adjudication) |
+| C26/C27 | pass (new code) | Proposal: replay returns original receipt; key reuse with different payload → 409; forged approval binding → 409; expired → 410; stale target → state `stale`; external-AI revision keeps `external_ai` origin + client identity + derivation; impersonation guards (external with native ids → 422; native without durable request → 422) |
+| C29 | pass (new code) | No price table → every metered path 409 `operation_not_priceable`; replay semantics (same/different payload); cap → 429; in-flight cap → 429; uncertain completion retains reservation and replays as uncertain (no silent re-dispatch); estimate vs settled stored separately |
+| C35 | pass | 120 required zero-skip; full server 504 OK; jobs/worker/research/runner suites OK; skips: none anywhere this session |
+
+Pending by design (not failures): C02–C04, C06, C09, C11–C16, C18–C25, C28, C30–C34, C36 attach to P03–P12. The pre-existing open gates (A25 authenticated production acceptance, live-AI acceptance) remain open and untouched. The first-value usability exercise (C03) needs an unfamiliar human user; the prototype exists for it.
+
+## Notes and deviations
+
+- `test_project_investigation.test_single_additive_migration_head` updated to expect the new single head `research_core_01` (guard's purpose: exactly one head).
+- SQLAlchemy note: without `relationship()`, unit-of-work insert order is alphabetical, so services flush parent rows before children explicitly; tests commit parents before children.
+- Review identity rule encoded: included full-text decision requires a retrieved selected version; "unclear" is a real state (fixture E).
+- No new API routes yet — P03 wires the shell; services are exercised directly by the required lane.

@@ -1,0 +1,116 @@
+"""Research-core unit tests: strict schemas, endpoint legality, provenance boundaries and
+the exact strategy-17.1 review-count arithmetic over the golden fixture (no database)."""
+import json
+import unittest
+from pathlib import Path
+from uuid import uuid4
+
+from app.schemas.research_core import (ALLOWED_ENDPOINTS, Anchor, ClaimPayload, FindingPayload, Provenance,
+                                       endpoint_allowed, validate_payload, validate_provenance)
+from app.services.research_review import compute_flow_counts
+
+FIXTURE = json.loads((Path(__file__).resolve().parents[2] / "docs/work/ai-native-research-fixture.json").read_text())
+
+
+class SchemaTests(unittest.TestCase):
+    def test_claim_bounds_and_forbidden_extras(self):
+        with self.assertRaises(Exception): ClaimPayload(statement="x" * 2001)
+        with self.assertRaises(Exception): ClaimPayload(statement="ok", unknown="field")
+        self.assertEqual(ClaimPayload(statement="ok").status, "provisional")
+
+    def test_finding_anchor_variants_and_ordering(self):
+        valid = {"label": "L", "anchor": {"source_version_id": str(uuid4()), "start_line": 2, "end_line": 2,
+                                          "quote": "q", "quote_sha256": "a" * 64}}
+        self.assertEqual(validate_payload("finding", valid)["anchor"]["start_line"], 2)
+        for mutate, key in ((lambda a: a.update(start_line=3, end_line=2), "reversed"),
+                            (lambda a: a.update(quote_sha256="short"), "digest"),
+                            (lambda a: a.update(quote=""), "empty quote")):
+            broken = json.loads(json.dumps(valid)); mutate(broken["anchor"])
+            with self.assertRaises(Exception): validate_payload("finding", broken)
+        with self.assertRaises(Exception): validate_payload("finding", {"label": "L", "anchor": {"kind": "bogus"}})
+        unbound = validate_payload("finding", {"label": "L", "anchor": {"origin_locator": "loc", "notes": "n"}})
+        self.assertIn("origin_locator", unbound["anchor"])
+
+    def test_payload_types_are_enforced(self):
+        with self.assertRaises(Exception): validate_payload("speculation", {"text": "x"})
+        with self.assertRaises(Exception): validate_payload("claim", {"statement": ""})
+        self.assertEqual(validate_payload("gap", {"description": "d"})["status"], "open")
+        self.assertEqual(validate_payload("question", {"text": "q"})["status"], "open")
+
+    def test_provenance_identity_boundaries(self):
+        validate_provenance("external_ai", {"client_identity": "mcp-client", "content_sha256": "a" * 64})
+        with self.assertRaises(ValueError):  # external without identity
+            validate_provenance("external_ai", {})
+        with self.assertRaises(ValueError):  # impersonation: external client plus native request ids
+            validate_provenance("external_ai", {"client_identity": "c", "content_sha256": "a" * 64,
+                                                "request_id": str(uuid4()), "message_id": str(uuid4())})
+        with self.assertRaises(ValueError):  # native without durable request identity
+            validate_provenance("assistant", {"request_id": str(uuid4())})
+        validate_provenance("assistant", {"request_id": str(uuid4()), "message_id": str(uuid4())})
+        with self.assertRaises(ValueError): validate_provenance("fabricated", {})
+
+    def test_endpoint_legality_table_is_frozen_and_enforced(self):
+        self.assertTrue(endpoint_allowed("supports", "finding", "claim"))
+        self.assertFalse(endpoint_allowed("supports", "claim", "finding"))
+        self.assertTrue(endpoint_allowed("derived_from", "claim", "claim"))
+        self.assertTrue(endpoint_allowed("derived_from", "finding", "claim"))
+        self.assertFalse(endpoint_allowed("cites", "finding", "claim"))
+        self.assertFalse(endpoint_allowed("assumes", "finding", "claim"))
+        for relation_type, endpoints in ALLOWED_ENDPOINTS.items():
+            for source_type, targets in endpoints.items():
+                for target_type in targets:
+                    self.assertTrue(endpoint_allowed(relation_type, source_type, target_type))
+
+
+class CountArithmeticTests(unittest.TestCase):
+    """C17: the frozen 17.1 fixture reproduces exact counts from records and events only."""
+
+    @staticmethod
+    def _inputs(include_v2):
+        review = FIXTURE["review"]
+        decisions = list(review["decisions"]) + (list(review["protocol_v2_decisions"]) if include_v2 else [])
+        links = [link for link in review["report_studies"] if link["study_id"]]
+        return review["occurrences"], review["mapping_events"], review["candidates"], decisions, links
+
+    def test_v1_exact_counts(self):
+        counts = compute_flow_counts(*self._inputs(include_v2=False), protocol_version=1)
+        expected = FIXTURE["review"]["expected_counts"]["v1"]
+        for key, value in expected.items():
+            if key in counts: self.assertEqual(counts[key], value, f"{key}: {counts[key]} != {value}")
+        self.assertEqual(counts["identified_occurrences"],
+                         counts["duplicate_removals"] + counts["retained_candidates"])
+        self.assertEqual(counts["screened"], counts["title_abstract_excluded"] + counts["reports_sought"])
+        self.assertEqual(counts["reports_sought"], counts["not_retrieved"] + counts["fulltext_assessed"])
+        self.assertEqual(counts["fulltext_assessed"], counts["fulltext_excluded"] + counts["included_reports"])
+        self.assertEqual(counts["included_reports"], 3)
+        self.assertEqual(counts["included_studies"], 2)  # C describes SB: not independent corroboration
+
+    def test_v2_amendment_reopens_only_affected_counts(self):
+        counts = compute_flow_counts(*self._inputs(include_v2=True), protocol_version=2)
+        expected = FIXTURE["review"]["expected_counts"]["v2"]
+        for key, value in expected.items():
+            if key in counts: self.assertEqual(counts[key], value, f"{key}: {counts[key]} != {value}")
+        self.assertEqual(counts["included_studies"], 3)
+        self.assertEqual(counts["fulltext_excluded"], 0)
+
+    def test_v1_snapshot_unchanged_after_amendment(self):
+        before = compute_flow_counts(*self._inputs(include_v2=False), protocol_version=1)
+        after = compute_flow_counts(*self._inputs(include_v2=True), protocol_version=1)
+        self.assertEqual(before, after)
+
+    def test_disagreement_without_adjudication_is_pending_not_counted(self):
+        review = FIXTURE["review"]
+        decisions = [d for d in review["decisions"] if d["id"] != "77000000-0000-4000-8000-000000000013"]  # drop C adjudication
+        counts = compute_flow_counts(review["occurrences"], review["mapping_events"], review["candidates"],
+                                     decisions, [l for l in review["report_studies"] if l["study_id"]], protocol_version=1)
+        self.assertEqual(counts["included_reports"], 2)
+        self.assertEqual(counts["included_studies"], 2)
+
+    def test_unresolved_study_linkage_is_not_corroboration(self):
+        review = FIXTURE["review"]
+        links = [dict(link) for link in review["report_studies"] if link["study_id"]]
+        for link in links:
+            if link["linkage_state"] != "confirmed": link["linkage_state"] = "unresolved"
+        counts = compute_flow_counts(review["occurrences"], review["mapping_events"], review["candidates"],
+                                     list(review["decisions"]), links, protocol_version=1)
+        self.assertEqual(counts["included_studies"], 2)

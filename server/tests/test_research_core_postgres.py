@@ -1,0 +1,573 @@
+"""Research-core integration on the guarded disposable cluster: count journey (C17),
+conversion atomicity (C10), forgery/isolation (C05/C07), concurrency (C08),
+proposal replay/approval boundaries (C26/C27) and the metered admission core (C29)."""
+import json
+import os
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import UUID, uuid4
+
+from app.database.models import (MeteredOperation, MeteredPriceTable, ProjectInvestigation, ResearchEntity,
+                                 ResearchEntityRevision, ResearchProject, ResearchRelation, ResearchSourceVersion,
+                                 ReviewCandidate, ReviewDecision, ReviewMappingEvent, ReviewOccurrence, ReviewProtocol,
+                                 ReviewReport, ReviewReportStudy, ReviewReportVersion, ReviewStudy, ResearchProposal)
+from app.services import metered, research_convert, research_entities, research_proposals, research_review
+
+FIXTURE = json.loads((Path(__file__).resolve().parents[2] / "docs/work/ai-native-research-fixture.json").read_text())
+
+
+@unittest.skipUnless(os.environ.get("OPENPAPER_ISOLATED_PG_TEST") == "1", "requires isolated PostgreSQL")
+class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        from tests.test_mcp_postgres import MCPPostgresTests
+        MCPPostgresTests.setUpClass.__func__(cls)
+        from sqlalchemy import event
+        @event.listens_for(cls.engine, "connect")
+        def utf8(connection, record): connection.set_client_encoding("UTF8")
+        cls.engine.dialect._json_serializer = lambda value: json.dumps(value, ensure_ascii=False)
+        cls.engine.dispose()
+        order = (ProjectInvestigation, ResearchProject, ResearchSourceVersion, ResearchEntity, ResearchEntityRevision,
+                 ResearchRelation, ReviewProtocol, ReviewReport, ReviewReportVersion, ReviewOccurrence, ReviewStudy,
+                 ReviewReportStudy, ReviewCandidate, ReviewDecision, ReviewMappingEvent, ResearchProposal,
+                 MeteredPriceTable, MeteredOperation)
+        with cls.engine.begin() as conn:
+            for model in order: model.__table__.create(conn)
+
+    @classmethod
+    def tearDownClass(cls):
+        from tests.test_mcp_postgres import MCPPostgresTests
+        MCPPostgresTests.tearDownClass.__func__(cls)
+
+    def seed(self):
+        owner, viewer, outsider, project = [uuid4() for _ in range(4)]
+        with self.engine.begin() as conn:
+            for uid in (owner, viewer, outsider):
+                conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": uid, "e": str(uid) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project (id,admin_id,title,description) VALUES (:p,:u,'Research core','Keep legacy description')"), {"p": project, "u": owner})
+            conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'viewer')"), {"id": uuid4(), "p": project, "u": viewer})
+        return SimpleNamespace(owner=owner, viewer=viewer, outsider=outsider, project=project)
+
+    def seed_paper(self, project, owner, title, raw):
+        from app.database.models import Paper, ProjectPaper
+        paper = uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO papers (id,user_id,file_url,status,title,raw_content) VALUES (:p,:u,'x','reading',:t,:text)"), {"p": paper, "u": owner, "t": title, "text": raw})
+            conn.execute(self.text("INSERT INTO project_paper (id,project_id,paper_id) VALUES (:id,:p,:paper)"), {"id": uuid4(), "p": project, "paper": paper})
+        return paper
+
+    # ---------- C17: full count journey through the services ----------
+
+    async def test_review_count_fixture_journey(self):
+        from fastapi import HTTPException
+        from app.database.models import ReviewMappingEvent, ReviewProtocol
+        review_data = FIXTURE["review"]
+        owner, reviewer_1, reviewer_2 = UUID(FIXTURE["actors"]["owner"]), UUID(FIXTURE["actors"]["reviewer_1"]), UUID(FIXTURE["actors"]["reviewer_2"])
+        viewer, project = uuid4(), UUID(FIXTURE["project"]["id"])  # stable fixture IDs run end to end
+        with self.engine.begin() as conn:
+            for uid in (owner, reviewer_1, reviewer_2, viewer):
+                conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": uid, "e": str(uid) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project (id,admin_id,title,description) VALUES (:p,:u,'Synthetic: monitoring-reliability tension','Keep legacy description')"), {"p": project, "u": owner})
+            conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor'), (:id2,:p,:u2,'editor'), (:id3,:p,:u3,'viewer')"),
+                         {"p": project, "u": reviewer_1, "u2": reviewer_2, "u3": viewer, "id": uuid4(), "id2": uuid4(), "id3": uuid4()})
+        with self.Session() as db:
+            review_protocol = ReviewProtocol(id=UUID("99000000-0000-4000-8000-000000000001"), project_id=project, version=1,
+                                             count_policy=review_data["protocol_v1"]["count_policy"],
+                                             criteria=review_data["protocol_v1"]["criteria"], status="active")
+            db.add(review_protocol); db.commit()
+            for report in review_data["reports"]:
+                db.add(ReviewReport(id=UUID(report["id"]), project_id=project, identity_state="confirmed"))
+                for version in report["versions"]:
+                    db.add(ReviewReportVersion(id=UUID(version["id"]), report_id=UUID(report["id"]), version_label=version["label"]))
+            for study in review_data["studies"]:
+                db.add(ReviewStudy(id=UUID(study["id"]), project_id=project, description=study["description"]))
+            db.commit()
+            for link in review_data["report_studies"]:
+                if link["study_id"]:
+                    research_review.link_study(db, project, owner, UUID(link["report_id"]), UUID(link["study_id"]),
+                                               link["rationale"], linkage_state=link["linkage_state"], commit=False)
+            db.commit()
+            for occurrence in review_data["occurrences"]:
+                db.add(ReviewOccurrence(id=UUID(occurrence["id"]), project_id=project, provider=occurrence["provider"],
+                                        search_ref=occurrence["search_execution"], external_hit_id=occurrence["external_hit_id"],
+                                        report_id=UUID(occurrence["report"]) if occurrence["report"] else None,
+                                        version_id=UUID(occurrence["version"]) if occurrence["version"] else None))
+            db.commit()
+            # Delivery retries never create occurrences: the same provider/search/hit cannot reinsert.
+            duplicate_hit = db.query(ReviewOccurrence).filter(ReviewOccurrence.external_hit_id == "hit-a-preprint").first()
+            db.add(ReviewOccurrence(id=duplicate_hit.id, project_id=project, provider=duplicate_hit.provider,
+                                    search_ref=duplicate_hit.search_ref, external_hit_id=duplicate_hit.external_hit_id))
+            with self.assertRaises(Exception): db.commit()
+            db.rollback()
+            for candidate in review_data["candidates"]:
+                db.add(ReviewCandidate(id=UUID(candidate["id"]), project_id=project, report_id=UUID(candidate["report_id"]),
+                                       selected_version_id=UUID(candidate["selected_version_id"]) if candidate["selected_version_id"] else None))
+            db.commit()
+            # Mapping events: exactly one retained representative per candidate; removals inspectable.
+            for event in review_data["mapping_events"]:
+                if event["kind"] != "occurrence_map": continue
+                research_review.map_occurrences(db, project, owner, UUID(event["payload"]["candidate"]),
+                                                UUID(event["payload"]["retained"]),
+                                                [UUID(i) for i in event["payload"]["removed"]], commit=False)
+            db.commit()
+            for decision in review_data["decisions"]:
+                research_review.record_decision(db, project, UUID(decision["actor"]), UUID(decision["candidate_id"]),
+                                                decision["stage"], decision["protocol_version"], decision["decision"],
+                                                role=decision.get("role", "primary"), reason=decision["reason"], commit=False)
+            db.commit()
+            counts_v1 = research_review.flow_counts(db, project, owner, 1)
+            expected_v1 = {key: value for key, value in review_data["expected_counts"]["v1"].items() if key in counts_v1}
+            self.assertEqual(counts_v1, expected_v1, counts_v1)
+            # Adjudication is only recorded on a genuine disagreement.
+            with self.assertRaises(HTTPException) as unanimous:
+                research_review.record_decision(db, project, owner, UUID("66000000-0000-4000-8000-000000000001"),
+                                                "fulltext", 1, "included", role="adjudication")
+            self.assertEqual(unanimous.exception.status_code, 409)
+            # Protocol amendment reopens D only; upstream sets stay unchanged.
+            research_review.amend_protocol(db, project, owner, new_version=2, commit=False)
+            db.commit()
+            for decision in review_data["protocol_v2_decisions"]:
+                research_review.record_decision(db, project, UUID(decision["actor"]), UUID(decision["candidate_id"]),
+                                                decision["stage"], decision["protocol_version"], decision["decision"],
+                                                reason=decision["reason"], commit=False)
+            db.commit()
+            counts_v2 = research_review.flow_counts(db, project, owner, 2)
+            expected_v2 = {key: value for key, value in review_data["expected_counts"]["v2"].items() if key in counts_v2}
+            self.assertEqual(counts_v2, expected_v2, counts_v2)
+            self.assertEqual(research_review.flow_counts(db, project, owner, 1), counts_v1)
+            self.assertEqual(research_review.flow_counts(db, project, viewer, 1), counts_v1)
+            with self.assertRaises(HTTPException) as denied:
+                research_review.record_decision(db, project, viewer, UUID("66000000-0000-4000-8000-000000000001"),
+                                                "fulltext", 1, "included")
+            self.assertEqual(denied.exception.status_code, 403)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 6)
+        outsider = uuid4()
+        with self.Session() as db:
+            with self.assertRaises(HTTPException) as hidden:
+                research_review.flow_counts(db, outsider, outsider, 1)
+            self.assertEqual(hidden.exception.status_code, 404)
+
+    async def test_merge_with_conflicting_decisions_requires_adjudication(self):
+        s = self.seed()
+        with self.Session() as db:
+            source, target = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([source, target]); db.commit()  # parents before children: UOW has no relationship() ordering
+            version_x, version_y = ReviewReportVersion(id=uuid4(), report_id=source.id), ReviewReportVersion(id=uuid4(), report_id=target.id)
+            db.add_all([version_x, version_y]); db.commit()
+            candidate_x, candidate_y = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_x, project_id=s.project, report_id=source.id, selected_version_id=version_x.id),
+                        ReviewCandidate(id=candidate_y, project_id=s.project, report_id=target.id, selected_version_id=version_y.id)])
+            db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate_x, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_y, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_x, "fulltext", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_y, "fulltext", 1, "excluded")
+            result = research_review.merge_reports(db, s.project, s.owner, source.id, target.id, "Fixture: same report re-derived")
+            self.assertTrue(result["requires_adjudication"])
+            self.assertEqual(result["conflicting_decisions"][0]["source"], "included")
+            self.assertEqual(result["conflicting_decisions"][0]["target"], "excluded")
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["included_reports"], counts["fulltext_excluded"]), (1, 1))
+
+    async def test_independent_review_privacy(self):
+        s = self.seed()
+        reviewer_1, reviewer_2 = uuid4(), uuid4()
+        with self.engine.begin() as conn:
+            for uid in (reviewer_1, reviewer_2):
+                conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": uid, "e": str(uid) + "@test.invalid"})
+                conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": uid})
+        with self.Session() as db:
+            report = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(report); db.commit()  # parent before child: UOW has no relationship() ordering
+            version = ReviewReportVersion(id=uuid4(), report_id=report.id)
+            db.add(version); db.commit()
+            candidate = ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report.id, selected_version_id=version.id)
+            db.add(candidate); db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate.id, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, reviewer_1, candidate.id, "fulltext", 1, "included")
+            visible_to_2 = research_review.visible_decisions(db, s.project, reviewer_2, 1)
+            self.assertEqual([d for d in visible_to_2 if d.actor_id == reviewer_1], [])  # hidden until both submit
+            research_review.record_decision(db, s.project, reviewer_2, candidate.id, "fulltext", 1, "excluded")
+            visible = research_review.visible_decisions(db, s.project, reviewer_2, 1)
+            self.assertEqual(len([d for d in visible if d.candidate_id == candidate.id]), 2)
+            # Disagreement exists, so the named adjudicator may now decide.
+            research_review.record_decision(db, s.project, s.owner, candidate.id, "fulltext", 1, "included", role="adjudication")
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual(counts["included_reports"], 1)
+
+    # ---------- C10: conversion ----------
+
+    def _v1_document(self, paper_id, quote="Exact fixture result."):
+        from app.services.investigation import text_hash
+        claim_id, finding_id, relation_id = str(uuid4()), str(uuid4()), str(uuid4())
+        section_id, block_id = str(uuid4()), str(uuid4())
+        document = {
+            "format": "openpaper/investigation", "version": 1,
+            "case": {"question": "Fixture question"},
+            "claims": [{"id": claim_id, "statement": "Fixture claim statement.", "reasoning": "R", "caveats": "C"}],
+            "findings": [{"id": finding_id, "label": "Fixture finding", "observed_result": "O",
+                          "author_interpretation": "A", "our_interpretation": "U", "limitations": "L",
+                          "source": {"kind": "anchored", "paper_id": str(paper_id), "start_line": 1, "end_line": 1,
+                                     "quote": quote, "source_sha256": text_hash("Title\n" + quote + "\nLimitations."),
+                                     "quote_sha256": text_hash(quote)}}],
+            "relations": [{"id": relation_id, "claim_id": claim_id, "finding_id": finding_id,
+                           "relation": "supports", "rationale": "Fixture rationale."}],
+            "manuscript": {"title": "Fixture manuscript", "sections": [{"id": section_id, "title": "S", "blocks": [
+                {"id": block_id, "kind": "paragraph", "text": "Human fixture prose.", "claim_ids": [claim_id],
+                 "finding_ids": [finding_id],
+                 "provenance": {"kind": "assistant", "request_id": str(uuid4()), "message_id": str(uuid4())},
+                 "dependency_pins": {}}]}]},
+        }
+        return document, {"claim_id": claim_id, "finding_id": finding_id, "relation_id": relation_id, "block_id": block_id}
+
+    def _write_v1_row(self, project, document):
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO project_investigations (project_id,schema_version,revision,document) VALUES (:p,1,7,:doc)"),
+                         {"p": project, "doc": json.dumps(document)})
+
+    async def test_conversion_preserves_identity_and_is_atomic(self):
+        from unittest.mock import patch
+        from fastapi import HTTPException
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture A", "Title\nExact fixture result.\nLimitations.")
+        document, ids = self._v1_document(paper)
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            # Unconverted projects refuse typed writes: one authoritative write path.
+            with self.assertRaises(HTTPException) as refusal:
+                research_entities.create_entity(db, s.project, s.owner, "claim", {"statement": "Premature"})
+            self.assertEqual(refusal.exception.status_code, 409)
+        with self.Session() as db, patch.object(db, "commit", side_effect=RuntimeError("Synthetic conversion failure")):
+            with self.assertRaises(RuntimeError):
+                research_convert.convert_project(db, s.project, s.owner)
+        with self.engine.begin() as conn:
+            for table in ("research_entities", "research_relations", "research_source_versions", "research_projects"):
+                count = conn.execute(self.text(f"SELECT count(*) FROM {table} WHERE project_id = :p"), {"p": s.project}).scalar_one()
+                self.assertEqual(count, 0, f"{table} must be untouched after the aborted conversion")
+            revision_count = conn.execute(self.text("SELECT count(*) FROM research_entity_revisions WHERE entity_id IN (SELECT id FROM research_entities WHERE project_id = :p)"), {"p": s.project}).scalar_one()
+            self.assertEqual(revision_count, 0, "revision rows must be untouched after the aborted conversion")
+            row = conn.execute(self.text("SELECT revision, document FROM project_investigations WHERE project_id = :p"), {"p": s.project}).one()
+            self.assertEqual(row.revision, 7)
+            self.assertEqual(row.document["claims"][0]["statement"], "Fixture claim statement.")
+        with self.Session() as db:
+            manifest = research_convert.convert_project(db, s.project, s.owner)
+            self.assertEqual(manifest["counts"], {"claims": 1, "findings": 1, "relations": 1, "sections": 1, "source_versions": 1})
+            self.assertEqual(manifest["unresolved_sources"], [])
+            self.assertEqual(manifest["v1_revision"], 7)
+            self.assertEqual(manifest["manuscript_dependencies"][0]["provenance_origin"], "assistant")
+            claim = db.get(ResearchEntity, UUID(ids["claim_id"]))
+            finding = db.get(ResearchEntity, UUID(ids["finding_id"]))
+            self.assertEqual(claim.payload["statement"], "Fixture claim statement.")
+            self.assertEqual(finding.payload["label"], "Fixture finding")
+            version = db.query(ResearchSourceVersion).filter(ResearchSourceVersion.project_id == s.project).one()
+            self.assertEqual(finding.payload["anchor"]["source_version_id"], str(version.id))
+            self.assertEqual(finding.payload["anchor"]["quote"], "Exact fixture result.")
+            self.assertEqual(version.text_sha256, document["findings"][0]["source"]["source_sha256"])
+            self.assertEqual(version.source_metadata["title"], "Fixture A")
+            history = db.query(ResearchEntityRevision).filter(ResearchEntityRevision.entity_id == claim.id).one()
+            self.assertEqual(history.origin, "imported")
+            self.assertIn("v1 storage conversion", history.provenance["origin_label"])
+            relation = db.query(ResearchRelation).filter(ResearchRelation.id == UUID(ids["relation_id"])).one()
+            self.assertEqual((relation.relation_type, str(relation.source_id), str(relation.target_id)),
+                             ("supports", ids["finding_id"], ids["claim_id"]))
+            root = db.get(ResearchProject, s.project)
+            self.assertEqual((root.storage_generation, root.change_sequence), ("v2", 4))
+            v1 = db.get(ProjectInvestigation, s.project)
+            self.assertEqual(v1.revision, 7)  # v1 snapshot retained read-only
+            self.assertEqual(v1.document["manuscript"]["sections"][0]["blocks"][0]["provenance"]["kind"], "assistant")
+            with self.assertRaises(HTTPException) as repeat:
+                research_convert.convert_project(db, s.project, s.owner)
+            self.assertEqual(repeat.exception.status_code, 409)
+
+    async def test_conversion_refuses_hash_mismatch_without_binding(self):
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture B", "Title\nOriginal wording.\nLimitations.")
+        document, ids = self._v1_document(paper, quote="Original wording.")
+        with self.engine.begin() as conn:
+            conn.execute(self.text("UPDATE papers SET raw_content = :raw WHERE id = :p"), {"raw": "Title\nChanged wording.\nLimitations.", "p": paper})
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            manifest = research_convert.convert_project(db, s.project, s.owner)
+            self.assertEqual(manifest["unresolved_sources"][0]["reason"], "source_hash_mismatch")
+            self.assertEqual(db.query(ResearchSourceVersion).filter(ResearchSourceVersion.project_id == s.project).count(), 0)
+            finding = db.get(ResearchEntity, UUID(ids["finding_id"]))
+            self.assertNotIn("source_version_id", finding.payload["anchor"])
+            self.assertIn("requires review", finding.payload["anchor"]["notes"])
+
+    # ---------- C05/C07: forgery, endpoint legality, isolation ----------
+
+    async def test_typed_writes_forgery_and_role_isolation(self):
+        from fastapi import HTTPException
+        s = self.seed()
+        other = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture C", "Title\nExact line two.\nLimitations.")
+        document, ids = self._v1_document(paper)
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            claim_id = UUID(ids["claim_id"])
+            with self.assertRaises(HTTPException) as forged:
+                research_entities.create_entity(db, s.project, s.owner, "finding",
+                                                {"label": "Forged anchor", "anchor": {"source_version_id": str(uuid4()),
+                                                                                      "start_line": 1, "end_line": 1,
+                                                                                      "quote": "x", "quote_sha256": "a" * 64}})
+            self.assertEqual(forged.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as bogus_type:
+                research_entities.create_entity(db, s.project, s.owner, "speculation", {"text": "x"})
+            self.assertEqual(bogus_type.exception.status_code, 422)
+            assumption = research_entities.create_entity(db, s.project, s.owner, "assumption", {"text": "Fixture assumption"})
+            with self.assertRaises(HTTPException) as cross:
+                research_entities.create_relation(db, s.project, s.owner, "supports", uuid4(), claim_id, "Rationale text.")
+            self.assertEqual(cross.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as illegal:
+                research_entities.create_relation(db, s.project, s.owner, "supports", claim_id, claim_id, "Rationale text.")
+            self.assertEqual(illegal.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as no_rationale:
+                research_entities.create_relation(db, s.project, s.owner, "assumes", claim_id, UUID(assumption["entity_id"]), "   ")
+            self.assertEqual(no_rationale.exception.status_code, 422)
+            relation = research_entities.create_relation(db, s.project, s.owner, "assumes", claim_id, UUID(assumption["entity_id"]),
+                                                         "Fixture assumption rationale.")
+            self.assertIn("relation_id", relation)
+            loaded = research_entities.load_entity(db, s.project, s.viewer, claim_id)
+            self.assertEqual(loaded["entity"]["type"], "claim")
+            with self.assertRaises(HTTPException) as viewer_write:
+                research_entities.revise_entity(db, s.project, s.viewer, claim_id, 1, {"statement": "Viewer edit"})
+            self.assertEqual(viewer_write.exception.status_code, 403)
+            with self.assertRaises(HTTPException) as outsider_read:
+                research_entities.load_entity(db, s.project, s.outsider, claim_id)
+            self.assertEqual(outsider_read.exception.status_code, 404)
+            first = research_entities.revise_entity(db, s.project, s.owner, claim_id, 1, {"statement": "First edit."})
+            self.assertEqual(first["revision"], 2)
+            with self.assertRaises(HTTPException) as conflict:
+                research_entities.revise_entity(db, s.project, s.owner, claim_id, 1, {"statement": "Losing edit"})
+            self.assertEqual(conflict.exception.status_code, 412)
+        with self.Session() as db:
+            research_convert.convert_project(db, other.project, other.owner)
+            with self.assertRaises(HTTPException) as foreign_relation:
+                research_entities.create_relation(db, other.project, other.owner, "assumes",
+                                                  UUID(ids["claim_id"]), UUID(assumption["entity_id"]), "Cross-project rationale.")
+            self.assertEqual(foreign_relation.exception.status_code, 422)
+
+    # ---------- C08: concurrency ----------
+
+    async def test_concurrent_revisions_single_winner_and_atomic_rollback(self):
+        from unittest.mock import patch
+        from fastapi import HTTPException
+        s = self.seed()
+        document, ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+        def revise(_):
+            with self.Session() as db:
+                try:
+                    research_entities.revise_entity(db, s.project, s.owner, UUID(ids["claim_id"]), 1,
+                                                    {"statement": f"Edit at {uuid4()}"})
+                    return 200
+                except HTTPException as error: return error.status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(revise, range(2)))
+        self.assertEqual(sorted(outcomes), [200, 412])
+        def disjoint(index):
+            with self.Session() as db:
+                research_entities.create_entity(db, s.project, s.owner, "gap", {"description": f"Parallel gap {index}"})
+            return 200
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(list(pool.map(disjoint, range(2))), [200, 200])
+        with self.Session() as db:
+            entity = db.get(ResearchEntity, UUID(ids["claim_id"]))
+            before = (entity.revision, entity.payload["statement"])
+            sequence_before = db.get(ResearchProject, s.project).change_sequence
+            with patch.object(db, "commit", side_effect=RuntimeError("Synthetic failure")):
+                with self.assertRaises(RuntimeError):
+                    research_entities.revise_entity(db, s.project, s.owner, UUID(ids["claim_id"]), entity.revision,
+                                                    {"statement": "Must not persist"})
+            db.rollback()
+            entity = db.get(ResearchEntity, UUID(ids["claim_id"]))
+            self.assertEqual((entity.revision, entity.payload["statement"]), before)
+            self.assertEqual(db.get(ResearchProject, s.project).change_sequence, sequence_before)
+
+    # ---------- C26/C27: proposals ----------
+
+    async def test_proposal_apply_replay_and_forgery(self):
+        from fastapi import HTTPException
+        s = self.seed()
+        document, ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            claim_id = UUID(ids["claim_id"])
+            with self.assertRaises(HTTPException) as missing_identity:
+                research_proposals.create_proposal(db, s.project, s.owner, "external_ai",
+                                                   {"edits": [{"entity_id": str(claim_id), "payload": {"statement": "External edit"}}]},
+                                                   {str(claim_id): 1})
+            self.assertEqual(missing_identity.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as impersonation:
+                research_proposals.create_proposal(db, s.project, s.owner, "external_ai",
+                                                   {"client_identity": "fixture-chatgpt-client", "content_sha256": "a" * 64,
+                                                    "request_id": str(uuid4()),
+                                                    "edits": [{"entity_id": str(claim_id), "payload": {"statement": "External edit"}}]},
+                                                   {str(claim_id): 1})
+            self.assertEqual(impersonation.exception.status_code, 422)
+            payload = {"client_identity": "fixture-chatgpt-client", "content_sha256": "b" * 64,
+                       "declared_model": "fixture-model-label",
+                       "edits": [{"entity_id": str(claim_id), "payload": {"statement": "External paragraph from the ChatGPT fixture."}}]}
+            proposal, created = research_proposals.create_proposal(db, s.project, s.owner, "external_ai", payload,
+                                                                   {str(claim_id): 1}, idempotency_key="ext-1")
+            self.assertFalse(created["replayed"])
+            proposal_2, replay = research_proposals.create_proposal(db, s.project, s.owner, "external_ai", payload,
+                                                                    {str(claim_id): 1}, idempotency_key="ext-1")
+            self.assertTrue(replay["replayed"]); self.assertEqual(proposal_2.id, proposal.id)
+            with self.assertRaises(HTTPException) as key_conflict:
+                research_proposals.create_proposal(db, s.project, s.owner, "external_ai",
+                                                   {**payload, "edits": [{"entity_id": str(claim_id), "payload": {"statement": "Different"}}]},
+                                                   {str(claim_id): 1}, idempotency_key="ext-1")
+            self.assertEqual(key_conflict.exception.status_code, 409)
+            with self.assertRaises(HTTPException) as unapproved:
+                research_proposals.apply_proposal(db, s.project, s.owner, proposal.id)
+            self.assertEqual(unapproved.exception.status_code, 409)
+            research_proposals.approve_proposal(db, s.project, s.owner, proposal.id, expires_in_seconds=3600)
+            result = research_proposals.apply_proposal(db, s.project, s.owner, proposal.id)
+            self.assertFalse(result["replayed"])
+            self.assertEqual(result["receipt"]["approver_id"], str(s.owner))
+            entity = db.get(ResearchEntity, claim_id)
+            self.assertEqual(entity.revision, 2)
+            revision = db.query(ResearchEntityRevision).filter_by(entity_id=claim_id, revision=2).one()
+            self.assertEqual(revision.origin, "external_ai")
+            self.assertEqual(revision.provenance["client_identity"], "fixture-chatgpt-client")
+            self.assertEqual(revision.derived_from, {"entity_id": str(claim_id), "revision": 1})
+            replay_apply = research_proposals.apply_proposal(db, s.project, s.owner, proposal.id)
+            self.assertTrue(replay_apply["replayed"])
+            self.assertEqual(replay_apply["receipt"], result["receipt"])
+            self.assertEqual(db.get(ResearchEntity, claim_id).revision, 2)  # no double apply
+            # Human proposal approved against revision 2, then a concurrent edit makes it stale.
+            human, _ = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                          {"edits": [{"entity_id": str(claim_id), "payload": {"statement": "Human proposal"}}]},
+                                                          {str(claim_id): 2}, idempotency_key="human-1")
+            research_proposals.approve_proposal(db, s.project, s.owner, human.id)
+            research_entities.revise_entity(db, s.project, s.owner, claim_id, 2, {"statement": "Concurrent human edit"})
+            with self.assertRaises(HTTPException) as stale_apply:
+                research_proposals.apply_proposal(db, s.project, s.owner, human.id)
+            self.assertEqual(stale_apply.exception.status_code, 409)
+            self.assertEqual(db.get(ResearchProposal, human.id).state, "stale")
+            # Forged approval (wrong payload binding) is rejected at apply time.
+            forged, _ = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                           {"edits": [{"entity_id": str(claim_id), "payload": {"statement": "Forged approval target"}}]},
+                                                           {str(claim_id): 3}, idempotency_key="forged-1")
+            forged_row = db.get(ResearchProposal, forged.id)
+            forged_row.approval = {"approver_id": str(s.owner), "approved_at": "2026-01-01T00:00:00+00:00",
+                                   "expires_at": "2099-01-01T00:00:00+00:00", "bound_payload_sha256": "c" * 64,
+                                   "bound_targets": forged_row.targets}
+            forged_row.state = "approved"; db.commit()
+            with self.assertRaises(HTTPException) as forged_apply:
+                research_proposals.apply_proposal(db, s.project, s.owner, forged.id)
+            self.assertEqual(forged_apply.exception.status_code, 409)
+            # Expired approvals return 410 and mark the proposal expired.
+            expired, _ = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                            {"edits": [{"entity_id": str(claim_id), "payload": {"statement": "Expired target"}}]},
+                                                            {str(claim_id): 3}, idempotency_key="expired-1")
+            research_proposals.approve_proposal(db, s.project, s.owner, expired.id, expires_in_seconds=-1)
+            with self.assertRaises(HTTPException) as expired_apply:
+                research_proposals.apply_proposal(db, s.project, s.owner, expired.id)
+            self.assertEqual(expired_apply.exception.status_code, 410)
+            self.assertEqual(db.get(ResearchProposal, expired.id).state, "expired")
+
+    # ---------- C29: metered admission core ----------
+
+    async def test_metered_admission_replay_and_uncertain_completion(self):
+        from fastapi import HTTPException
+        s = self.seed()
+        with self.Session() as db:
+            # No price table: every metered path is refused while deterministic work continues.
+            with self.assertRaises(HTTPException) as unpriced:
+                metered.reserve(db, s.project, s.owner, "synthesis_task", {"units": {"input_tokens": 100}}, {})
+            self.assertEqual(unpriced.exception.status_code, 409)
+            self.assertEqual(unpriced.exception.detail, "operation_not_priceable")
+            metered.register_price_table(db, {"synthesis_task": {"unit_prices": {"input_tokens": 0.00001, "output_tokens": 0.00003},
+                                                                 "max_cost": 0.5}}, version=1)
+            with self.assertRaises(HTTPException) as still_unpriced:
+                metered.reserve(db, s.project, s.owner, "unregistered_operation", {"units": {"calls": 1}}, {})
+            self.assertEqual(still_unpriced.exception.status_code, 409)
+            estimate = {"units": {"input_tokens": 10000, "output_tokens": 2000}}
+            operation, created = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate,
+                                                 {"question": "fixture"}, idempotency_key="m-1")
+            self.assertFalse(created["replayed"])
+            self.assertEqual(operation.state, "reserved")
+            self.assertAlmostEqual(created["estimated_cost"], 10000 * 0.00001 + 2000 * 0.00003)
+            duplicate, replay = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate,
+                                                {"question": "fixture"}, idempotency_key="m-1")
+            self.assertTrue(replay["replayed"]); self.assertEqual(duplicate.id, operation.id)
+            with self.assertRaises(HTTPException) as payload_conflict:
+                metered.reserve(db, s.project, s.owner, "synthesis_task", estimate,
+                                {"question": "different"}, idempotency_key="m-1")
+            self.assertEqual(payload_conflict.exception.status_code, 409)
+            with self.assertRaises(HTTPException) as over_cap:
+                metered.reserve(db, s.project, s.owner, "synthesis_task",
+                                {"units": {"input_tokens": 90000000, "output_tokens": 0}}, {}, idempotency_key="m-2")
+            self.assertEqual(over_cap.exception.status_code, 429)
+            metered.admit(db, s.project, s.owner, operation.id)
+            metered.start(db, s.project, s.owner, operation.id)
+            settled = metered.settle(db, s.project, s.owner, operation.id,
+                                     {"units": {"input_tokens": 10432, "output_tokens": 1717}})
+            self.assertEqual(settled.state, "completed")
+            self.assertEqual(settled.usage["units"]["input_tokens"], 10432)  # estimate retained separately
+            self.assertEqual(settled.estimate, estimate)
+            uncertain, _ = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate, {"question": "u"}, idempotency_key="m-3")
+            metered.admit(db, s.project, s.owner, uncertain.id)
+            metered.start(db, s.project, s.owner, uncertain.id)
+            metered.fail(db, s.project, s.owner, uncertain.id, uncertain=True, error_code="provider_timeout")
+            self.assertEqual(uncertain.state, "uncertain")
+            self.assertEqual(uncertain.error_code, "provider_timeout")
+            with self.assertRaises(HTTPException) as settle_uncertain:
+                metered.settle(db, s.project, s.owner, uncertain.id, {"units": {}})
+            self.assertEqual(settle_uncertain.exception.status_code, 409)
+            # Replaying an uncertain key returns the uncertain record: no silent re-dispatch.
+            replayed_uncertain, replay = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate,
+                                                         {"question": "u"}, idempotency_key="m-3")
+            self.assertTrue(replay["replayed"]); self.assertEqual(replayed_uncertain.state, "uncertain")
+            with self.assertRaises(HTTPException) as state_conflict:
+                metered.cancel(db, s.project, s.owner, operation.id)
+            self.assertEqual(state_conflict.exception.status_code, 409)
+            fresh, _ = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate, {"question": "c"}, idempotency_key="m-4")
+            metered.cancel(db, s.project, s.owner, fresh.id)
+            self.assertEqual(fresh.state, "cancelled")
+        with self.Session() as db:
+            metered.register_price_table(db, {"bounded_task": {"unit_prices": {"calls": 1.0}, "max_cost": 10.0}}, version=2)
+            metered.reserve(db, s.project, s.owner, "bounded_task", {"units": {"calls": 1}}, {}, idempotency_key="cap-1",
+                            limits={"max_inflight": 1})
+            with self.assertRaises(HTTPException) as cap:
+                metered.reserve(db, s.project, s.owner, "bounded_task", {"units": {"calls": 1}}, {}, idempotency_key="cap-2",
+                                limits={"max_inflight": 1})
+            self.assertEqual(cap.exception.status_code, 429)
+            self.assertEqual(db.query(MeteredOperation).filter(MeteredOperation.project_id == s.project).count(), 4)
+        with self.Session() as db:
+            with self.assertRaises(HTTPException) as outsider:
+                metered.reserve(db, s.project, s.outsider, "synthesis_task", {"units": {"input_tokens": 1}}, {}, idempotency_key="x")
+            self.assertEqual(outsider.exception.status_code, 404)
+
+    # ---------- migration discipline ----------
+
+    async def test_additive_migration_upgrade_downgrade_upgrade(self):
+        import importlib.util
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+        s = self.seed()
+        spec = importlib.util.spec_from_file_location("research_core_migration",
+                                                      Path(__file__).resolve().parents[1] / "migrations/versions/2026_11_13_0100_research_core.py")
+        migration = importlib.util.module_from_spec(spec); spec.loader.exec_module(migration)
+        names = ["research_projects", "research_source_versions", "research_entities", "research_entity_revisions",
+                 "research_relations", "review_protocols", "review_reports", "review_report_versions",
+                 "review_occurrences", "review_studies", "review_report_studies", "review_candidates",
+                 "review_decisions", "review_mapping_events", "research_proposals", "metered_price_tables",
+                 "metered_operations"]
+        with self.engine.begin() as conn:
+            for name in names: conn.execute(self.text(f"DROP TABLE IF EXISTS {name} CASCADE"))
+            with Operations.context(MigrationContext.configure(conn)):
+                migration.upgrade(); migration.downgrade(); migration.upgrade()
+            self.assertEqual(conn.execute(self.text("SELECT description FROM project WHERE id = :p"), {"p": s.project}).scalar_one(),
+                             "Keep legacy description")
+            self.assertEqual(conn.execute(self.text("SELECT count(*) FROM information_schema.tables WHERE table_schema = :s AND table_name = ANY(:names)"),
+                                          {"s": self.schema, "names": names}).scalar_one(), len(names))
