@@ -4,6 +4,7 @@ proposal replay/approval boundaries (C26/C27) and the metered admission core (C2
 import json
 import os
 import unittest
+from fastapi import HTTPException
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -73,10 +74,12 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor'), (:id2,:p,:u2,'editor'), (:id3,:p,:u3,'viewer')"),
                          {"p": project, "u": reviewer_1, "u2": reviewer_2, "u3": viewer, "id": uuid4(), "id2": uuid4(), "id3": uuid4()})
         with self.Session() as db:
-            review_protocol = ReviewProtocol(id=UUID("99000000-0000-4000-8000-000000000001"), project_id=project, version=1,
-                                             count_policy=review_data["protocol_v1"]["count_policy"],
-                                             criteria=review_data["protocol_v1"]["criteria"], status="active")
-            db.add(review_protocol); db.commit()
+            research_review.create_protocol(db, project, owner, version=1,
+                                            count_policy=review_data["protocol_v1"]["count_policy"],
+                                            criteria=review_data["protocol_v1"]["criteria"],
+                                            screening_modes=review_data["protocol_v1"]["screening_modes"],
+                                            status="active", protocol_id=UUID("99000000-0000-4000-8000-000000000001"), commit=False)
+            db.commit()
             for report in review_data["reports"]:
                 db.add(ReviewReport(id=UUID(report["id"]), project_id=project, identity_state="confirmed"))
                 for version in report["versions"]:
@@ -153,6 +156,8 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
     async def test_merge_with_conflicting_decisions_requires_adjudication(self):
         s = self.seed()
         with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()  # solo stages: single decisions are final
             source, target = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
             db.add_all([source, target]); db.commit()  # parents before children: UOW has no relationship() ordering
             version_x, version_y = ReviewReportVersion(id=uuid4(), report_id=source.id), ReviewReportVersion(id=uuid4(), report_id=target.id)
@@ -165,12 +170,25 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             research_review.record_decision(db, s.project, s.owner, candidate_y, "title_abstract", 1, "included")
             research_review.record_decision(db, s.project, s.owner, candidate_x, "fulltext", 1, "included")
             research_review.record_decision(db, s.project, s.owner, candidate_y, "fulltext", 1, "excluded")
-            result = research_review.merge_reports(db, s.project, s.owner, source.id, target.id, "Fixture: same report re-derived")
+            result = research_review.merge_reports(db, s.project, s.owner, source.id, target.id, "Fixture: same report re-derived",
+                                                   protocol_version=1)
             self.assertTrue(result["requires_adjudication"])
             self.assertEqual(result["conflicting_decisions"][0]["source"], "included")
             self.assertEqual(result["conflicting_decisions"][0]["target"], "excluded")
+            # The conflict is unresolved: the merged candidate is pending, not silently included or excluded.
             counts = research_review.flow_counts(db, s.project, s.owner, 1)
-            self.assertEqual((counts["included_reports"], counts["fulltext_excluded"]), (1, 1))
+            self.assertEqual((counts["included_reports"], counts["fulltext_excluded"], counts["pending_adjudication"]), (0, 0, 1))
+            # Resolution: the named adjudicator decides the merged (target) candidate.
+            research_review.record_decision(db, s.project, s.owner, candidate_y, "fulltext", 1, "included", role="adjudication")
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (1, 0))
+            # Reversal: split restores both candidates. The recorded adjudication decision
+            # remains on the target candidate (append-only history — never rewritten); flagging
+            # the affected review for re-decision is amendment machinery for P10.
+            research_review.split_report(db, s.project, s.owner, source.id, "Fixture: identity review failed", protocol_version=1)
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["included_reports"], counts["fulltext_excluded"], counts["pending_adjudication"]), (2, 0, 0))
+            # Historic snapshots: a merge at a later protocol version leaves v1 sets untouched.
 
     async def test_independent_review_privacy(self):
         s = self.seed()
@@ -180,6 +198,9 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": uid, "e": str(uid) + "@test.invalid"})
                 conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": uid})
         with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1,
+                                            screening_modes={"title_abstract": "solo", "fulltext": "dual"}, commit=False)
+            db.commit()
             report = ReviewReport(id=uuid4(), project_id=s.project)
             db.add(report); db.commit()  # parent before child: UOW has no relationship() ordering
             version = ReviewReportVersion(id=uuid4(), report_id=report.id)
@@ -190,6 +211,12 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             research_review.record_decision(db, s.project, reviewer_1, candidate.id, "fulltext", 1, "included")
             visible_to_2 = research_review.visible_decisions(db, s.project, reviewer_2, 1)
             self.assertEqual([d for d in visible_to_2 if d.actor_id == reviewer_1], [])  # hidden until both submit
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["fulltext_assessed"], counts["pending_adjudication"]), (0, 1))  # one reviewer is not dual review
+            # One reviewer cannot satisfy dual review by submitting twice.
+            with self.assertRaises(HTTPException) as duplicate:
+                research_review.record_decision(db, s.project, reviewer_1, candidate.id, "fulltext", 1, "included")
+            self.assertEqual(duplicate.exception.status_code, 409)
             research_review.record_decision(db, s.project, reviewer_2, candidate.id, "fulltext", 1, "excluded")
             visible = research_review.visible_decisions(db, s.project, reviewer_2, 1)
             self.assertEqual(len([d for d in visible if d.candidate_id == candidate.id]), 2)
@@ -465,6 +492,17 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as forged_apply:
                 research_proposals.apply_proposal(db, s.project, s.owner, forged.id)
             self.assertEqual(forged_apply.exception.status_code, 409)
+            # A payload mutated after approval cannot ride the approval: the digest is recomputed.
+            tampered, _ = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                             {"edits": [{"entity_id": str(claim_id), "payload": {"statement": "Approved text"}}]},
+                                                             {str(claim_id): 3}, idempotency_key="tamper-1")
+            research_proposals.approve_proposal(db, s.project, s.owner, tampered.id)
+            db.execute(__import__("sqlalchemy").text("UPDATE research_proposals SET payload = payload || :patch WHERE id = :id"),
+                       {"patch": json.dumps({"injected": True}), "id": str(tampered.id)})
+            db.expire_all()
+            with self.assertRaises(HTTPException) as tamper:
+                research_proposals.apply_proposal(db, s.project, s.owner, tampered.id)
+            self.assertEqual(tamper.exception.status_code, 409)
             # Expired approvals return 410 and mark the proposal expired.
             expired, _ = research_proposals.create_proposal(db, s.project, s.owner, "human",
                                                             {"edits": [{"entity_id": str(claim_id), "payload": {"statement": "Expired target"}}]},
@@ -478,44 +516,56 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
     # ---------- C29: metered admission core ----------
 
     async def test_metered_admission_replay_and_uncertain_completion(self):
-        from fastapi import HTTPException
         s = self.seed()
         with self.Session() as db:
             # No price table: every metered path is refused while deterministic work continues.
             with self.assertRaises(HTTPException) as unpriced:
-                metered.reserve(db, s.project, s.owner, "synthesis_task", {"units": {"input_tokens": 100}}, {})
+                metered.reserve(db, s.project, s.owner, "synthesis_task", {"units": {"input_tokens": 100}}, {},
+                                limits={"max_inflight": 2})
             self.assertEqual(unpriced.exception.status_code, 409)
             self.assertEqual(unpriced.exception.detail, "operation_not_priceable")
             metered.register_price_table(db, {"synthesis_task": {"unit_prices": {"input_tokens": 0.00001, "output_tokens": 0.00003},
                                                                  "max_cost": 0.5}}, version=1)
+            # Admission requires explicitly configured limits; defaults are never unrestricted.
+            with self.assertRaises(HTTPException) as unbounded:
+                metered.reserve(db, s.project, s.owner, "synthesis_task", {"units": {"input_tokens": 10}}, {}, idempotency_key="nolimits")
+            self.assertEqual(unbounded.exception.status_code, 422)
             with self.assertRaises(HTTPException) as still_unpriced:
-                metered.reserve(db, s.project, s.owner, "unregistered_operation", {"units": {"calls": 1}}, {})
+                metered.reserve(db, s.project, s.owner, "unregistered_operation", {"units": {"calls": 1}}, {},
+                                limits={"max_inflight": 2})
             self.assertEqual(still_unpriced.exception.status_code, 409)
             estimate = {"units": {"input_tokens": 10000, "output_tokens": 2000}}
+            limits = {"max_inflight": 2}
             operation, created = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate,
-                                                 {"question": "fixture"}, idempotency_key="m-1")
+                                                 {"question": "fixture"}, idempotency_key="m-1", limits=limits)
             self.assertFalse(created["replayed"])
             self.assertEqual(operation.state, "reserved")
             self.assertAlmostEqual(created["estimated_cost"], 10000 * 0.00001 + 2000 * 0.00003)
             duplicate, replay = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate,
-                                                {"question": "fixture"}, idempotency_key="m-1")
+                                                {"question": "fixture"}, idempotency_key="m-1", limits=limits)
             self.assertTrue(replay["replayed"]); self.assertEqual(duplicate.id, operation.id)
             with self.assertRaises(HTTPException) as payload_conflict:
                 metered.reserve(db, s.project, s.owner, "synthesis_task", estimate,
-                                {"question": "different"}, idempotency_key="m-1")
+                                {"question": "different"}, idempotency_key="m-1", limits=limits)
             self.assertEqual(payload_conflict.exception.status_code, 409)
             with self.assertRaises(HTTPException) as over_cap:
                 metered.reserve(db, s.project, s.owner, "synthesis_task",
-                                {"units": {"input_tokens": 90000000, "output_tokens": 0}}, {}, idempotency_key="m-2")
+                                {"units": {"input_tokens": 90000000, "output_tokens": 0}}, {}, idempotency_key="m-2", limits=limits)
             self.assertEqual(over_cap.exception.status_code, 429)
+            # Dispatch is gated on a specific admitted reservation, not merely a price table entry.
+            with self.assertRaises(HTTPException) as not_admitted:
+                metered.assert_dispatchable(db, s.project, s.owner, operation.id)
+            self.assertEqual(not_admitted.exception.status_code, 409)
             metered.admit(db, s.project, s.owner, operation.id)
+            metered.assert_dispatchable(db, s.project, s.owner, operation.id)
             metered.start(db, s.project, s.owner, operation.id)
             settled = metered.settle(db, s.project, s.owner, operation.id,
                                      {"units": {"input_tokens": 10432, "output_tokens": 1717}})
             self.assertEqual(settled.state, "completed")
             self.assertEqual(settled.usage["units"]["input_tokens"], 10432)  # estimate retained separately
             self.assertEqual(settled.estimate, estimate)
-            uncertain, _ = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate, {"question": "u"}, idempotency_key="m-3")
+            uncertain, _ = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate, {"question": "u"},
+                                           idempotency_key="m-3", limits=limits)
             metered.admit(db, s.project, s.owner, uncertain.id)
             metered.start(db, s.project, s.owner, uncertain.id)
             metered.fail(db, s.project, s.owner, uncertain.id, uncertain=True, error_code="provider_timeout")
@@ -526,27 +576,45 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(settle_uncertain.exception.status_code, 409)
             # Replaying an uncertain key returns the uncertain record: no silent re-dispatch.
             replayed_uncertain, replay = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate,
-                                                         {"question": "u"}, idempotency_key="m-3")
+                                                         {"question": "u"}, idempotency_key="m-3", limits=limits)
             self.assertTrue(replay["replayed"]); self.assertEqual(replayed_uncertain.state, "uncertain")
             with self.assertRaises(HTTPException) as state_conflict:
                 metered.cancel(db, s.project, s.owner, operation.id)
             self.assertEqual(state_conflict.exception.status_code, 409)
-            fresh, _ = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate, {"question": "c"}, idempotency_key="m-4")
+            fresh, _ = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate, {"question": "c"},
+                                       idempotency_key="m-4", limits=limits)
             metered.cancel(db, s.project, s.owner, fresh.id)
             self.assertEqual(fresh.state, "cancelled")
+            self.assertEqual(metered.active_price_table(db).version, 1)
+        # Uncertain completion retains its reservation and counts as in-flight exposure:
+        # with one uncertain operation outstanding, a max_inflight of 1 refuses everything.
         with self.Session() as db:
             metered.register_price_table(db, {"bounded_task": {"unit_prices": {"calls": 1.0}, "max_cost": 10.0}}, version=2)
-            metered.reserve(db, s.project, s.owner, "bounded_task", {"units": {"calls": 1}}, {}, idempotency_key="cap-1",
-                            limits={"max_inflight": 1})
-            with self.assertRaises(HTTPException) as cap:
-                metered.reserve(db, s.project, s.owner, "bounded_task", {"units": {"calls": 1}}, {}, idempotency_key="cap-2",
-                                limits={"max_inflight": 1})
-            self.assertEqual(cap.exception.status_code, 429)
-            self.assertEqual(db.query(MeteredOperation).filter(MeteredOperation.project_id == s.project).count(), 4)
-        with self.Session() as db:
-            with self.assertRaises(HTTPException) as outsider:
-                metered.reserve(db, s.project, s.outsider, "synthesis_task", {"units": {"input_tokens": 1}}, {}, idempotency_key="x")
-            self.assertEqual(outsider.exception.status_code, 404)
+            with self.assertRaises(HTTPException) as uncertain_exposure:
+                metered.reserve(db, s.project, s.owner, "bounded_task", {"units": {"calls": 1}}, {},
+                                idempotency_key="cap-exposure", limits={"max_inflight": 1})
+            self.assertEqual(uncertain_exposure.exception.status_code, 429)
+            with self.Session() as db:
+                with self.assertRaises(HTTPException) as outsider:
+                    metered.reserve(db, s.project, s.outsider, "synthesis_task", {"units": {"input_tokens": 1}}, {},
+                                    idempotency_key="x", limits={"max_inflight": 1})
+                self.assertEqual(outsider.exception.status_code, 404)
+        # Concurrent reserves cannot race past the in-flight cap (atomic admission).
+        race_project, race_owner = uuid4(), uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": race_owner, "e": str(race_owner) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project (id,admin_id,title) VALUES (:p,:u,'Race fixture')"), {"p": race_project, "u": race_owner})
+        from concurrent.futures import ThreadPoolExecutor
+        def race(index):
+            with self.Session() as db:
+                try:
+                    metered.reserve(db, race_project, race_owner, "bounded_task", {"units": {"calls": 1}}, {"n": index},
+                                    idempotency_key=f"race-{index}", limits={"max_inflight": 1})
+                    return 200
+                except HTTPException as error: return error.status_code
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            outcomes = list(pool.map(race, range(3)))
+        self.assertEqual(sorted(outcomes), [200, 429, 429])  # exactly one admission wins
 
     # ---------- migration discipline ----------
 

@@ -1938,6 +1938,7 @@ class ReviewProtocol(Base):
     unit_of_analysis = Column(String(30), nullable=False, default="report")
     count_policy = Column(JSONB, nullable=False, default=dict)
     criteria = Column(JSONB, nullable=False, default=list)
+    screening_modes = Column(JSONB, nullable=False, default=dict)  # {"title_abstract": "solo", "fulltext": "dual"}
     status = Column(String(16), nullable=False, default="draft")
     parent_version_id = Column(UUID(as_uuid=True), ForeignKey("review_protocols.id", ondelete="SET NULL"), nullable=True)
 

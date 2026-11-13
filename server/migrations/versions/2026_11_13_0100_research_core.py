@@ -75,6 +75,7 @@ def upgrade():
         sa.Column("unit_of_analysis",sa.String(30),nullable=False,server_default="report"),
         sa.Column("count_policy",JSONB(),nullable=False,server_default="{}"),
         sa.Column("criteria",JSONB(),nullable=False,server_default="[]"),
+        sa.Column("screening_modes",JSONB(),nullable=False,server_default="{}"),
         sa.Column("status",sa.String(16),nullable=False,server_default="draft"),
         sa.Column("parent_version_id",sa.UUID(),sa.ForeignKey("review_protocols.id",ondelete="SET NULL")),
         sa.UniqueConstraint("project_id","version",name="uq_review_protocol_version"),

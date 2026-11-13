@@ -2,10 +2,22 @@
 count-derived flow computation (strategy 6.1, fixture 17.1, check C17).
 
 Counts are always computed from actual records and append-only mapping events —
-never from a stored picture. Disagreement without named adjudication leaves the
-candidate pending; a reversible merge producing conflicting decisions also enters
-adjudication rather than silently changing inclusion.
+never from a stored picture. Rules enforced here:
+
+- Screening modes are declared per protocol stage (`solo` or `dual`). A dual-stage
+  decision is final only when decisions from at least two DISTINCT reviewers agree;
+  one reviewer cannot satisfy dual review, not even by submitting twice. Disagreement
+  or an incomplete pair leaves the candidate pending, and pending candidates are never
+  counted as included or excluded.
+- Reversible report merges change the CURRENT representative sets from the merge's
+  protocol version onward (historic snapshots keep their original sets). A merge with
+  incompatible prior screening decisions forces an unresolved adjudication state on the
+  merged candidate that affects counts until a named adjudicator decides; a
+  report_split reverses the mapping.
+- Adjudication is only recorded on a genuine disagreement, where the decisions of
+  reports currently merged into the candidate count toward the conflict.
 """
+from datetime import datetime, timezone
 from uuid import uuid4
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -15,13 +27,14 @@ from . import research_access
 
 
 def create_protocol(db: Session, project_id, actor_id, *, version, mode="literature", unit_of_analysis="report",
-                    count_policy=None, criteria=None, parent_version_id=None, status="active", protocol_id=None, commit=True):
+                    count_policy=None, criteria=None, screening_modes=None, parent_version_id=None,
+                    status="active", protocol_id=None, commit=True):
     research_access.authorize(db, project_id, actor_id, write=True)
     exists = db.query(ReviewProtocol).filter(ReviewProtocol.project_id == project_id, ReviewProtocol.version == version).first()
     if exists: raise HTTPException(409, "Protocol version already exists")
     row = ReviewProtocol(id=protocol_id or uuid4(), project_id=project_id, version=version, mode=mode,
                          unit_of_analysis=unit_of_analysis, count_policy=count_policy or {}, criteria=criteria or [],
-                         status=status, parent_version_id=parent_version_id)
+                         screening_modes=screening_modes or {}, status=status, parent_version_id=parent_version_id)
     db.add(row)
     if commit: db.commit()
     return row
@@ -34,6 +47,7 @@ def amend_protocol(db: Session, project_id, actor_id, *, new_version, criteria=N
     amended = create_protocol(db, project_id, actor_id, version=new_version, mode=current.mode,
                               unit_of_analysis=current.unit_of_analysis, count_policy=current.count_policy,
                               criteria=current.criteria if criteria is None else criteria,
+                              screening_modes=current.screening_modes,
                               parent_version_id=current.id, status=status, commit=False)
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="protocol_amend",
                               payload={"from": str(current.id), "from_version": current.version,
@@ -51,12 +65,18 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
     mapped = [str(retained_occurrence_id), *[str(i) for i in removed_occurrence_ids]]
     if len(set(mapped)) != len(mapped): raise HTTPException(422, "Mapping sets must be disjoint")
     rows = db.query(ReviewOccurrence).filter(ReviewOccurrence.id.in_(mapped), ReviewOccurrence.project_id == project_id).all()
-    found = {str(r.id) for r in rows}
-    if found != set(mapped): raise HTTPException(422, "Occurrences must belong to this project")
+    if {str(r.id) for r in rows} != set(mapped): raise HTTPException(422, "Occurrences must belong to this project")
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="occurrence_map",
                               payload={"candidate": str(candidate_id), "retained": str(retained_occurrence_id),
                                        "removed": [str(i) for i in removed_occurrence_ids]}, actor_id=actor_id))
     if commit: db.commit()
+
+
+def _protocol_for(db: Session, project_id, protocol_version):
+    protocol = db.query(ReviewProtocol).filter(ReviewProtocol.project_id == project_id,
+                                               ReviewProtocol.version <= protocol_version).order_by(ReviewProtocol.version.desc()).first()
+    if not protocol: raise HTTPException(404, "No review protocol covers this version")
+    return protocol
 
 
 def record_decision(db: Session, project_id, actor_id, candidate_id, stage, protocol_version, decision, *,
@@ -65,12 +85,16 @@ def record_decision(db: Session, project_id, actor_id, candidate_id, stage, prot
     candidate = db.query(ReviewCandidate).filter(ReviewCandidate.id == candidate_id, ReviewCandidate.project_id == project_id).first()
     if not candidate: raise HTTPException(404, "Review candidate not found")
     if decision not in ("included", "excluded", "unclear"): raise HTTPException(422, "Invalid decision value")
+    protocol = _protocol_for(db, project_id, protocol_version)
+    prior = db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_id,
+                                            ReviewDecision.stage == stage).all()
     if role == "adjudication":
-        prior = db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_id,
-                                                ReviewDecision.stage == stage).all()
-        values = {d.decision for d in prior if d.role != "adjudication"}
-        if len(values) < 2:
+        if not _has_conflict(db, project_id, candidate, stage, protocol):
             raise HTTPException(409, "Adjudication is only recorded on a genuine disagreement")
+    elif (protocol.screening_modes or {}).get(stage, "solo") == "dual":
+        mine = [d for d in prior if str(d.actor_id) == str(actor_id)
+                and d.protocol_version == protocol_version and d.role != "adjudication"]
+        if mine: raise HTTPException(409, "Reviewer already recorded a decision for this stage and protocol version")
     if stage == "fulltext" and candidate.selected_version_id is None and decision == "included":
         raise HTTPException(409, "Cannot include a report whose selected version was never retrieved")
     row = ReviewDecision(id=decision_id or uuid4(), candidate_id=candidate_id, stage=stage,
@@ -82,18 +106,78 @@ def record_decision(db: Session, project_id, actor_id, candidate_id, stage, prot
     return row
 
 
+def _current_merges(db: Session, project_id, protocol_version):
+    """Current report→report merge mapping and per-stage conflict sources from mapping
+    events, applying only to protocol versions at or after each merge event. Splits
+    remove a mapping. Events apply in creation order."""
+    events = db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project_id,
+                                                 ReviewMappingEvent.kind.in_(("report_merge", "report_split"))).all()
+    events.sort(key=lambda e: e.created_at or datetime.min.replace(tzinfo=timezone.utc))
+    merges, conflict_stages = {}, {}
+    for event in events:
+        payload = event.payload or {}
+        if int(payload.get("protocol_version", 1)) > protocol_version: continue
+        if event.kind == "report_merge":
+            merges[str(payload["source"])] = str(payload["target"])
+            for conflict in payload.get("conflicting_decisions", []):
+                conflict_stages.setdefault(str(payload["target"]), {}).setdefault(conflict["stage"], set()).add(str(payload["source"]))
+        elif event.kind == "report_split":
+            source = str(payload["source"])
+            merges.pop(source, None)
+            for staged in conflict_stages.values():
+                for stage in list(staged):
+                    staged[stage].discard(source)
+                    if not staged[stage]: del staged[stage]
+    return merges, conflict_stages
+
+
+def _candidate_of_report(db: Session, project_id, report_id):
+    row = db.query(ReviewCandidate).filter(ReviewCandidate.project_id == project_id,
+                                           ReviewCandidate.report_id == report_id).first()
+    return row.id if row else None
+
+
+def _has_conflict(db: Session, project_id, candidate, stage, protocol):
+    """Genuine disagreement among this candidate's decisions and the decisions of reports
+    currently merged into it at a conflicting stage."""
+    merges, conflict_stages = _current_merges(db, project_id, protocol.version)
+    merged_sources = {source for source, target in merges.items() if target == str(candidate.report_id)}
+    merged_sources |= (conflict_stages.get(str(candidate.report_id)) or {}).get(stage, set())
+    decisions = db.query(ReviewDecision).join(ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(
+        ReviewCandidate.project_id == project_id).all()
+    by_candidate = {}
+    for row in decisions: by_candidate.setdefault(str(row.candidate_id), []).append(row)
+    relevant = list(by_candidate.get(str(candidate.id), []))
+    for source in merged_sources:
+        candidate_id = _candidate_of_report(db, project_id, source)
+        if candidate_id: relevant.extend(by_candidate.get(str(candidate_id), []))
+    values = {row.decision for row in relevant
+              if row.stage == stage and row.role != "adjudication" and row.protocol_version <= protocol.version}
+    return len(values) > 1
+
+
 def visible_decisions(db: Session, project_id, actor_id, protocol_version):
-    """Independent dual review hides the other reviewer's pending decision until both
-    decisions for that candidate/stage exist (strategy 6.3)."""
+    """Dual stages hide the other reviewers' decisions until decisions from at least two
+    distinct reviewers exist for that candidate/stage/version; solo stages are visible."""
     research_access.authorize(db, project_id, actor_id)
     rows = db.query(ReviewDecision).join(ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(
-        ReviewCandidate.project_id == project_id, ReviewDecision.protocol_version == protocol_version).order_by(ReviewDecision.created_at).all()
+        ReviewCandidate.project_id == project_id).order_by(ReviewDecision.created_at).all()
+    protocols = {p.version: p for p in db.query(ReviewProtocol).filter(ReviewProtocol.project_id == project_id).all()}
+
+    def mode_for(version, stage):
+        candidates = [p for v, p in protocols.items() if v <= version]
+        protocol = max(candidates, key=lambda p: p.version) if candidates else None
+        return (protocol.screening_modes or {}).get(stage, "solo") if protocol else "solo"
+
     grouped = {}
-    for row in rows: grouped.setdefault((row.candidate_id, row.stage), []).append(row)
+    for row in rows:
+        key = (row.candidate_id, row.stage, row.protocol_version) if mode_for(row.protocol_version, row.stage) == "dual" \
+            else (row.candidate_id, row.stage)
+        grouped.setdefault(key, []).append(row)
     visible = []
-    for key, group in grouped.items():
-        dual = any(r.role in ("primary", "secondary") for r in group)
-        if dual and len([r for r in group if r.role in ("primary", "secondary")]) < 2:
+    for group in grouped.values():
+        primary = [r for r in group if r.role in ("primary", "secondary")]
+        if len({str(r.actor_id) for r in primary}) < 2:
             visible.extend(r for r in group if r.actor_id == actor_id)
         else:
             visible.extend(group)
@@ -117,85 +201,140 @@ def link_study(db: Session, project_id, actor_id, report_id, study_id, rationale
     if commit: db.commit()
 
 
-def merge_reports(db: Session, project_id, actor_id, source_report_id, target_report_id, rationale):
-    """Reversible report merge: records the event; incompatible prior screening decisions
-    enter adjudication (return as conflicting) instead of choosing one silently."""
+def merge_reports(db: Session, project_id, actor_id, source_report_id, target_report_id, rationale, *, protocol_version, commit=True):
+    """Reversible report merge: changes the current representative sets from this protocol
+    version onward. Incompatible prior screening decisions force an unresolved adjudication
+    state on the merged candidate until a named adjudicator decides."""
     research_access.authorize(db, project_id, actor_id, write=True)
     source = db.query(ReviewReport).filter(ReviewReport.id == source_report_id, ReviewReport.project_id == project_id).first()
     target = db.query(ReviewReport).filter(ReviewReport.id == target_report_id, ReviewReport.project_id == project_id).first()
     if not source or not target or source.id == target.id: raise HTTPException(422, "Merge requires two distinct project reports")
-    if source.identity_state in ("merged",): raise HTTPException(409, "Source report is already merged")
-    conflicts = []
+    if source.identity_state == "merged": raise HTTPException(409, "Source report is already merged")
+    protocol = _protocol_for(db, project_id, protocol_version)
+    conflicts, stages = [], []
     for stage in ("title_abstract", "fulltext"):
-        source_decision = _effective(db, source.id, stage, None)
-        target_decision = _effective(db, target.id, stage, None)
-        if source_decision and target_decision and source_decision[0] != target_decision[0]:
+        source_decision = _effective(db, source.id, stage, protocol_version, protocol)
+        target_decision = _effective(db, target.id, stage, protocol_version, protocol)
+        if source_decision[0] and target_decision[0] and source_decision[0] != target_decision[0]:
             conflicts.append({"stage": stage, "source": source_decision[0], "target": target_decision[0]})
+            stages.append(stage)
     source.identity_state = "merged"; source.merged_into = target.id
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="report_merge",
                               payload={"source": str(source.id), "target": str(target.id), "rationale": rationale,
-                                       "conflicting_decisions": conflicts}, actor_id=actor_id))
-    db.commit()
-    return {"conflicting_decisions": conflicts, "requires_adjudication": bool(conflicts)}
+                                       "conflicting_decisions": conflicts, "conflicting_stages": stages,
+                                       "protocol_version": protocol_version}, actor_id=actor_id))
+    if commit: db.commit()
+    return {"conflicting_decisions": conflicts, "conflicting_stages": stages, "requires_adjudication": bool(conflicts)}
 
 
-def _effective(db: Session, report_id, stage, protocol_version):
-    """Effective final decision for a report/stage: adjudication wins; otherwise unanimous
-    dual agreement; disagreement without adjudication is pending (None, 'adjudication')."""
-    query = db.query(ReviewDecision).join(ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(
-        ReviewCandidate.report_id == report_id, ReviewDecision.stage == stage)
-    if protocol_version is not None: query = query.filter(ReviewDecision.protocol_version <= protocol_version)
-    rows = query.order_by(ReviewDecision.protocol_version.desc()).all()
+def split_report(db: Session, project_id, actor_id, source_report_id, rationale, *, protocol_version, commit=True):
+    """Reverse a merge: the source report returns to its own candidate and its decisions."""
+    research_access.authorize(db, project_id, actor_id, write=True)
+    source = db.query(ReviewReport).filter(ReviewReport.id == source_report_id, ReviewReport.project_id == project_id).first()
+    if not source: raise HTTPException(404, "Report not found")
+    if source.identity_state != "merged": raise HTTPException(409, "Report is not merged")
+    source.identity_state = "unreviewed"; source.merged_into = None
+    db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="report_split",
+                              payload={"source": str(source.id), "rationale": rationale,
+                                       "protocol_version": protocol_version}, actor_id=actor_id))
+    if commit: db.commit()
+
+
+def _effective(db: Session, report_id, stage, protocol_version, protocol):
+    """Effective final decision for a report/stage: adjudication wins; otherwise dual stages
+    need decisions from two distinct reviewers that agree; solo stages decide on one. Returns
+    (decision|None, state)."""
+    rows = db.query(ReviewDecision).join(ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(
+        ReviewCandidate.report_id == report_id, ReviewDecision.stage == stage,
+        ReviewDecision.protocol_version <= protocol_version).order_by(ReviewDecision.protocol_version.desc()).all()
     by_version = {}
     for row in rows: by_version.setdefault(row.protocol_version, []).append(row)
     for version in sorted(by_version, reverse=True):
         group = by_version[version]
         adjudication = [r for r in group if r.role == "adjudication"]
         if adjudication: return adjudication[-1].decision, "decided"
-        primary = [r for r in group if r.role in ("primary", "secondary")]
-        values = {r.decision for r in primary}
-        if len(primary) >= 2 and len(values) == 1: return values.pop(), "decided"
+        latest_per_actor = {}
+        for row in group:
+            if row.role in ("primary", "secondary"): latest_per_actor[str(row.actor_id)] = row
+        distinct = list(latest_per_actor.values())
+        values = {r.decision for r in distinct}
+        if (protocol.screening_modes or {}).get(stage, "solo") == "dual":
+            if len(distinct) >= 2:
+                if len(values) == 1: return values.pop(), "decided"
+                return None, "adjudication"
+            return None, "pending_dual"
+        if len(distinct) >= 1 and len(values) == 1: return values.pop(), "decided"
         if len(values) > 1: return None, "adjudication"
-        if len(primary) == 1: return primary[0].decision, "pending_dual"
     return None, "absent"
 
 
-def compute_flow_counts(occurrences, mapping_events, candidates, decisions, report_studies, protocol_version):
+def compute_flow_counts(occurrences, mapping_events, candidates, decisions, report_studies, protocol_version,
+                        screening_modes=None):
     """Pure count derivation (unit-testable without a database). Inputs are mappings/lists
-    of plain dicts or model rows with the relevant attributes."""
+    of plain dicts or model rows with the relevant attributes. Merges apply from their
+    recorded protocol version onward; historic snapshots keep their original sets."""
     def field(row, name): return row.get(name) if isinstance(row, dict) else getattr(row, name)
 
+    screening_modes = screening_modes or {}
+
+    def mode_for(stage): return screening_modes.get(stage, "solo")
+
     removed = set()
+    merged_sources, conflict_stages = set(), {}
     for event in mapping_events:
-        if field(event, "kind") != "occurrence_map": continue
+        kind = field(event, "kind")
         payload = field(event, "payload") or {}
-        for occurrence_id in payload.get("removed", []): removed.add(str(occurrence_id))
+        if kind == "occurrence_map":
+            for occurrence_id in payload.get("removed", []): removed.add(str(occurrence_id))
+        elif kind == "report_merge" and int(payload.get("protocol_version", 1)) <= protocol_version:
+            merged_sources.add(str(payload["source"]))
+            for conflict in payload.get("conflicting_decisions", []):
+                conflict_stages.setdefault(str(payload["target"]), {}).setdefault(conflict["stage"], set()).add(str(payload["source"]))
+        elif kind == "report_split" and int(payload.get("protocol_version", 1)) <= protocol_version:
+            merged_sources.discard(str(payload["source"]))
+            for staged in conflict_stages.values():
+                for stage in list(staged):
+                    staged[stage].discard(str(payload["source"]))
+                    if not staged[stage]: del staged[stage]
     identified = len({str(field(o, "id")) for o in occurrences})
     duplicate_removals = len(removed)
-    retained = [c for c in candidates if field(c, "retained")]
+    retained = [c for c in candidates if field(c, "retained") and str(field(c, "report_id")) not in merged_sources]
     candidate_ids = {str(field(c, "id")) for c in retained}
+    report_of_candidate = {str(field(c, "id")): str(field(c, "report_id")) for c in retained}
 
-    def decision_rows():
-        for d in decisions: yield d
-
-    effective = {}
+    effective, pending = {}, set()
     for candidate_id in candidate_ids:
         for stage in ("title_abstract", "fulltext"):
-            rows = [d for d in decision_rows()
+            rows = [d for d in decisions
                     if str(field(d, "candidate_id")) == candidate_id and field(d, "stage") == stage
-                    and field(d, "protocol_version") <= protocol_version]
+                    and int(field(d, "protocol_version")) <= protocol_version]
             if not rows: continue
-            top = max(field(d, "protocol_version") for d in rows)
-            group = [d for d in rows if field(d, "protocol_version") == top]
+            top = max(int(field(d, "protocol_version")) for d in rows)
+            group = [d for d in rows if int(field(d, "protocol_version")) == top]
             adjudication = [d for d in group if field(d, "role") == "adjudication"]
             if adjudication:
                 effective[(candidate_id, stage)] = field(adjudication[-1], "decision")
                 continue
-            primary = [d for d in group if field(d, "role") in ("primary", "secondary")]
-            values = {field(d, "decision") for d in primary}
-            if len(primary) >= 2 and len(values) == 1: effective[(candidate_id, stage)] = values.pop()
-            elif len(values) > 1: effective[(candidate_id, stage)] = None  # pending adjudication
-            elif len(primary) == 1: effective[(candidate_id, stage)] = field(primary[0], "decision")
+            distinct = {}
+            for row in group:
+                if field(row, "role") in ("primary", "secondary"):
+                    distinct[str(field(row, "actor_id"))] = field(row, "decision")
+            values = set(distinct.values())
+            if mode_for(stage) == "dual":
+                if len(distinct) >= 2 and len(values) == 1: effective[(candidate_id, stage)] = values.pop()
+                else: pending.add((candidate_id, stage))
+            elif len(distinct) >= 1 and len(values) == 1: effective[(candidate_id, stage)] = values.pop()
+            elif len(values) > 1: pending.add((candidate_id, stage))
+        # A merge with conflicting decisions forces adjudication on the merged candidate:
+        # only a recorded adjudication decision can finalize a conflicted stage.
+        for stage, sources in (conflict_stages.get(report_of_candidate.get(candidate_id, "")) or {}).items():
+            adjudicated = [d for d in decisions if str(field(d, "candidate_id")) == candidate_id
+                           and field(d, "stage") == stage and field(d, "role") == "adjudication"
+                           and int(field(d, "protocol_version")) <= protocol_version]
+            if adjudicated: effective[(candidate_id, stage)] = field(adjudicated[-1], "decision")
+            else:
+                pending.add((candidate_id, stage))
+                effective.pop((candidate_id, stage), None)
 
     screened = [c for c in retained if (str(field(c, "id")), "title_abstract") in effective]
     ta_excluded = [c for c in screened if effective[(str(field(c, "id")), "title_abstract")] == "excluded"]
@@ -223,16 +362,20 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
         "fulltext_excluded": len(ft_excluded),
         "included_reports": len(included_reports),
         "included_studies": len(studies),
+        "pending_adjudication": len({candidate for candidate, _stage in pending}),
     }
 
 
 def flow_counts(db: Session, project_id, actor_id, protocol_version):
     research_access.authorize(db, project_id, actor_id)
+    protocol = db.query(ReviewProtocol).filter(ReviewProtocol.project_id == project_id,
+                                               ReviewProtocol.version <= protocol_version).order_by(ReviewProtocol.version.desc()).first()
     occurrences = db.query(ReviewOccurrence).filter(ReviewOccurrence.project_id == project_id).all()
-    events = db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project_id).all()
+    events = db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project_id).order_by(ReviewMappingEvent.created_at).all()
     candidates = db.query(ReviewCandidate).filter(ReviewCandidate.project_id == project_id).all()
     decisions = db.query(ReviewDecision).join(ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(
         ReviewCandidate.project_id == project_id).all()
     links = db.query(ReviewReportStudy).join(ReviewReport, ReviewReport.id == ReviewReportStudy.report_id).filter(
         ReviewReport.project_id == project_id).all()
-    return compute_flow_counts(occurrences, events, candidates, decisions, links, protocol_version)
+    return compute_flow_counts(occurrences, events, candidates, decisions, links, protocol_version,
+                               screening_modes=protocol.screening_modes if protocol else None)

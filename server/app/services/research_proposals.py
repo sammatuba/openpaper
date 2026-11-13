@@ -79,9 +79,16 @@ def apply_proposal(db: Session, project_id, actor_id, proposal_id, *, commit=Tru
         return {"receipt": proposal.receipt, "replayed": True}
     if proposal.state != "approved": raise HTTPException(409, f"Proposal is {proposal.state}")
     approval = proposal.approval or {}
-    if not approval.get("expires_at") or approval.get("bound_payload_sha256") != proposal.payload_sha256 \
+    # Recompute the digest from the actual stored payload: stored-vs-stored comparisons
+    # would let a mutated payload ride an approval bound to the original text.
+    digest = canonical_digest(proposal.payload)
+    if not approval.get("expires_at") or digest != proposal.payload_sha256 \
+            or approval.get("bound_payload_sha256") != digest \
             or approval.get("bound_targets") != proposal.targets:
         raise HTTPException(409, "Approval does not bind this proposal")
+    edits = proposal.payload.get("edits")
+    if not isinstance(edits, list) or not edits or {step.get("entity_id") for step in edits} - set(proposal.targets):
+        raise HTTPException(422, "Proposal edit set does not match its bound targets")
     if datetime.now(timezone.utc) > datetime.fromisoformat(approval["expires_at"]):
         proposal.state = "expired"
         if commit: db.commit()
@@ -97,8 +104,11 @@ def apply_proposal(db: Session, project_id, actor_id, proposal_id, *, commit=Tru
             if commit: db.commit()
             raise HTTPException(409, "Proposal target revisions changed; returned to review")
     applied = {}
-    for step in proposal.payload.get("edits", []):
+    for step in edits:
         entity_id = UUID(step["entity_id"])
+        entity = entities.get(entity_id)
+        try: research_entities.validate_payload(entity.type, step["payload"])
+        except ValueError as error: raise HTTPException(422, f"Proposal edit violates {entity.type} schema: {error}") from error
         result = research_entities.revise_entity(db, project_id, actor_id, entity_id,
                                                  proposal.targets[str(entity_id)], step["payload"],
                                                  origin=proposal.origin, provenance={key: value for key, value in proposal.payload.items()

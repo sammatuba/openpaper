@@ -216,6 +216,10 @@
         "duplicates": "occurrences mapped away from a retained representative",
         "candidates": "one per retained report; screening counts candidates",
         "included_studies": "distinct confirmed study IDs; unresolved linkage disclosed separately"
+      },
+      "screening_modes": {
+        "title_abstract": "solo",
+        "fulltext": "dual"
       }
     },
     "protocol_v2": {
@@ -225,7 +229,11 @@
       "mode": "literature",
       "unit_of_analysis": "report",
       "amendment": "Broadens CR2 to any fixture monitoring task; explicitly reopens report D; upstream sets unchanged.",
-      "criteria_note": "All v1 title/abstract decisions stand; only the full-text exclusion of D is reopened."
+      "criteria_note": "All v1 title/abstract decisions stand; only the full-text exclusion of D is reopened.",
+      "screening_modes": {
+        "title_abstract": "solo",
+        "fulltext": "dual"
+      }
     },
     "search_executions": [
       {
@@ -698,17 +706,6 @@
         "dual": true,
         "candidate_id": "66000000-0000-4000-8000-000000000004",
         "role": "primary"
-      },
-      {
-        "id": "77000000-0000-4000-8000-000000000016",
-        "stage": "fulltext",
-        "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000001",
-        "decision": "unclear",
-        "reason": "Report sought but not retrieved; absence of full text is not an exclusion.",
-        "dual": false,
-        "candidate_id": "66000000-0000-4000-8000-000000000005",
-        "role": "primary"
       }
     ],
     "mapping_events": [
@@ -822,6 +819,16 @@
         "reason": "Broadened CR2 admits scorer-sweep designs; explicit reopening after amendment.",
         "candidate_id": "66000000-0000-4000-8000-000000000004",
         "role": "primary"
+      },
+      {
+        "id": "77000000-0000-4000-8000-000000000018",
+        "candidate_id": "66000000-0000-4000-8000-000000000004",
+        "stage": "fulltext",
+        "protocol_version": 2,
+        "actor": "b2000000-0000-4000-8000-000000000002",
+        "decision": "included",
+        "role": "primary",
+        "reason": "Broadened CR2 admits scorer-sweep designs; second independent reviewer."
       }
     ],
     "expected_counts": {
@@ -841,8 +848,8 @@
           "SA",
           "SB"
         ],
-        "pending_decisions": 0,
-        "other_prescreen_removals": 0
+        "other_prescreen_removals": 0,
+        "pending_adjudication": 0
       },
       "v2": {
         "identified_occurrences": 10,
@@ -862,7 +869,8 @@
           "SD"
         ],
         "v1_snapshot_unchanged": true,
-        "note": "Reversible merge/split creating conflicting candidate decisions must enter adjudication, never silently change inclusion."
+        "note": "Reversible merge/split creating conflicting candidate decisions must enter adjudication, never silently change inclusion.",
+        "pending_adjudication": 0
       }
     }
   },
