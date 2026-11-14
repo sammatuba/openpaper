@@ -186,24 +186,25 @@ def _resolves_after(decision, merge):
 
 
 def _latest_per_actor(rows):
-    """Each actor's latest decision, deterministically by (protocol version, timestamp,
-    id); repeated solo submissions cannot make counts order-dependent (R13)."""
+    """Each actor's latest decision, deterministically by (protocol version, durable
+    event order); repeated solo submissions cannot make counts order-dependent (R13/R19)."""
     grouped = {}
     for row in rows: grouped.setdefault(str(field(row, "actor_id")), []).append(row)
-    latest = []
-    for members in grouped.values():
-        latest.append(sorted(members, key=lambda row: (int(field(row, "protocol_version")),
-                                                       as_time(field(row, "created_at")),
-                                                       str(field(row, "id"))))[-1])
-    return latest
+    return [_latest_decision(members) for members in grouped.values()]
+
+
+def _event_order(row):
+    """Durable ordering anchor: the shared event sequence when present (same-transaction
+    inserts still order strictly); timestamp otherwise (pure-function inputs)."""
+    seq = field(row, "event_sequence")
+    if seq is not None: return (1, int(seq))
+    return (0, as_time(field(row, "created_at")).timestamp())
 
 
 def _latest_decision(rows):
-    """Deterministic adjudication selection: highest protocol version, then latest
-    timestamp, then id — input order never changes the outcome (R12)."""
-    return sorted(rows, key=lambda row: (int(field(row, "protocol_version")),
-                                         as_time(field(row, "created_at")),
-                                         str(field(row, "id"))))[-1]
+    """Deterministic selection: highest protocol version, then durable event order —
+    input order, wall-clock ties and UUID order never change the outcome (R19)."""
+    return sorted(rows, key=lambda row: (int(field(row, "protocol_version")), _event_order(row)))[-1]
 
 
 def _resolve_representative(merges, report):
@@ -511,7 +512,7 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
         # AND no newer screening cohort exists: a later amendment cohort governs over an
         # older resolution (R16).
         for stage, merges in (conflict_stages.get(report_of_candidate.get(candidate_id, "")) or {}).items():
-            latest = max(merges, key=lambda m: (m["version"], as_time(m.get("created_at"))))
+            latest = max(merges, key=lambda m: (m["version"], _event_order(m)))
             qualifying = [d for d in decisions
                           if str(field(d, "candidate_id")) == candidate_id and field(d, "stage") == stage
                           and field(d, "role") == "adjudication" and int(field(d, "protocol_version")) <= protocol_version
@@ -522,10 +523,8 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
             resolution = _latest_decision(qualifying) if qualifying else None
             newest_screening = _latest_decision(screening) if screening else None
             if resolution is not None and (newest_screening is None
-                                           or (int(field(resolution, "protocol_version")),
-                                               as_time(field(resolution, "created_at")))
-                                           >= (int(field(newest_screening, "protocol_version")),
-                                               as_time(field(newest_screening, "created_at")))):
+                                           or (int(field(resolution, "protocol_version")), _event_order(resolution))
+                                           >= (int(field(newest_screening, "protocol_version")), _event_order(newest_screening))):
                 effective[(candidate_id, stage)] = field(resolution, "decision")
                 pending.discard((candidate_id, stage))
             elif resolution is not None:

@@ -431,6 +431,49 @@ class CountArithmeticTests(unittest.TestCase):
         self.assertEqual(pending_state["pending_adjudication"], 1)
         self.assertEqual(pending_state["included_reports"], 1)  # only C; B is pending, not included
 
+    def test_durable_ordering_beats_timestamps_and_uuid_order(self):
+        # R19: equal timestamps and arbitrary UUIDs never change outcomes — the shared
+        # event sequence orders merges, adjudications and repeated solo submissions.
+        review = FIXTURE["review"]
+        report_a, report_b, report_c = ("33000000-0000-4000-8000-000000000001",
+                                        "33000000-0000-4000-8000-000000000002",
+                                        "33000000-0000-4000-8000-000000000003")
+        candidate_b, candidate_c = "66000000-0000-4000-8000-000000000002", "66000000-0000-4000-8000-000000000003"
+        owner = FIXTURE["actors"]["owner"]
+        merge1 = {"kind": "report_merge", "created_at": "2026-01-01T00:00:00Z", "event_sequence": 10,
+                  "payload": {"source": report_a, "target": report_b, "conflicting_stages": ["fulltext"],
+                              "conflicting_decisions": [{"stage": "fulltext", "source": "included", "target": "excluded"}],
+                              "protocol_version": 1}}
+        resolution = {"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 1,
+                      "actor_id": owner, "decision": "included", "role": "adjudication",
+                      "created_at": "2026-01-01T00:00:00Z", "event_sequence": 11}
+        merge2 = {"kind": "report_merge", "created_at": "2026-01-01T00:00:00Z", "event_sequence": 12,
+                  "payload": {"source": report_c, "target": report_b, "conflicting_stages": ["fulltext"],
+                              "conflicting_decisions": [{"stage": "fulltext", "source": "included", "target": "excluded"}],
+                              "protocol_version": 1}}
+        links = [l for l in review["report_studies"] if l["study_id"]]
+        screening_modes = {"title_abstract": "solo", "fulltext": "dual"}
+        counts = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [merge1, merge2],
+                                     review["candidates"], list(review["decisions"]) + [resolution], links, 1,
+                                     screening_modes=screening_modes)
+        # The resolution covers the first conflict only; the second conflicting merge
+        # (sequence 12) leaves the representative pending, and C folds into B.
+        self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (0, 1))
+        # Repeated solo submissions with equal timestamps: the later sequence wins even
+        # when its UUID sorts lexicographically earlier.
+        first = {"candidate_id": "66000000-0000-4000-8000-000000000001", "stage": "title_abstract",
+                 "protocol_version": 1, "actor_id": owner, "decision": "included", "role": "primary",
+                 "created_at": "2026-01-01T00:00:00Z", "event_sequence": 20,
+                 "id": "ffffffff-0000-4000-8000-000000000001"}
+        second = {"candidate_id": "66000000-0000-4000-8000-000000000001", "stage": "title_abstract",
+                  "protocol_version": 1, "actor_id": owner, "decision": "excluded", "role": "primary",
+                  "created_at": "2026-01-01T00:00:00Z", "event_sequence": 21,
+                  "id": "00000000-0000-4000-8000-000000000002"}
+        counts = compute_flow_counts(review["occurrences"], review["mapping_events"], review["candidates"],
+                                     list(review["decisions"]) + [first, second], links, 1,
+                                     screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual(counts["title_abstract_excluded"], 2)  # A (sequence 21 supersedes 20) and F
+
     def test_chained_merge_accumulates_conflicts_per_representative_and_stage(self):
         # R5: A→B conflicts at title/abstract; B→C conflicts at fulltext. Resolving only
         # the full-text conflict on C must leave the title/abstract conflict pending.
