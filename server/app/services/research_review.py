@@ -512,23 +512,25 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
                 effective[(candidate_id, stage)] = field(resolution, "decision")
                 pending.discard((candidate_id, stage))
             elif resolution is not None:
-                # The resolution was superseded by a later screening cohort: that cohort
-                # governs (unanimous per-actor decisions decide; internal disagreement
-                # stays pending).
-                newest_key = ((int(field(newest_screening, "protocol_version"))),
-                              as_time(field(newest_screening, "created_at")))
-                cohort = [d for d in screening
-                          if (int(field(d, "protocol_version")), as_time(field(d, "created_at"))) == newest_key]
+                # The resolution was superseded by a later screening cohort: the full latest
+                # protocol-version cohort governs under the stage's screening mode — one
+                # reviewer never finalizes a dual stage (R17).
+                top = max(int(field(d, "protocol_version")) for d in screening)
+                cohort = [d for d in screening if int(field(d, "protocol_version")) == top]
                 cohort_decisions = {str(field(row, "actor_id")): field(row, "decision")
                                     for row in _latest_per_actor(cohort)}
                 values = set(cohort_decisions.values())
-                if len(values) == 1:
+                decided = (mode_for(stage) == "solo" and len(values) == 1) or \
+                          (mode_for(stage) == "dual" and len(cohort_decisions) >= 2 and len(values) == 1)
+                if decided:
                     effective[(candidate_id, stage)] = values.pop()
                     pending.discard((candidate_id, stage))
-                else: pending.add((candidate_id, stage))
+                else:
+                    effective.pop((candidate_id, stage), None)
+                    pending.add((candidate_id, stage))
             else:
-                pending.add((candidate_id, stage))
                 effective.pop((candidate_id, stage), None)
+                pending.add((candidate_id, stage))
 
     screened = [c for c in retained if (str(field(c, "id")), "title_abstract") in effective]
     ta_excluded = [c for c in screened if effective[(str(field(c, "id")), "title_abstract")] == "excluded"]

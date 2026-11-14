@@ -373,9 +373,63 @@ class CountArithmeticTests(unittest.TestCase):
                                         review["candidates"],
                                         list(review["decisions"]) + [resolution, amendment], links, 2,
                                         screening_modes=screening_modes)
-        # The v2 exclusion governs for B; D stays excluded from its v1 cohort; C included.
+        # The resolution no longer governs: the single-reviewer v2 cohort cannot finalize
+        # a dual stage, so B is pending (never included by the old adjudication); D stays
+        # excluded from its v1 cohort and C remains included.
         self.assertEqual((counts_v2["fulltext_excluded"], counts_v2["included_reports"], counts_v2["pending_adjudication"]),
-                         (2, 1, 0))
+                         (1, 1, 1))
+
+    def test_amendment_cohorts_enforce_dual_review_and_clear_pending(self):
+        # R17: the superseding cohort is the full latest protocol version — both reviewers
+        # participate under dual mode, disagreement stays pending and never coexists with
+        # an included count for the same candidate.
+        review = FIXTURE["review"]
+        report_a, report_b = "33000000-0000-4000-8000-000000000001", "33000000-0000-4000-8000-000000000002"
+        candidate_b = "66000000-0000-4000-8000-000000000002"
+        owner = FIXTURE["actors"]["owner"]
+        reviewer_1 = FIXTURE["actors"]["reviewer_1"]
+        merge = {"kind": "report_merge", "created_at": "2026-02-01T00:00:00Z",
+                 "payload": {"source": report_a, "target": report_b, "conflicting_stages": ["fulltext"],
+                             "conflicting_decisions": [{"stage": "fulltext", "source": "included", "target": "excluded"}],
+                             "protocol_version": 1}}
+        resolution = {"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 1,
+                      "actor_id": owner, "decision": "included", "role": "adjudication",
+                      "created_at": "2026-02-02T00:00:00Z"}
+        links = [l for l in review["report_studies"] if l["study_id"]]
+        screening_modes = {"title_abstract": "solo", "fulltext": "dual"}
+        # Incomplete dual amendment at v2 (one reviewer): pending, not finalized.
+        single = {"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 2,
+                  "actor_id": owner, "decision": "excluded", "role": "primary", "created_at": "2026-03-01T00:00:00Z"}
+        counts = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [merge],
+                                     review["candidates"], list(review["decisions"]) + [resolution, single], links, 2,
+                                     screening_modes=screening_modes)
+        self.assertEqual((counts["pending_adjudication"], counts["included_reports"]), (1, 1))
+        # Complete dual amendment at v2 with agreement: decided; both submission orders equal.
+        first = {"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 2,
+                 "actor_id": owner, "decision": "excluded", "role": "primary", "created_at": "2026-03-01T00:00:00Z"}
+        second = {"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 2,
+                  "actor_id": reviewer_1, "decision": "excluded", "role": "primary", "created_at": "2026-03-01T00:00:01Z"}
+        decided = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [merge],
+                                      review["candidates"], list(review["decisions"]) + [resolution, first, second],
+                                      links, 2, screening_modes=screening_modes)
+        self.assertEqual((decided["pending_adjudication"], decided["fulltext_excluded"]), (0, 2))
+        swapped = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [merge],
+                                      review["candidates"], list(review["decisions"]) + [resolution, second, first],
+                                      links, 2, screening_modes=screening_modes)
+        self.assertEqual(swapped, decided)
+        # A v1 cohort disagreeing after the resolution (same-version, later submissions)
+        # stays pending and the resolution does not remain included.
+        disagreeing = [{"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 1,
+                        "actor_id": owner, "decision": "excluded", "role": "primary",
+                        "created_at": "2026-02-03T00:00:00Z"},
+                       {"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 1,
+                        "actor_id": reviewer_1, "decision": "included", "role": "primary",
+                        "created_at": "2026-02-03T00:00:00Z"}]
+        pending_state = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [merge],
+                                            review["candidates"], list(review["decisions"]) + [resolution] + disagreeing,
+                                            links, 1, screening_modes=screening_modes)
+        self.assertEqual(pending_state["pending_adjudication"], 1)
+        self.assertEqual(pending_state["included_reports"], 1)  # only C; B is pending, not included
 
     def test_chained_merge_accumulates_conflicts_per_representative_and_stage(self):
         # R5: A→B conflicts at title/abstract; B→C conflicts at fulltext. Resolving only
