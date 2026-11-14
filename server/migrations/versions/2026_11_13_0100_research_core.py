@@ -14,6 +14,7 @@ def timestamps():
 
 
 def upgrade():
+    op.execute("CREATE SEQUENCE IF NOT EXISTS research_event_seq")
     op.create_table("research_projects",
         sa.Column("project_id",sa.UUID(),sa.ForeignKey("project.id",ondelete="CASCADE"),primary_key=True),
         sa.Column("storage_generation",sa.String(4),nullable=False,server_default="v1"),
@@ -136,6 +137,7 @@ def upgrade():
         sa.Column("role",sa.String(16),nullable=False,server_default="primary"),
         sa.Column("reason",sa.Text(),nullable=False,server_default=""),
         sa.Column("cited_text",sa.Text()),sa.Column("criterion_judgments",JSONB(),nullable=False,server_default="[]"),
+        sa.Column("event_sequence",sa.BigInteger(),nullable=False,server_default=sa.text("nextval('research_event_seq')")),
         sa.CheckConstraint("decision IN ('included','excluded','unclear')",name="ck_review_decision_value"),
         sa.CheckConstraint("stage IN ('title_abstract','fulltext')",name="ck_review_decision_stage"),
         sa.CheckConstraint("role IN ('primary','secondary','adjudication')",name="ck_review_decision_role"),*timestamps())
@@ -145,6 +147,7 @@ def upgrade():
         sa.Column("project_id",sa.UUID(),sa.ForeignKey("project.id",ondelete="CASCADE"),nullable=False),
         sa.Column("kind",sa.String(20),nullable=False),
         sa.Column("payload",JSONB(),nullable=False),
+        sa.Column("event_sequence",sa.BigInteger(),nullable=False,server_default=sa.text("nextval('research_event_seq')")),
         sa.Column("actor_id",sa.UUID(),sa.ForeignKey("users.id",ondelete="SET NULL")),
         sa.CheckConstraint("kind IN ('occurrence_map','report_merge','report_split','version_replace','protocol_amend','study_link')",name="ck_review_mapping_kind"),*timestamps())
     op.create_index("ix_review_mapping_events_project_id","review_mapping_events",["project_id"])

@@ -36,6 +36,22 @@ def _validate_native_identity(db: Session, project_id, actor_id, provenance, *, 
         raise HTTPException(422, "Invalid assistant provenance")
 
 
+def _validate_references(db: Session, project_id, entity_type: str, typed: dict):
+    """Entity-reference and named-decider validation (contract 2.1): assumption and gap
+    dependencies must be project records; a decision names an existing user."""
+    if entity_type == "assumption": ids = typed.get("basis_entity_ids") or []
+    elif entity_type == "gap": ids = typed.get("blocking_entity_ids") or []
+    else: ids = []
+    if ids:
+        unique = {str(i) for i in ids}
+        found = db.query(ResearchEntity).filter(ResearchEntity.id.in_([UUID(i) for i in unique]),
+                                                ResearchEntity.project_id == project_id).count()
+        if found != len(unique): raise HTTPException(422, "Referenced entities must be project records")
+    if entity_type == "decision":
+        from app.database.models import User
+        if not db.get(User, UUID(str(typed["decided_by"]))): raise HTTPException(422, "Decided-by must reference a user")
+
+
 def _verify_anchor(db: Session, project_id, payload, latest):
     """Server-side anchor integrity (C05): the quotation digest must match its own text,
     the source version must belong to this project, and — unless the complete anchor is
@@ -91,6 +107,7 @@ def create_entity(db: Session, project_id, actor_id, entity_type: str, payload: 
     try: typed = validate_payload(entity_type, payload)
     except ValueError as error: raise HTTPException(422, str(error)) from error
     _verify_anchor(db, project_id, typed, None)
+    _validate_references(db, project_id, entity_type, typed)
     try: provenance = validate_provenance(origin, provenance or {})
     except ValueError as error: raise HTTPException(422, str(error)) from error
     if origin == ResearchOrigin.ASSISTANT.value:
@@ -151,6 +168,7 @@ def revise_entity(db: Session, project_id, actor_id, entity_id, expected_revisio
         # AI-authored content applied onto human/imported state still derives from that state (C27).
         derived = {"entity_id": str(entity.id), "revision": latest.revision}
     _verify_anchor(db, project_id, typed, latest)
+    _validate_references(db, project_id, entity.type, typed)
     try: provenance = validate_provenance(origin, provenance or {})
     except ValueError as error: raise HTTPException(422, str(error)) from error
     if origin == ResearchOrigin.ASSISTANT.value:

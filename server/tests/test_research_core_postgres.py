@@ -36,6 +36,7 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                  ReviewOccurrence, ReviewStudy, ReviewReportStudy, ReviewCandidate, ReviewDecision, ReviewMappingEvent,
                  ResearchProposal, MeteredPriceTable, MeteredOperation)  # research_projects comes from the shared harness
         with cls.engine.begin() as conn:
+            conn.execute(cls.text("CREATE SEQUENCE IF NOT EXISTS research_event_seq"))
             for model in order: model.__table__.create(conn)
 
     @classmethod
@@ -475,6 +476,64 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             finding = db.get(ResearchEntity, UUID(ids["finding_id"]))
             self.assertNotIn("source_version_id", finding.payload["anchor"])
             self.assertIn("requires review", finding.payload["anchor"]["notes"])
+
+    async def test_same_transaction_adjudication_and_reference_validation(self):
+        # R18: an adjudication recorded in the SAME transaction as the conflicting merge
+        # still resolves it (durable shared-sequence ordering), and the contract payload
+        # fields validate their references.
+        s = self.seed()
+        other = self.seed()
+        self._write_v1_row(s.project, {"format": "openpaper/investigation", "version": 1, "case": {},
+                                       "claims": [], "findings": [], "relations": [],
+                                       "manuscript": {"title": "", "sections": []}})
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()  # solo modes: single decisions are final
+            source, target = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([source, target]); db.commit()
+            version_x, version_y = ReviewReportVersion(id=uuid4(), report_id=source.id), ReviewReportVersion(id=uuid4(), report_id=target.id)
+            db.add_all([version_x, version_y]); db.commit()
+            candidate_x, candidate_y = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_x, project_id=s.project, report_id=source.id, selected_version_id=version_x.id),
+                        ReviewCandidate(id=candidate_y, project_id=s.project, report_id=target.id, selected_version_id=version_y.id)])
+            db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate_x, "title_abstract", 1, "included", commit=False)
+            research_review.record_decision(db, s.project, s.owner, candidate_y, "title_abstract", 1, "included", commit=False)
+            research_review.record_decision(db, s.project, s.owner, candidate_x, "fulltext", 1, "included", commit=False)
+            research_review.record_decision(db, s.project, s.owner, candidate_y, "fulltext", 1, "excluded", commit=False)
+            result = research_review.merge_reports(db, s.project, s.owner, source.id, target.id, "Fixture: conflict",
+                                                   protocol_version=1, commit=False)
+            self.assertTrue(result["requires_adjudication"])
+            # Same transaction: the resolution still postdates the merge event.
+            research_review.record_decision(db, s.project, s.owner, candidate_y, "fulltext", 1, "included",
+                                            role="adjudication", commit=False)
+            db.commit()
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (1, 0))
+            # Contract payload fields persist, read back, and validate references.
+            claim = research_entities.create_entity(db, s.project, s.owner, "claim", {"statement": "Anchor claim."})
+            assumption = research_entities.create_entity(db, s.project, s.owner, "assumption",
+                                                         {"text": "Fixture assumption.",
+                                                          "basis_entity_ids": [claim["entity_id"]]})
+            self.assertEqual(assumption["revision"], 1)
+            gap = research_entities.create_entity(db, s.project, s.owner, "gap",
+                                                  {"description": "Fixture gap.",
+                                                   "blocking_entity_ids": [claim["entity_id"]]})
+            loaded = research_entities.load_entity(db, s.project, s.owner, UUID(assumption["entity_id"]))
+            self.assertEqual(loaded["entity"]["payload"]["basis_entity_ids"], [claim["entity_id"]])
+            with self.assertRaises(HTTPException) as dangling:
+                research_entities.create_entity(db, s.project, s.owner, "gap",
+                                                {"description": "Dangling dependency.",
+                                                 "blocking_entity_ids": [str(uuid4())]})
+            self.assertEqual(dangling.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as cross_user:
+                research_entities.create_entity(db, s.project, s.owner, "decision",
+                                                {"text": "Fixture decision.", "decided_by": str(uuid4())})
+            self.assertEqual(cross_user.exception.status_code, 422)
+            decision = research_entities.create_entity(db, s.project, s.owner, "decision",
+                                                       {"text": "Fixture decision.", "decided_by": str(s.owner)})
+            self.assertIn("change_sequence", decision)
 
     async def test_editing_imported_content_preserves_its_provenance(self):
         s = self.seed()

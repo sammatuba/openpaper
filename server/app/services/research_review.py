@@ -52,6 +52,7 @@ def amend_protocol(db: Session, project_id, actor_id, *, new_version, criteria=N
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="protocol_amend",
                               payload={"from": str(current.id), "from_version": current.version,
                                        "to": str(amended.id), "to_version": new_version}, actor_id=actor_id))
+    db.flush()  # draw the durable sequence anchor at call order
     if commit: db.commit()
     return amended
 
@@ -76,6 +77,7 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
                               payload={"candidate": str(candidate_id), "retained": str(retained_occurrence_id),
                                        "removed": [str(i) for i in removed_occurrence_ids],
                                        "protocol_version": protocol_version}, actor_id=actor_id))
+    db.flush()  # draw the durable sequence anchor at call order
     if commit: db.commit()
 
 
@@ -111,6 +113,7 @@ def record_decision(db: Session, project_id, actor_id, candidate_id, stage, prot
                          role=role, reason=reason, cited_text=cited_text,
                          criterion_judgments=criterion_judgments or [])
     db.add(row)
+    db.flush()  # draw the durable sequence anchor at call order
     if commit: db.commit()
     return row
 
@@ -168,6 +171,18 @@ def as_time(value):
         try: return datetime.fromisoformat(value)
         except ValueError: return datetime.min.replace(tzinfo=timezone.utc)
     return value
+
+
+def _resolves_after(decision, merge):
+    """Does this adjudication postdate the merge event it resolves? Durable shared-sequence
+    ordering when both carry event_sequence (same-transaction inserts still order strictly);
+    version-then-timestamp otherwise."""
+    res_seq, merge_seq = field(decision, "event_sequence"), field(merge, "event_sequence")
+    if res_seq is not None and merge_seq is not None:
+        return int(res_seq) > int(merge_seq)
+    return (int(field(decision, "protocol_version")) > int(merge["version"])
+            or (int(field(decision, "protocol_version")) == int(merge["version"])
+                and as_time(field(decision, "created_at")) > as_time(merge.get("created_at"))))
 
 
 def _latest_per_actor(rows):
@@ -286,6 +301,7 @@ def link_study(db: Session, project_id, actor_id, report_id, study_id, rationale
                               payload={"report": str(report_id), "study": str(study_id),
                                        "linkage_state": linkage_state, "rationale": rationale,
                                        "protocol_version": protocol_version}, actor_id=actor_id))
+    db.flush()  # draw the durable sequence anchor at call order
     if commit: db.commit()
 
 
@@ -329,6 +345,7 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
                               payload={"source": str(source.id), "target": str(target.id), "rationale": rationale,
                                        "conflicting_decisions": conflicts, "conflicting_stages": stages,
                                        "protocol_version": protocol_version}, actor_id=actor_id))
+    db.flush()  # draw the durable sequence anchor at call order
     if commit: db.commit()
     return {"conflicting_decisions": conflicts, "conflicting_stages": stages, "requires_adjudication": bool(conflicts)}
 
@@ -343,6 +360,7 @@ def split_report(db: Session, project_id, actor_id, source_report_id, rationale,
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="report_split",
                               payload={"source": str(source.id), "rationale": rationale,
                                        "protocol_version": protocol_version}, actor_id=actor_id))
+    db.flush()  # draw the durable sequence anchor at call order
     if commit: db.commit()
 
 
@@ -406,7 +424,8 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
                 # no earlier than the latest conflicting merge it must resolve.
                 stages.setdefault(conflict["stage"], []).append(
                     {"source": str(payload["source"]), "version": int(payload.get("protocol_version", 1)),
-                     "created_at": field(event, "created_at")})
+                     "created_at": field(event, "created_at"),
+                     "event_sequence": field(event, "event_sequence")})
         elif kind == "report_split" and int(payload.get("protocol_version", 1)) <= protocol_version:
             merge_map.pop(str(payload["source"]), None)
             for staged in conflict_stages.values():
@@ -496,9 +515,7 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
             qualifying = [d for d in decisions
                           if str(field(d, "candidate_id")) == candidate_id and field(d, "stage") == stage
                           and field(d, "role") == "adjudication" and int(field(d, "protocol_version")) <= protocol_version
-                          and (int(field(d, "protocol_version")) > latest["version"]
-                               or (int(field(d, "protocol_version")) == latest["version"]
-                                   and as_time(field(d, "created_at")) > as_time(latest.get("created_at"))))]
+                          and _resolves_after(d, latest)]
             screening = [d for d in decisions
                          if str(field(d, "candidate_id")) == candidate_id and field(d, "stage") == stage
                          and field(d, "role") != "adjudication" and int(field(d, "protocol_version")) <= protocol_version]

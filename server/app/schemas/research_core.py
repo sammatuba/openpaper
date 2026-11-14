@@ -85,17 +85,20 @@ class QuestionPayload(Record):
 
 class AssumptionPayload(Record):
     text: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=20_000)]
+    basis_entity_ids: list[UUID] = Field(default_factory=list, max_length=100)
     status: Literal["active", "retired"] = "active"
 
 
 class DecisionPayload(Record):
     text: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=20_000)]
     rationale: Text = ""
+    decided_by: UUID  # the named decider (contract 2.1)
     status: Literal["active", "superseded"] = "active"
 
 
 class GapPayload(Record):
     description: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=20_000)]
+    blocking_entity_ids: list[UUID] = Field(default_factory=list, max_length=100)
     status: Literal["open", "addressed"] = "open"
 
 

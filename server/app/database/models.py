@@ -29,7 +29,7 @@ from sqlalchemy.orm import (  # type: ignore
     relationship,
     sessionmaker,
 )
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text as sa_text
 
 # Special notes:
 # - All models inherit from the `Base` class, which provides common fields and methods.
@@ -1841,6 +1841,10 @@ class ProjectDraftRequest(Base):
     message_id = Column(UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
 
 
+def sa_text_nextval():
+    return sa_text("nextval('research_event_seq')")
+
+
 class ResearchOrigin(str, Enum):
     HUMAN = "human"
     ASSEMBLED = "assembled"
@@ -2031,6 +2035,7 @@ class ReviewDecision(Base):
     reason = Column(Text, nullable=False, default="")
     cited_text = Column(Text, nullable=True)
     criterion_judgments = Column(JSONB, nullable=False, default=list)
+    event_sequence = Column(BigInteger, nullable=False, server_default=sa_text_nextval())
 
 
 class ReviewMappingEvent(Base):
@@ -2043,6 +2048,9 @@ class ReviewMappingEvent(Base):
     project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False, index=True)
     kind = Column(String(20), nullable=False)
     payload = Column(JSONB, nullable=False)
+    # Shared monotonic ordering anchor: drawn from one sequence, a decision recorded in
+    # the same transaction as a merge still orders strictly after it.
+    event_sequence = Column(BigInteger, nullable=False, server_default=sa_text_nextval())
     actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
 
