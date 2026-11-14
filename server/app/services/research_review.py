@@ -66,6 +66,10 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
     if len(set(mapped)) != len(mapped): raise HTTPException(422, "Mapping sets must be disjoint")
     rows = db.query(ReviewOccurrence).filter(ReviewOccurrence.id.in_(mapped), ReviewOccurrence.project_id == project_id).all()
     if {str(r.id) for r in rows} != set(mapped): raise HTTPException(422, "Occurrences must belong to this project")
+    # A mapping cannot place an occurrence into an earlier snapshot than the acquisition
+    # set that introduced it (R13).
+    premature = [str(r.id) for r in rows if r.protocol_version > protocol_version]
+    if premature: raise HTTPException(422, "Mapping protocol version predates the occurrence acquisition")
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="occurrence_map",
                               payload={"candidate": str(candidate_id), "retained": str(retained_occurrence_id),
                                        "removed": [str(i) for i in removed_occurrence_ids],
@@ -160,6 +164,19 @@ def as_time(value):
         try: return datetime.fromisoformat(value)
         except ValueError: return datetime.min.replace(tzinfo=timezone.utc)
     return value
+
+
+def _latest_per_actor(rows):
+    """Each actor's latest decision, deterministically by (protocol version, timestamp,
+    id); repeated solo submissions cannot make counts order-dependent (R13)."""
+    grouped = {}
+    for row in rows: grouped.setdefault(str(field(row, "actor_id")), []).append(row)
+    latest = []
+    for members in grouped.values():
+        latest.append(sorted(members, key=lambda row: (int(field(row, "protocol_version")),
+                                                       as_time(field(row, "created_at")),
+                                                       str(field(row, "id"))))[-1])
+    return latest
 
 
 def _latest_decision(rows):
@@ -326,10 +343,7 @@ def _effective(db: Session, report_id, stage, protocol_version, protocol):
         group = by_version[version]
         adjudication = [r for r in group if r.role == "adjudication"]
         if adjudication: return _latest_decision(adjudication).decision, "decided"
-        latest_per_actor = {}
-        for row in group:
-            if row.role in ("primary", "secondary"): latest_per_actor[str(row.actor_id)] = row
-        distinct = list(latest_per_actor.values())
+        distinct = _latest_per_actor([row for row in group if row.role in ("primary", "secondary")])
         values = {r.decision for r in distinct}
         if (protocol.screening_modes or {}).get(stage, "solo") == "dual":
             if len(distinct) >= 2:
@@ -398,8 +412,9 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
     # through versioned updates; a snapshot at protocol version V sees exactly the sets
     # that existed then (strategy 6.1).
     occurrences = [o for o in occurrences if int(field(o, "protocol_version") or 1) <= protocol_version]
-    identified = len({str(field(o, "id")) for o in occurrences})
-    duplicate_removals = sum(1 for state in occurrence_state.values() if state == "removed")
+    snapshot_ids = {str(field(o, "id")) for o in occurrences}
+    identified = len(snapshot_ids)
+    duplicate_removals = sum(1 for oid, state in occurrence_state.items() if state == "removed" and oid in snapshot_ids)
     merged_sources = set(merge_map)
     candidates = [c for c in candidates if int(field(c, "protocol_version") or 1) <= protocol_version]
     retained = [c for c in candidates if field(c, "retained") and str(field(c, "report_id")) not in merged_sources]
@@ -416,7 +431,8 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
         candidate_report = report_of_candidate.get(str(payload.get("candidate")))
         if candidate_report is None: continue
         if _resolve_representative(merge_map, candidate_report) in representatives:
-            if payload.get("retained"): mapped_occurrences.add(str(payload["retained"]))
+            if payload.get("retained") and str(payload["retained"]) in snapshot_ids:
+                mapped_occurrences.add(str(payload["retained"]))
             for occurrence_id in payload.get("removed", []): mapped_occurrences.discard(str(occurrence_id))
     # Study linkage states derive from the base rows plus versioned study_link events.
     link_states = {}
@@ -446,10 +462,8 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
             if adjudication:
                 effective[(candidate_id, stage)] = field(_latest_decision(adjudication), "decision")
                 continue
-            distinct = {}
-            for row in group:
-                if field(row, "role") in ("primary", "secondary"):
-                    distinct[str(field(row, "actor_id"))] = field(row, "decision")
+            distinct = {str(field(row, "actor_id")): field(row, "decision")
+                        for row in _latest_per_actor([row for row in group if field(row, "role") in ("primary", "secondary")])}
             values = set(distinct.values())
             if mode_for(stage) == "dual":
                 if len(distinct) >= 2 and len(values) == 1: effective[(candidate_id, stage)] = values.pop()

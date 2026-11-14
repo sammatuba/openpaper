@@ -308,6 +308,43 @@ class CountArithmeticTests(unittest.TestCase):
         self.assertEqual(forward["included_reports"], 1)  # the v3 exclusion decides
         self.assertEqual(backward, forward)
 
+    def test_solo_repeat_submissions_are_order_independent(self):
+        # R13: repeated solo submissions resolve to each actor's latest decision
+        # deterministically; input order never changes counts.
+        review = FIXTURE["review"]
+        owner = FIXTURE["actors"]["owner"]
+        candidate_a = "66000000-0000-4000-8000-000000000001"
+        first = {"candidate_id": candidate_a, "stage": "title_abstract", "protocol_version": 1,
+                 "actor_id": owner, "decision": "excluded", "role": "primary", "created_at": "2026-01-01T00:00:00Z"}
+        second = {"candidate_id": candidate_a, "stage": "title_abstract", "protocol_version": 1,
+                  "actor_id": owner, "decision": "included", "role": "primary", "created_at": "2026-01-02T00:00:00Z"}
+        links = [l for l in review["report_studies"] if l["study_id"]]
+        screening_modes = {"title_abstract": "solo", "fulltext": "dual"}
+        forward = compute_flow_counts(review["occurrences"], review["mapping_events"], review["candidates"],
+                                      list(review["decisions"]) + [first, second], links, 1, screening_modes=screening_modes)
+        backward = compute_flow_counts(review["occurrences"], review["mapping_events"], review["candidates"],
+                                       list(review["decisions"]) + [second, first], links, 1, screening_modes=screening_modes)
+        self.assertEqual(forward, backward)
+        self.assertEqual(forward["screened"], 6)  # the later 'included' wins
+        self.assertEqual(forward["reports_sought"], 5)
+
+    def test_snapshot_membership_guards_conservation(self):
+        # R13: an occurrence outside the snapshot (mapped before its acquisition version)
+        # never breaks conservation; the service refuses such mappings outright.
+        review = FIXTURE["review"]
+        premature_map = {"kind": "occurrence_map", "payload": {"candidate": "66000000-0000-4000-8000-000000000002",
+                                                               "retained": "22000000-0000-4000-8000-000000000011",
+                                                               "removed": ["22000000-0000-4000-8000-000000000004"],
+                                                               "protocol_version": 1}}
+        late_occurrence = {"id": "22000000-0000-4000-8000-000000000011", "protocol_version": 2}
+        counts = compute_flow_counts(list(review["occurrences"]) + [late_occurrence],
+                                     list(review["mapping_events"]) + [premature_map],
+                                     review["candidates"], list(review["decisions"]),
+                                     [l for l in review["report_studies"] if l["study_id"]], 1,
+                                     screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual(counts["identified_occurrences"],
+                         counts["duplicate_removals"] + counts["retained_occurrences"])
+
     def test_chained_merge_accumulates_conflicts_per_representative_and_stage(self):
         # R5: A→B conflicts at title/abstract; B→C conflicts at fulltext. Resolving only
         # the full-text conflict on C must leave the title/abstract conflict pending.

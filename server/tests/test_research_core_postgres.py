@@ -158,6 +158,12 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             db.add(later_candidate); db.commit()
             research_review.map_occurrences(db, project, owner, later_candidate.id, later_occurrence.id, [],
                                             protocol_version=2, commit=False)
+            # A mapping cannot place an occurrence into an earlier snapshot than the
+            # acquisition set that introduced it.
+            with self.assertRaises(HTTPException) as premature:
+                research_review.map_occurrences(db, project, owner, UUID("66000000-0000-4000-8000-000000000002"),
+                                                later_occurrence.id, [], protocol_version=1)
+            self.assertEqual(premature.exception.status_code, 422)
             db.commit()
             research_review.link_study(db, project, owner, UUID("33000000-0000-4000-8000-000000000003"),
                                        UUID("55000000-0000-4000-8000-000000000002"),
