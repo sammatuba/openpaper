@@ -384,6 +384,10 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
         document, ids = self._v1_document(uuid4())
         self._write_v1_row(s.project, document)
         other = self.seed()
+        editor = uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": editor, "e": str(editor) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": editor})
         with self.Session() as db:
             research_convert.convert_project(db, s.project, s.owner)
             request_id, message_id, conversation_id = uuid4(), uuid4(), uuid4()
@@ -395,9 +399,12 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                                            request_hash="a" * 64, snapshot={}, base_revision=1,
                                            section_id=uuid4(), state=state,
                                            conversation_id=conversation_id, message_id=message_id)
-            db.add(draft_request(s.project, s.owner)); db.commit()
+            db.add(draft_request(s.project, s.owner))
+            # Persist a genuine foreign-project request: cross-project identity is refused
+            # even though the row exists and is complete.
+            foreign_request = draft_request(other.project, other.owner, request_id=uuid4())
+            db.add(foreign_request); db.commit()
             claim_id = UUID(ids["claim_id"])
-            _ = other  # seeded before the loop: cross-project requests must be refused
             provenance = {"request_id": str(request_id), "message_id": str(message_id)}
             created = research_entities.create_entity(db, s.project, s.owner, "claim",
                                                       {"statement": "Assisted claim."}, origin="assistant",
@@ -409,16 +416,22 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                                                          provenance={"request_id": str(uuid4()), "message_id": str(message_id)}), 422),
                 (lambda: research_entities.create_entity(db, s.project, s.owner, "claim",
                                                          {"statement": "Cross."}, origin="assistant",
-                                                         provenance={"request_id": str(draft_request(other.project, other.owner, request_id=uuid4()).id),
+                                                         provenance={"request_id": str(foreign_request.id),
                                                                      "message_id": str(message_id)}), 422),
-                (lambda: research_entities.create_entity(db, s.project, s.viewer, "claim",
+                # An authorized editor introducing another actor's request identity is refused
+                # by provenance validation, not merely by authorization.
+                (lambda: research_entities.create_entity(db, s.project, editor, "claim",
                                                          {"statement": "Wrong actor."}, origin="assistant",
-                                                         provenance=provenance), 403),  # authorization precedes provenance validation
+                                                         provenance=provenance), 422),
             ):
                 with self.assertRaises(HTTPException) as forged:
                     mutate()
                 self.assertEqual(forged.exception.status_code, expected)
-            # State transitions are re-checked on revisions too.
+            # Preserved identity travels: an authorized collaborator edits the assistant text.
+            revised = research_entities.revise_entity(db, s.project, editor, UUID(created["entity_id"]), 1,
+                                                      {"statement": "Collaborator edit of assisted claim."})
+            self.assertEqual(revised["revision"], 2)
+            # State transitions are re-checked on revisions with newly introduced identity too.
             db.add(draft_request(s.project, s.owner, state="pending", request_id=uuid4())); db.commit()
         with self.Session() as db:
             pending_request = db.query(ProjectDraftRequest).filter(ProjectDraftRequest.state == "pending").first()
@@ -428,6 +441,24 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                                                 provenance={"request_id": str(pending_request.id),
                                                             "message_id": str(pending_request.message_id)})
             self.assertEqual(incomplete.exception.status_code, 422)
+            # Proposal application inherits the same validation: a valid native proposal
+            # applies; one carrying forged identity is refused at apply time.
+            from app.services import research_proposals
+            valid, _ = research_proposals.create_proposal(db, s.project, s.owner, "assistant",
+                                                          {"request_id": str(request_id), "message_id": str(message_id),
+                                                           "edits": [{"entity_id": ids["claim_id"], "payload": {"statement": "Assisted proposal."}}]},
+                                                          {ids["claim_id"]: 1}, idempotency_key="native-valid")
+            research_proposals.approve_proposal(db, s.project, s.owner, valid.id)
+            result = research_proposals.apply_proposal(db, s.project, s.owner, valid.id)
+            self.assertFalse(result["replayed"])
+            forged_proposal, _ = research_proposals.create_proposal(db, s.project, s.owner, "assistant",
+                                                                    {"request_id": str(uuid4()), "message_id": str(uuid4()),
+                                                                     "edits": [{"entity_id": ids["claim_id"], "payload": {"statement": "Forged identity proposal."}}]},
+                                                                    {ids["claim_id"]: 2}, idempotency_key="native-forged")
+            research_proposals.approve_proposal(db, s.project, s.owner, forged_proposal.id)
+            with self.assertRaises(HTTPException) as forged_apply:
+                research_proposals.apply_proposal(db, s.project, s.owner, forged_proposal.id)
+            self.assertEqual(forged_apply.exception.status_code, 422)
 
     # ---------- C05/C07: forgery, endpoint legality, isolation ----------
 

@@ -17,18 +17,22 @@ from app.schemas.research_core import RELATION_TYPES, endpoint_allowed, validate
 from . import research_access
 
 
-def _validate_native_identity(db: Session, project_id, actor_id, provenance):
+def _validate_native_identity(db: Session, project_id, actor_id, provenance, *, require_ownership=True):
     """Durable native-assistant identity (contract 2.2, v1 semantics): the request must
-    exist, belong to this project and actor, be completed, and link to the cited message."""
+    exist, belong to this project, be completed, and link to the cited message. Requester
+    ownership is enforced only when the identity is newly introduced — preserved
+    historical identity travels with derived revisions for any authorized editor
+    (v1 distinguishes preserved provenance from new identity)."""
     request_id, message_id = provenance.get("request_id"), provenance.get("message_id")
     try:
         request_row = db.get(ProjectDraftRequest, UUID(str(request_id)))
         message = db.get(Message, UUID(str(message_id)))
     except (ValueError, AttributeError) as error:
         raise HTTPException(422, "Invalid assistant provenance") from error
-    if (not request_row or request_row.project_id != project_id or request_row.requester_id != actor_id
+    if (not request_row or request_row.project_id != project_id
         or request_row.state != "completed" or str(request_row.message_id) != provenance["message_id"]
-        or not message or message.conversation_id != request_row.conversation_id):
+        or not message or message.conversation_id != request_row.conversation_id
+        or (require_ownership and request_row.requester_id != actor_id)):
         raise HTTPException(422, "Invalid assistant provenance")
 
 
@@ -112,6 +116,7 @@ def revise_entity(db: Session, project_id, actor_id, entity_id, expected_revisio
     except ValueError as error: raise HTTPException(422, str(error)) from error
     latest = db.query(ResearchEntityRevision).filter(ResearchEntityRevision.entity_id == entity.id).order_by(ResearchEntityRevision.revision.desc()).first()
     derived = None
+    inherited_identity = False
     ai_origins = (ResearchOrigin.ASSISTANT.value, ResearchOrigin.EXTERNAL_AI.value)
     if latest and latest.origin in ai_origins:
         # Deriving is mandatory for AI-origin content; origin is never reset or erased and
@@ -126,6 +131,7 @@ def revise_entity(db: Session, project_id, actor_id, entity_id, expected_revisio
         origin = latest.origin
         provenance = {**(latest.provenance or {}), **{k: v for k, v in supplied.items() if k not in identity_keys}, "edited": True}
         derived = {"entity_id": str(entity.id), "revision": latest.revision}
+        inherited_identity = origin == ResearchOrigin.ASSISTANT.value
     elif origin in ai_origins and latest is not None:
         # AI-authored content applied onto human/imported state still derives from that state (C27).
         derived = {"entity_id": str(entity.id), "revision": latest.revision}
@@ -133,7 +139,7 @@ def revise_entity(db: Session, project_id, actor_id, entity_id, expected_revisio
     try: provenance = validate_provenance(origin, provenance or {})
     except ValueError as error: raise HTTPException(422, str(error)) from error
     if origin == ResearchOrigin.ASSISTANT.value:
-        _validate_native_identity(db, project_id, actor_id, provenance)
+        _validate_native_identity(db, project_id, actor_id, provenance, require_ownership=not inherited_identity)
     revision = entity.revision + 1
     entity.revision = revision; entity.payload = typed
     db.add(ResearchEntityRevision(id=uuid4(), entity_id=entity.id, revision=revision, payload=typed, origin=origin,
