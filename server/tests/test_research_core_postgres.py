@@ -1144,17 +1144,17 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(outcomes), [200, 429, 429])  # exactly one admission wins
 
     async def test_review_mutations_advance_change_sequence(self):
-        # R27: every committed review mutation advances the project change sequence
-        # atomically; failures roll the sequence back with the rest of the transaction.
+        # R27/R28: every committed review mutation advances the project change sequence
+        # atomically (UPDATE ... RETURNING); failures roll the sequence back with the
+        # transaction; cached sessions and concurrent initializations cannot lose draws.
         from app.database.models import ResearchProject
+        from unittest.mock import patch
         s = self.seed()
         with self.Session() as db:
             sequence_at_start = db.get(ResearchProject, s.project)
             self.assertIsNone(sequence_at_start)  # root created by the first research mutation
             research_review.create_protocol(db, s.project, s.owner, version=1, commit=False)
             db.commit()
-            root = db.get(ResearchProject, s.project)
-            self.assertEqual(root.change_sequence, 1)
             report = ReviewReport(id=uuid4(), project_id=s.project)
             db.add(report); db.commit()  # parent before child
             candidate = ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report.id)
@@ -1162,32 +1162,65 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             occurrence = ReviewOccurrence(id=uuid4(), project_id=s.project, provider="fixture",
                                           search_ref="fixture-search", external_hit_id="hit-1")
             db.add(occurrence); db.commit()
-            research_review.map_occurrences(db, s.project, s.owner, candidate.id, occurrence.id, [])
+            receipt = research_review.map_occurrences(db, s.project, s.owner, candidate.id, occurrence.id, [])
+            self.assertEqual(receipt["change_sequence"], 2)
             research_review.record_decision(db, s.project, s.owner, candidate.id, "title_abstract", 1, "included")
-            root = db.get(ResearchProject, s.project)
-            self.assertEqual(root.change_sequence, 3)  # mapping + decision each advanced it
-            # A failed mutation rolls the sequence back with its transaction.
-            with self.assertRaises(HTTPException):
-                research_review.record_decision(db, s.project, uuid4(), candidate.id, "title_abstract", 1, "included")
-            root = db.get(ResearchProject, s.project)
-            self.assertEqual(root.change_sequence, 3)
-            # Concurrent mutations serialize without lost updates.
+            with self.Session() as db:
+                root = db.get(ResearchProject, s.project)
+                self.assertEqual(root.change_sequence, 3)  # mapping + decision each advanced it
+            # A failure AFTER sequence advancement rolls the sequence back with the
+            # transaction: no decision row, no sequence change.
+            with self.Session() as db, patch.object(db, "commit", side_effect=RuntimeError("Synthetic failure")):
+                with self.assertRaises(RuntimeError):
+                    research_review.record_decision(db, s.project, s.owner, candidate.id, "title_abstract", 1, "included")
+            with self.Session() as db:
+                root = db.get(ResearchProject, s.project)
+                self.assertEqual(root.change_sequence, 3)
+                # Exactly the pre-existing decision: the failed write left no row.
+                self.assertEqual(db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate.id).count(), 1)
+            # A cached ORM root cannot lose increments: this session read the root above.
+            drawn = research_access.advance_change_sequence(db, s.project)
+            self.assertEqual(drawn, 4)
+            db.commit()
+            # Concurrent mutations serialize without lost updates, including concurrent
+            # initialization on a fresh project.
             from concurrent.futures import ThreadPoolExecutor
+            fresh_project = uuid4()
+            with self.engine.begin() as conn:
+                conn.execute(self.text("INSERT INTO project (id, admin_id, title) VALUES (:p, :u, 'Seq race')"),
+                             {"p": str(fresh_project), "u": str(s.owner)})
             def bump(_):
                 with self.Session() as db:
-                    sequence = research_access.advance_change_sequence(db, s.project)
-                    if _ == 0:
-                        research_review.create_protocol(db, s.project, s.owner, version=2, commit=False)
+                    sequence = research_access.advance_change_sequence(db, fresh_project)
                     db.commit()
                     return sequence
             with ThreadPoolExecutor(max_workers=3) as pool:
-                sequences = list(pool.map(bump, range(3)))
-            # Draw order is nondeterministic, but the three draws are strictly increasing
-            # with no duplicates (no lost updates), and every advance persists.
-            self.assertEqual(len(set(sequences)), 3)
-            db.expire_all()  # the identity map caches the root from earlier reads
-            root = db.get(ResearchProject, s.project)
-            self.assertEqual(root.change_sequence, 7)  # create_protocol advanced once more
+                sequences = sorted(pool.map(bump, range(3)))
+            self.assertEqual(sequences, [1, 2, 3])  # concurrent initialization, no lost draws
+            with self.Session() as db:
+                self.assertEqual(db.get(ResearchProject, fresh_project).change_sequence, 3)
+            # Conversion extends the sequence monotonically, even for empty storage.
+            self._write_v1_row(fresh_project, {"format": "openpaper/investigation", "version": 1, "case": {},
+                                               "claims": [], "findings": [], "relations": [],
+                                               "manuscript": {"title": "", "sections": []}})
+            with self.Session() as db:
+                manifest = research_convert.convert_project(db, fresh_project, s.owner)
+                self.assertEqual(manifest["counts"]["claims"], 0)
+                root = db.get(ResearchProject, fresh_project)
+                self.assertEqual((root.storage_generation, root.change_sequence), ("v2", 3))  # never reset
+            # Link receipts carry the committed sequence.
+            with self.Session() as db:
+                link_report = ReviewReport(id=uuid4(), project_id=fresh_project)
+                link_study_row = ReviewStudy(id=uuid4(), project_id=fresh_project, description="Fixture study")
+                db.add_all([link_report, link_study_row]); db.commit()
+                receipt = research_review.link_study(db, fresh_project, s.owner, link_report.id,
+                                                     link_study_row.id, "Fixture linkage")
+            with self.Session() as db:
+                self.assertEqual(receipt["change_sequence"], 4)
+                root = db.get(ResearchProject, fresh_project)
+                self.assertEqual(root.change_sequence, 4)
+
+    # ---------- migration discipline ----------
 
     # ---------- migration discipline ----------
 

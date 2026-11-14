@@ -28,12 +28,19 @@ def authorize(db: Session, project_id, actor_id, *, write=False, lock=False):
 
 def advance_change_sequence(db, project_id):
     """Every committed research mutation advances the project's monotonic change
-    sequence inside its own transaction (contract 1). The root row is created on the
-    first research mutation and stays v1 until conversion flips the generation."""
-    from app.database.models import ResearchProject
-    row = db.query(ResearchProject).filter(ResearchProject.project_id == project_id).with_for_update().first()
-    if row is None:
-        row = ResearchProject(project_id=project_id, storage_generation="v1", change_sequence=0)
-        db.add(row); db.flush()
-    row.change_sequence = (row.change_sequence or 0) + 1
-    return row.change_sequence
+    sequence inside its own transaction (contract 1). The increment is a single
+    atomic UPDATE ... RETURNING, so cached ORM instances cannot lose increments and
+    concurrent first mutations initialize safely (R28). The root row stays v1 until
+    conversion flips the generation."""
+    from sqlalchemy import text
+    parameters = {"p": str(project_id)}
+    drawn = db.execute(text("UPDATE research_projects SET change_sequence = change_sequence + 1 "
+                            "WHERE project_id = :p RETURNING change_sequence"), parameters).scalar()
+    if drawn is None:
+        # First research mutation: initialize the root; a racing initializer wins the
+        # insert and this session's UPDATE then draws the next value.
+        db.execute(text("INSERT INTO research_projects (project_id, storage_generation, change_sequence) "
+                        "VALUES (:p, 'v1', 0) ON CONFLICT (project_id) DO NOTHING"), parameters)
+        drawn = db.execute(text("UPDATE research_projects SET change_sequence = change_sequence + 1 "
+                                "WHERE project_id = :p RETURNING change_sequence"), parameters).scalar_one()
+    return int(drawn)

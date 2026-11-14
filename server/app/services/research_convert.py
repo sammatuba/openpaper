@@ -155,7 +155,9 @@ def convert_project(db: Session, project_id, actor_id):
         db.add(root); db.flush()
     created = len(claims) + len(findings) + len(relations) + len(source_versions)
     root.storage_generation = "v2"
-    root.change_sequence = created
+    # Monotonic: review mutations may have advanced the sequence before conversion;
+    # the converted records extend it, never reset it (R28).
+    root.change_sequence = (root.change_sequence or 0) + created
     root.conversion_manifest = manifest
     if row is not None and row.revision != revision_at_read:
         raise HTTPException(409, "v1 revision changed during conversion; aborted")

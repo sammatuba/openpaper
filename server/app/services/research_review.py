@@ -313,8 +313,9 @@ def link_study(db: Session, project_id, actor_id, report_id, study_id, rationale
                                        "linkage_state": linkage_state, "rationale": rationale,
                                        "protocol_version": protocol_version}, actor_id=actor_id))
     db.flush()  # draw the durable sequence anchor at call order
-    research_access.advance_change_sequence(db, project_id)
+    change_sequence = research_access.advance_change_sequence(db, project_id)
     if commit: db.commit()
+    return {"change_sequence": change_sequence}
 
 
 def merge_reports(db: Session, project_id, actor_id, source_report_id, target_report_id, rationale, *, protocol_version, commit=True):
@@ -393,8 +394,9 @@ def split_report(db: Session, project_id, actor_id, source_report_id, rationale,
                               payload={"source": str(source.id), "rationale": rationale,
                                        "protocol_version": protocol_version}, actor_id=actor_id))
     db.flush()  # draw the durable sequence anchor at call order
-    research_access.advance_change_sequence(db, project_id)
+    change_sequence = research_access.advance_change_sequence(db, project_id)
     if commit: db.commit()
+    return {"change_sequence": change_sequence}
 
 
 def _effective(db: Session, report_id, stage, protocol_version, protocol):
