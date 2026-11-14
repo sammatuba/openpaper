@@ -1987,11 +1987,14 @@ class ReviewStudy(Base):
 
 
 class ReviewReportStudy(Base):
-    """Many-to-many report/study linkage; unresolved linkage is never counted as corroboration."""
+    """Many-to-many report/study linkage; unresolved linkage is never counted as corroboration.
+    protocol_version records when the linkage entered the review so historic snapshots
+    keep their original membership."""
     __tablename__ = "review_report_studies"
     report_id = Column(UUID(as_uuid=True), ForeignKey("review_reports.id", ondelete="CASCADE"), primary_key=True)
     study_id = Column(UUID(as_uuid=True), ForeignKey("review_studies.id", ondelete="CASCADE"), primary_key=True)
     linkage_state = Column(String(16), nullable=False, default="proposed")
+    protocol_version = Column(Integer, nullable=False, default=1)
     rationale = Column(Text, nullable=False, default="")
 
 

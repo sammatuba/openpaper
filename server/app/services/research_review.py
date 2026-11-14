@@ -226,7 +226,9 @@ def link_study(db: Session, project_id, actor_id, report_id, study_id, rationale
     if existing:
         existing.linkage_state = linkage_state; existing.rationale = rationale
     else:
-        db.add(ReviewReportStudy(report_id=report_id, study_id=study_id, linkage_state=linkage_state, rationale=rationale))
+        # A first-time linkage belongs to the acquisition-set update that introduced it.
+        db.add(ReviewReportStudy(report_id=report_id, study_id=study_id, linkage_state=linkage_state,
+                                 protocol_version=protocol_version, rationale=rationale))
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="study_link",
                               payload={"report": str(report_id), "study": str(study_id),
                                        "linkage_state": linkage_state, "rationale": rationale,
@@ -381,7 +383,9 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
     # Study linkage states derive from the base rows plus versioned study_link events.
     link_states = {}
     for link in report_studies:
-        if field(link, "study_id"): link_states[(str(field(link, "report_id")), str(field(link, "study_id")))] = field(link, "linkage_state")
+        # Base linkage rows only enter snapshots at or after the version that created them.
+        if field(link, "study_id") and int(field(link, "protocol_version") or 1) <= protocol_version:
+            link_states[(str(field(link, "report_id")), str(field(link, "study_id")))] = field(link, "linkage_state")
     for event in mapping_events:
         if field(event, "kind") != "study_link": continue
         payload = field(event, "payload") or {}

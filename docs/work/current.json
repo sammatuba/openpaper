@@ -478,7 +478,7 @@
       "P11 AI assistance",
       "P12 release"
     ],
-    "review_rounds": "R1 20261113T003601Z rework(4)->fixed; R2 20261113T005558Z rework(6)->fixed; R3 20261114T030828Z rework(4)->fixed; R4 20261114T031919Z rework(2)->fixed; R5 20261114T032603Z rework(2)->fixed; R6 20261114T033143Z rework(2)->fixed; R7 20261114T034202Z rework(2)->fixed; R8 20261114T034742Z rework(3)->fixed; R9 20261114T035430Z rework(2)->fixed",
+    "review_rounds": "R1 20261113T003601Z rework(4)->fixed; R2 20261113T005558Z rework(6)->fixed; R3 20261114T030828Z rework(4)->fixed; R4 20261114T031919Z rework(2)->fixed; R5 20261114T032603Z rework(2)->fixed; R6 20261114T033143Z rework(2)->fixed; R7 20261114T034202Z rework(2)->fixed; R8 20261114T034742Z rework(3)->fixed; R9 20261114T035430Z rework(2)->fixed; R10 20261114T040250Z rework(1)->fixed",
     "boundaries": "Local committed implementation on feat/ai-native-research-core (not merged, not deployed); no production migration, live inference, corpus expansion or account changes; existing open gates (A25, live-AI) untouched"
   }
 }

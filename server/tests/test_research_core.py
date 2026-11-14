@@ -192,12 +192,22 @@ class CountArithmeticTests(unittest.TestCase):
                                         screening_modes={"title_abstract": "solo", "fulltext": "dual"})
         self.assertEqual((counts_v2["identified_occurrences"], counts_v2["duplicate_removals"]), (11, 5))
         self.assertEqual(counts_v2["retained_candidates"], 7)
-        # v1 sees neither the later occurrence nor the later candidate.
+        # A study link first created at v2 leaks into no earlier snapshot.
+        links_with_late = [l for l in review["report_studies"] if l["study_id"]] + [
+            {"report_id": "33000000-0000-4000-8000-000000000002", "study_id": "55000000-0000-4000-8000-000000000003",
+             "linkage_state": "confirmed", "protocol_version": 2}]
+        counts_v2_late_link = compute_flow_counts(occurrences_v2, list(review["mapping_events"]) + [later_map],
+                                                  list(review["candidates"]) + [later_candidate], list(review["decisions"]),
+                                                  links_with_late, 2,
+                                                  screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual(counts_v2_late_link["included_studies"], 3)  # B gains the new SD link at v2
+        # v1 sees neither the later occurrence, the later candidate nor the late link.
         counts_v1_again = compute_flow_counts(occurrences_v2, list(review["mapping_events"]) + [later_map],
                                               list(review["candidates"]) + [later_candidate], list(review["decisions"]),
-                                              [l for l in review["report_studies"] if l["study_id"]], 1,
+                                              links_with_late, 1,
                                               screening_modes={"title_abstract": "solo", "fulltext": "dual"})
         self.assertEqual((counts_v1_again["identified_occurrences"], counts_v1_again["retained_candidates"]), (10, 6))
+        self.assertEqual(counts_v1_again["included_studies"], 2)
         # A versioned linkage withdrawal applies at v2 only.
         events_with_link = list(review["mapping_events"]) + [later_map, {
             "kind": "study_link", "payload": {"report": "33000000-0000-4000-8000-000000000001",

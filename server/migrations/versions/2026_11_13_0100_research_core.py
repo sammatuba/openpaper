@@ -114,6 +114,7 @@ def upgrade():
         sa.Column("report_id",sa.UUID(),sa.ForeignKey("review_reports.id",ondelete="CASCADE"),primary_key=True),
         sa.Column("study_id",sa.UUID(),sa.ForeignKey("review_studies.id",ondelete="CASCADE"),primary_key=True),
         sa.Column("linkage_state",sa.String(16),nullable=False,server_default="proposed"),
+        sa.Column("protocol_version",sa.Integer(),nullable=False,server_default="1"),
         sa.Column("rationale",sa.Text(),nullable=False,server_default=""),*timestamps())
     op.create_table("review_candidates",
         sa.Column("id",sa.UUID(),primary_key=True),
