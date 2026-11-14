@@ -525,6 +525,13 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
             screening = [d for d in decisions
                          if str(field(d, "candidate_id")) == candidate_id and field(d, "stage") == stage
                          and field(d, "role") != "adjudication" and int(field(d, "protocol_version")) <= protocol_version]
+            # A resolution must satisfy BOTH bounds against EVERY applicable conflicting
+            # merge of this stage — clearing only the highest merge leaves later ones
+            # unresolved and the candidate pending (R22).
+            adjudications = [d for d in decisions
+                             if str(field(d, "candidate_id")) == candidate_id and field(d, "stage") == stage
+                             and field(d, "role") == "adjudication" and int(field(d, "protocol_version")) <= protocol_version]
+            qualifying = [d for d in adjudications if all(_resolves_after(d, merge) for merge in merges)]
             resolution = _latest_decision(qualifying) if qualifying else None
             newest_screening = _latest_decision(screening) if screening else None
             if resolution is not None and (newest_screening is None

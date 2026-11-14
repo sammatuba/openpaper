@@ -472,6 +472,32 @@ class CountArithmeticTests(unittest.TestCase):
                                      review["candidates"], list(review["decisions"]) + [late_v1_resolution], links, 2,
                                      screening_modes=screening_modes)
         self.assertEqual(counts["pending_adjudication"], 1)
+        # R22: a resolution must satisfy both bounds against EVERY applicable conflicting
+        # merge — an adjudication between two merges (v2/seq100 conflict, v2/seq101
+        # resolution, v1/seq102 conflict) cannot clear the later one.
+        chain_events = list(review["mapping_events"]) + [
+            {"kind": "report_merge", "created_at": "2026-01-01T00:00:00Z", "event_sequence": 100,
+             "payload": {"source": report_a, "target": report_b, "conflicting_stages": ["fulltext"],
+                         "conflicting_decisions": [{"stage": "fulltext", "source": "included", "target": "excluded"}],
+                         "protocol_version": 2}},
+            {"kind": "report_merge", "created_at": "2026-01-01T00:00:00Z", "event_sequence": 102,
+             "payload": {"source": "33000000-0000-4000-8000-000000000003", "target": report_b,
+                         "conflicting_stages": ["fulltext"],
+                         "conflicting_decisions": [{"stage": "fulltext", "source": "included", "target": "excluded"}],
+                         "protocol_version": 1}}]
+        mid_resolution = {"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 2,
+                          "actor_id": owner, "decision": "included", "role": "adjudication",
+                          "created_at": "2026-01-01T00:00:00Z", "event_sequence": 101}
+        counts = compute_flow_counts(review["occurrences"], chain_events, review["candidates"],
+                                     list(review["decisions"]) + [mid_resolution], links, 2,
+                                     screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (0, 1))
+        # A later resolution (sequence 103) covering both merges resolves them.
+        late_resolution = dict(mid_resolution, event_sequence=103)
+        counts = compute_flow_counts(review["occurrences"], chain_events, review["candidates"],
+                                     list(review["decisions"]) + [late_resolution], links, 2,
+                                     screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (1, 0))
         # Repeated solo submissions with equal timestamps: the later sequence wins even
         # when its UUID sorts lexicographically earlier.
         first = {"candidate_id": "66000000-0000-4000-8000-000000000001", "stage": "title_abstract",
