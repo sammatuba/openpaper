@@ -124,7 +124,7 @@ def _current_merges(db: Session, project_id, protocol_version):
     remove a mapping. Events apply in creation order."""
     events = db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project_id,
                                                  ReviewMappingEvent.kind.in_(("report_merge", "report_split"))).all()
-    events.sort(key=lambda e: e.created_at or datetime.min.replace(tzinfo=timezone.utc))
+    events.sort(key=_event_order)  # durable sequence order; timestamps cannot replay events (R20)
     merges, conflict_stages = {}, {}
     for event in events:
         payload = event.payload or {}
@@ -406,9 +406,11 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
             except ValueError: return datetime.min.replace(tzinfo=timezone.utc)
         return value
 
-    # Occurrence mapping state derives from versioned mapping events in order: a later
-    # mapping of the same occurrence supersedes the earlier one, so the retained and
-    # removed sets stay disjoint under supported remapping updates (R12).
+    # Occurrence mapping state derives from versioned mapping events in durable order: a
+    # later mapping of the same occurrence supersedes the earlier one, so the retained and
+    # removed sets stay disjoint under supported remapping updates (R12); equal timestamps
+    # cannot replay a split before its merge (R20).
+    mapping_events = sorted(mapping_events, key=_event_order)
     occurrence_state = {}
     merge_map, conflict_stages = {}, {}
     for event in mapping_events:
@@ -590,7 +592,8 @@ def flow_counts(db: Session, project_id, actor_id, protocol_version):
     # introduced it; historic snapshots keep their original sets (strategy 6.1).
     occurrences = db.query(ReviewOccurrence).filter(ReviewOccurrence.project_id == project_id,
                                                     ReviewOccurrence.protocol_version <= protocol_version).all()
-    events = db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project_id).order_by(ReviewMappingEvent.created_at).all()
+    events = db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project_id).order_by(
+        ReviewMappingEvent.event_sequence).all()
     candidates = db.query(ReviewCandidate).filter(ReviewCandidate.project_id == project_id).all()
     decisions = db.query(ReviewDecision).join(ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(
         ReviewCandidate.project_id == project_id).all()

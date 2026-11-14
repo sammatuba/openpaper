@@ -474,6 +474,26 @@ class CountArithmeticTests(unittest.TestCase):
                                      screening_modes={"title_abstract": "solo", "fulltext": "dual"})
         self.assertEqual(counts["title_abstract_excluded"], 2)  # A (sequence 21 supersedes 20) and F
 
+    def test_mapping_replay_is_order_independent(self):
+        # R20: mapping replay follows the durable event sequence — shuffled inputs and
+        # equal timestamps replay a split after its merge, never before.
+        review = FIXTURE["review"]
+        report_a = "33000000-0000-4000-8000-000000000001"
+        merge = {"kind": "report_merge", "created_at": "2026-01-01T00:00:00Z", "event_sequence": 10,
+                 "payload": {"source": report_a, "target": "33000000-0000-4000-8000-000000000002",
+                             "conflicting_stages": [], "conflicting_decisions": [], "protocol_version": 1}}
+        split = {"kind": "report_split", "created_at": "2026-01-01T00:00:00Z", "event_sequence": 20,
+                 "payload": {"source": report_a, "rationale": "Fixture: split back", "protocol_version": 1}}
+        links = [l for l in review["report_studies"] if l["study_id"]]
+        screening_modes = {"title_abstract": "solo", "fulltext": "dual"}
+        events = list(review["mapping_events"]) + [merge, split]
+        forward = compute_flow_counts(review["occurrences"], events, review["candidates"],
+                                      list(review["decisions"]), links, 1, screening_modes=screening_modes)
+        reversed_input = compute_flow_counts(review["occurrences"], list(reversed(events)), review["candidates"],
+                                             list(review["decisions"]), links, 1, screening_modes=screening_modes)
+        self.assertEqual(reversed_input, forward)
+        self.assertEqual(forward["retained_candidates"], 6)  # the split restores A's candidate
+
     def test_chained_merge_accumulates_conflicts_per_representative_and_stage(self):
         # R5: A→B conflicts at title/abstract; B→C conflicts at fulltext. Resolving only
         # the full-text conflict on C must leave the title/abstract conflict pending.
