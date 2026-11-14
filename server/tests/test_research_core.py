@@ -168,6 +168,44 @@ class CountArithmeticTests(unittest.TestCase):
         self.assertEqual(resolved["pending_adjudication"], 0)
         self.assertEqual(resolved["included_reports"], counts["included_reports"] + 1)
 
+    def test_chained_merge_accumulates_conflicts_per_representative_and_stage(self):
+        # R5: A→B conflicts at title/abstract; B→C conflicts at fulltext. Resolving only
+        # the full-text conflict on C must leave the title/abstract conflict pending.
+        review = FIXTURE["review"]
+        report_a, report_b, report_c = ("33000000-0000-4000-8000-000000000001",
+                                        "33000000-0000-4000-8000-000000000002",
+                                        "33000000-0000-4000-8000-000000000003")
+        candidate_c = "66000000-0000-4000-8000-000000000003"
+        events = list(review["mapping_events"]) + [
+            {"kind": "report_merge", "created_at": "2026-02-01T00:00:00Z",
+             "payload": {"source": report_a, "target": report_b,
+                         "conflicting_stages": ["title_abstract"],
+                         "conflicting_decisions": [{"stage": "title_abstract", "source": "included", "target": "excluded"}],
+                         "protocol_version": 1}},
+            {"kind": "report_merge", "created_at": "2026-02-02T00:00:00Z",
+             "payload": {"source": report_b, "target": report_c, "conflicting_stages": ["fulltext"],
+                         "conflicting_decisions": [{"stage": "fulltext", "source": "included", "target": "excluded"}],
+                         "protocol_version": 1}}]
+        links = [l for l in review["report_studies"] if l["study_id"]]
+        counts = compute_flow_counts(review["occurrences"], events, review["candidates"], list(review["decisions"]),
+                                     links, 1, screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual(counts["pending_adjudication"], 1)
+        self.assertEqual(counts["included_reports"], 0)
+        fulltext_resolution = {"candidate_id": candidate_c, "stage": "fulltext", "protocol_version": 1,
+                               "actor_id": FIXTURE["actors"]["owner"], "decision": "included",
+                               "role": "adjudication", "created_at": "2026-02-03T00:00:00Z"}
+        counts = compute_flow_counts(review["occurrences"], events, review["candidates"],
+                                     list(review["decisions"]) + [fulltext_resolution], links, 1,
+                                     screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual((counts["pending_adjudication"], counts["included_reports"]), (1, 0))
+        ta_resolution = {"candidate_id": candidate_c, "stage": "title_abstract", "protocol_version": 1,
+                         "actor_id": FIXTURE["actors"]["owner"], "decision": "included",
+                         "role": "adjudication", "created_at": "2026-02-04T00:00:00Z"}
+        counts = compute_flow_counts(review["occurrences"], events, review["candidates"],
+                                     list(review["decisions"]) + [fulltext_resolution, ta_resolution], links, 1,
+                                     screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual(counts["pending_adjudication"], 0)
+
     def test_unresolved_study_linkage_is_not_corroboration(self):
         review = FIXTURE["review"]
         links = [dict(link) for link in review["report_studies"] if link["study_id"]]

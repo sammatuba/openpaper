@@ -358,11 +358,16 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
                     staged[stage] = [m for m in staged[stage] if m.get("source") != str(payload["source"])]
                     if not staged[stage]: del staged[stage]
     # Conflicts follow the merge chain to the final representative (R4): A→B then B→C
-    # keeps the A-vs-B adjudication pending on C instead of erasing it.
-    conflict_stages = {
-        _resolve_representative(merge_map, target): {
-            stage: merges_list for stage, merges_list in staged.items()}
-        for target, staged in conflict_stages.items()}
+    # keeps the A-vs-B adjudication pending on C instead of erasing it. Accumulation is
+    # per representative AND stage: several links resolving to one representative must
+    # union their conflicts, each keeping its own resolution boundary.
+    chained_conflicts = {}
+    for target, staged in conflict_stages.items():
+        rep = _resolve_representative(merge_map, target)
+        bucket = chained_conflicts.setdefault(rep, {})
+        for stage, merges_list in staged.items():
+            bucket.setdefault(stage, []).extend(merges_list)
+    conflict_stages = chained_conflicts
     identified = len({str(field(o, "id")) for o in occurrences})
     duplicate_removals = len(removed)
     merged_sources = set(merge_map)
