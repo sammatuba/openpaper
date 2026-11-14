@@ -171,11 +171,15 @@ def visible_decisions(db: Session, project_id, actor_id, protocol_version):
 
     grouped = {}
     for row in rows:
-        key = (row.candidate_id, row.stage, row.protocol_version) if mode_for(row.protocol_version, row.stage) == "dual" \
-            else (row.candidate_id, row.stage)
-        grouped.setdefault(key, []).append(row)
+        if mode_for(row.protocol_version, row.stage) == "dual":
+            grouped.setdefault((row.candidate_id, row.stage, row.protocol_version, "dual"), []).append(row)
+        else:
+            grouped.setdefault((row.candidate_id, row.stage, row.protocol_version, "solo"), []).append(row)
     visible = []
-    for group in grouped.values():
+    for key, group in grouped.items():
+        if key[3] == "solo":
+            visible.extend(group)  # solo decisions are final and visible
+            continue
         primary = [r for r in group if r.role in ("primary", "secondary")]
         if len({str(r.actor_id) for r in primary}) < 2:
             visible.extend(r for r in group if r.actor_id == actor_id)
@@ -279,6 +283,13 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
 
     def mode_for(stage): return screening_modes.get(stage, "solo")
 
+    def as_time(value):
+        if value is None: return datetime.min.replace(tzinfo=timezone.utc)
+        if isinstance(value, str):
+            try: return datetime.fromisoformat(value)
+            except ValueError: return datetime.min.replace(tzinfo=timezone.utc)
+        return value
+
     removed = set()
     merged_sources, conflict_stages = set(), {}
     for event in mapping_events:
@@ -289,12 +300,17 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
         elif kind == "report_merge" and int(payload.get("protocol_version", 1)) <= protocol_version:
             merged_sources.add(str(payload["source"]))
             for conflict in payload.get("conflicting_decisions", []):
-                conflict_stages.setdefault(str(payload["target"]), {}).setdefault(conflict["stage"], set()).add(str(payload["source"]))
+                stages = conflict_stages.setdefault(str(payload["target"]), {})
+                # Track every conflicting merge: resolution requires an adjudication recorded
+                # no earlier than the latest conflicting merge it must resolve.
+                stages.setdefault(conflict["stage"], []).append(
+                    {"source": str(payload["source"]), "version": int(payload.get("protocol_version", 1)),
+                     "created_at": field(event, "created_at")})
         elif kind == "report_split" and int(payload.get("protocol_version", 1)) <= protocol_version:
             merged_sources.discard(str(payload["source"]))
             for staged in conflict_stages.values():
                 for stage in list(staged):
-                    staged[stage].discard(str(payload["source"]))
+                    staged[stage] = [m for m in staged[stage] if m.get("source") != str(payload["source"])]
                     if not staged[stage]: del staged[stage]
     identified = len({str(field(o, "id")) for o in occurrences})
     duplicate_removals = len(removed)
@@ -325,13 +341,18 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
                 else: pending.add((candidate_id, stage))
             elif len(distinct) >= 1 and len(values) == 1: effective[(candidate_id, stage)] = values.pop()
             elif len(values) > 1: pending.add((candidate_id, stage))
-        # A merge with conflicting decisions forces adjudication on the merged candidate:
-        # only a recorded adjudication decision can finalize a conflicted stage.
-        for stage, sources in (conflict_stages.get(report_of_candidate.get(candidate_id, "")) or {}).items():
-            adjudicated = [d for d in decisions if str(field(d, "candidate_id")) == candidate_id
-                           and field(d, "stage") == stage and field(d, "role") == "adjudication"
-                           and int(field(d, "protocol_version")) <= protocol_version]
-            if adjudicated: effective[(candidate_id, stage)] = field(adjudicated[-1], "decision")
+        # A merge with conflicting decisions forces adjudication on the merged candidate.
+        # An adjudication resolves a conflict only if it was recorded no earlier than the
+        # latest conflicting merge it resolves (same-version requires a later timestamp).
+        for stage, merges in (conflict_stages.get(report_of_candidate.get(candidate_id, "")) or {}).items():
+            latest = max(merges, key=lambda m: (m["version"], as_time(m.get("created_at"))))
+            qualifying = [d for d in decisions
+                          if str(field(d, "candidate_id")) == candidate_id and field(d, "stage") == stage
+                          and field(d, "role") == "adjudication" and int(field(d, "protocol_version")) <= protocol_version
+                          and (int(field(d, "protocol_version")) > latest["version"]
+                               or (int(field(d, "protocol_version")) == latest["version"]
+                                   and as_time(field(d, "created_at")) > as_time(latest.get("created_at"))))]
+            if qualifying: effective[(candidate_id, stage)] = field(qualifying[-1], "decision")
             else:
                 pending.add((candidate_id, stage))
                 effective.pop((candidate_id, stage), None)

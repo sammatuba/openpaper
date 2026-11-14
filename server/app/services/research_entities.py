@@ -16,19 +16,23 @@ from . import research_access
 
 
 def _verify_anchor(db: Session, project_id, payload, latest):
-    """Server-side anchor integrity (C05): the source version must belong to this project,
-    and when its source text is currently available the quotation must match those exact
-    lines. An unchanged anchor is not re-verified, preserving redaction semantics."""
+    """Server-side anchor integrity (C05): the quotation digest must match its own text,
+    the source version must belong to this project, and — unless the complete anchor is
+    byte-for-byte unchanged — the quotation must match the current source lines. Only a
+    fully identical anchor skips line verification, preserving redaction semantics."""
     anchor = (payload or {}).get("anchor")
     if not anchor or "source_version_id" not in anchor: return
+    from .investigation import text_hash
+    if text_hash(anchor.get("quote", "")) != anchor.get("quote_sha256"):
+        raise HTTPException(422, "Anchor quotation digest does not match its text")
     version = db.query(ResearchSourceVersion).filter(ResearchSourceVersion.id == UUID(str(anchor["source_version_id"])),
                                                      ResearchSourceVersion.project_id == project_id).first()
     if not version: raise HTTPException(422, "Anchor source version must belong to this project")
     previous = ((latest.payload or {}).get("anchor") if latest is not None else None) or {}
-    if previous.get("source_version_id") == anchor["source_version_id"] and previous.get("quote_sha256") == anchor["quote_sha256"]:
-        return
+    unchanged = all(previous.get(key) == anchor.get(key)
+                    for key in ("source_version_id", "start_line", "end_line", "quote", "quote_sha256"))
+    if unchanged: return
     paper = db.query(Paper).filter(Paper.id == version.paper_id).first() if version.paper_id else None
-    from .investigation import text_hash
     current = text_hash(paper.raw_content) if paper and paper.raw_content else None
     if current != version.text_sha256:
         raise HTTPException(409, "Source text is unavailable or changed; anchor requires review")

@@ -101,7 +101,8 @@ def upgrade():
         sa.Column("search_ref",sa.String(200),nullable=False),
         sa.Column("external_hit_id",sa.String(200),nullable=False),
         sa.Column("report_id",sa.UUID(),sa.ForeignKey("review_reports.id",ondelete="SET NULL")),
-        sa.Column("version_id",sa.UUID(),sa.ForeignKey("review_report_versions.id",ondelete="SET NULL")),*timestamps())
+        sa.Column("version_id",sa.UUID(),sa.ForeignKey("review_report_versions.id",ondelete="SET NULL")),
+        sa.UniqueConstraint("project_id","provider","search_ref","external_hit_id",name="uq_review_occurrence_hit"),*timestamps())
     op.create_index("ix_review_occurrences_project_id","review_occurrences",["project_id"])
     op.create_table("review_studies",
         sa.Column("id",sa.UUID(),primary_key=True),

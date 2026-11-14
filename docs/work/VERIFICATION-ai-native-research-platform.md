@@ -13,10 +13,12 @@ Intent: [INTENT-ai-native-research-platform.md](INTENT-ai-native-research-platfo
 
 ## Executed checks (this session)
 
+Independent review rounds: R1 (`.meos/reviews/20261113T003601Z.md`, rework — 4 findings) and R2 (`.meos/reviews/20261113T005558Z.md`, rework — 5 important + 1 minor). All ten findings were fixed with regressions; the fix commits are in this PR. R2 fixes in brief: anchor verification now requires the digest to match the submitted text and only skips line verification for a byte-identical anchor; adjudication resolution is bound to the conflicting merge that created it (version + timestamp) and cannot ride a pre-existing adjudication; converted projects refuse legacy v1 writes (one authoritative write path enforced in `investigation.save`); the migration carries the occurrence-retry uniqueness constraint; metered dispatch and state transitions recheck current authorization inside the transaction; solo-stage decisions are visible to all authorized readers.
+
 | Check | Command (root) | Result |
 | --- | --- | --- |
-| Required isolated PG lane **with new suites** | `server/.venv/bin/python scripts/ci/run_isolated_postgres.py --run-existing` (cluster verified: owner/mode 700, `SHOW data_directory`, `SHOW listen_addresses` empty) | **Ran 120 tests, 0 skips, OK** (was 100; +20 research-core) |
-| Full server suite | runner env + `unittest discover` from `/tmp` | **504 tests, OK, 0 skips** |
+| Required isolated PG lane **with new suites** | `server/.venv/bin/python scripts/ci/run_isolated_postgres.py --run-existing` (cluster verified: owner/mode 700, `SHOW data_directory`, `SHOW listen_addresses` empty) | **Ran 121 tests, 0 skips, OK** (was 100 pre-change; +21 research-core incl. R2 regressions) |
+| Full server suite | runner env + `unittest discover` from `/tmp` | **505 tests, OK, 0 skips** |
 | Jobs | `cd jobs && TASK_BACKEND=cloudtasks uv run python -m unittest discover -s tests` | 21 tests OK |
 | Worker | `node --test deploy/cloudflare/worker.test.mjs` | 2 pass, 0 fail |
 | Research tools | `python3 -m unittest discover -s scripts/research -p 'test_*.py'` | 36 tests OK |

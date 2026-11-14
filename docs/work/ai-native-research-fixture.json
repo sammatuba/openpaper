@@ -546,166 +546,166 @@
         "id": "77000000-0000-4000-8000-000000000001",
         "stage": "title_abstract",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000001",
         "decision": "included",
         "reason": "Fixture study of monitor reliability.",
         "dual": false,
         "candidate_id": "66000000-0000-4000-8000-000000000001",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000001"
       },
       {
         "id": "77000000-0000-4000-8000-000000000002",
         "stage": "title_abstract",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000001",
         "decision": "included",
         "reason": "Fixture study of monitor reliability.",
         "dual": false,
         "candidate_id": "66000000-0000-4000-8000-000000000002",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000001"
       },
       {
         "id": "77000000-0000-4000-8000-000000000003",
         "stage": "title_abstract",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000001",
         "decision": "included",
         "reason": "Companion report of a fixture monitoring experiment.",
         "dual": false,
         "candidate_id": "66000000-0000-4000-8000-000000000003",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000001"
       },
       {
         "id": "77000000-0000-4000-8000-000000000004",
         "stage": "title_abstract",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000001",
         "decision": "included",
         "reason": "Scorer-dependence fixture report.",
         "dual": false,
         "candidate_id": "66000000-0000-4000-8000-000000000004",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000001"
       },
       {
         "id": "77000000-0000-4000-8000-000000000005",
         "stage": "title_abstract",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000001",
         "decision": "included",
         "reason": "Abstract states a monitoring experiment; full text sought.",
         "dual": false,
         "candidate_id": "66000000-0000-4000-8000-000000000005",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000001"
       },
       {
         "id": "77000000-0000-4000-8000-000000000006",
         "stage": "title_abstract",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000001",
         "decision": "excluded",
         "reason": "Outside CR1: fixture report on a different topic.",
         "dual": false,
         "candidate_id": "66000000-0000-4000-8000-000000000006",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000001"
       },
       {
         "id": "77000000-0000-4000-8000-000000000007",
         "stage": "fulltext",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000002",
         "decision": "included",
         "reason": "Meets narrow CR2.",
         "dual": true,
         "candidate_id": "66000000-0000-4000-8000-000000000001",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000002"
       },
       {
         "id": "77000000-0000-4000-8000-000000000008",
         "stage": "fulltext",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000003",
         "decision": "included",
         "reason": "Meets narrow CR2.",
         "dual": true,
         "candidate_id": "66000000-0000-4000-8000-000000000001",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000003"
       },
       {
         "id": "77000000-0000-4000-8000-000000000009",
         "stage": "fulltext",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000002",
         "decision": "included",
         "reason": "Meets narrow CR2.",
         "dual": true,
         "candidate_id": "66000000-0000-4000-8000-000000000002",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000002"
       },
       {
         "id": "77000000-0000-4000-8000-000000000010",
         "stage": "fulltext",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000003",
         "decision": "included",
         "reason": "Meets narrow CR2.",
         "dual": true,
         "candidate_id": "66000000-0000-4000-8000-000000000002",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000003"
       },
       {
         "id": "77000000-0000-4000-8000-000000000011",
         "stage": "fulltext",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000002",
         "decision": "included",
         "reason": "Same experiment as B; qualifies under CR2.",
         "dual": true,
         "candidate_id": "66000000-0000-4000-8000-000000000003",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000002"
       },
       {
         "id": "77000000-0000-4000-8000-000000000012",
         "stage": "fulltext",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000003",
         "decision": "excluded",
         "reason": "Reads as a separate study; CR2 ambiguity.",
         "dual": true,
         "candidate_id": "66000000-0000-4000-8000-000000000003",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000003"
       },
       {
         "id": "77000000-0000-4000-8000-000000000013",
         "stage": "fulltext",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000001",
         "decision": "included",
         "role": "adjudication",
         "reason": "Named adjudicator: companion-report identity was explicitly reviewed; text describes the same SB experiment.",
         "dual": true,
-        "candidate_id": "66000000-0000-4000-8000-000000000003"
+        "candidate_id": "66000000-0000-4000-8000-000000000003",
+        "actor_id": "b2000000-0000-4000-8000-000000000001"
       },
       {
         "id": "77000000-0000-4000-8000-000000000014",
         "stage": "fulltext",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000002",
         "decision": "excluded",
         "reason": "Narrow CR2 excludes scorer-sweep-only designs.",
         "dual": true,
         "candidate_id": "66000000-0000-4000-8000-000000000004",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000002"
       },
       {
         "id": "77000000-0000-4000-8000-000000000015",
         "stage": "fulltext",
         "protocol_version": 1,
-        "actor": "b2000000-0000-4000-8000-000000000003",
         "decision": "excluded",
         "reason": "Narrow CR2 excludes scorer-sweep-only designs.",
         "dual": true,
         "candidate_id": "66000000-0000-4000-8000-000000000004",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000003"
       }
     ],
     "mapping_events": [
@@ -814,21 +814,21 @@
         "id": "77000000-0000-4000-8000-000000000017",
         "stage": "fulltext",
         "protocol_version": 2,
-        "actor": "b2000000-0000-4000-8000-000000000001",
         "decision": "included",
         "reason": "Broadened CR2 admits scorer-sweep designs; explicit reopening after amendment.",
         "candidate_id": "66000000-0000-4000-8000-000000000004",
-        "role": "primary"
+        "role": "primary",
+        "actor_id": "b2000000-0000-4000-8000-000000000001"
       },
       {
         "id": "77000000-0000-4000-8000-000000000018",
         "candidate_id": "66000000-0000-4000-8000-000000000004",
         "stage": "fulltext",
         "protocol_version": 2,
-        "actor": "b2000000-0000-4000-8000-000000000002",
         "decision": "included",
         "role": "primary",
-        "reason": "Broadened CR2 admits scorer-sweep designs; second independent reviewer."
+        "reason": "Broadened CR2 admits scorer-sweep designs; second independent reviewer.",
+        "actor_id": "b2000000-0000-4000-8000-000000000002"
       }
     ],
     "expected_counts": {

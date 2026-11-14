@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from app.database.models import MeteredOperation, MeteredPriceTable
+from . import research_access
 from .research_proposals import canonical_digest
 
 
@@ -38,8 +39,10 @@ def active_price_table(db: Session):
 
 def assert_dispatchable(db: Session, project_id, actor_id, operation_id):
     """The enforcement gate every metered caller must pass immediately before dispatch:
-    the specific operation must be an admitted reservation by this actor and priced at
-    its recorded table version. State changes or unpriced operations are refused."""
+    current project authorization is rechecked inside the transaction, then the specific
+    operation must be an admitted reservation by this actor and priced at its recorded
+    table version. State changes or unpriced operations are refused."""
+    research_access.authorize(db, project_id, actor_id, write=True)
     row = db.query(MeteredOperation).filter(MeteredOperation.id == operation_id,
                                             MeteredOperation.project_id == project_id).with_for_update().first()
     if not row: raise HTTPException(404, "Metered operation not found")
@@ -65,7 +68,6 @@ def reserve(db: Session, project_id, actor_id, operation_type: str, estimate: di
             idempotency_key=None, limits=None, commit=True):
     """Admission requires explicit limits: `max_inflight` bounds the project's combined
     reserved/admitted/running/uncertain exposure atomically. Missing limits refuse."""
-    from . import research_access
     research_access.authorize(db, project_id, actor_id, write=True)
     if not isinstance(limits, dict) or not isinstance(limits.get("max_inflight"), int) or limits["max_inflight"] < 1:
         raise HTTPException(422, "Metered admission requires configured limits (max_inflight)")
@@ -102,6 +104,7 @@ def reserve(db: Session, project_id, actor_id, operation_type: str, estimate: di
 
 
 def _transition(db: Session, operation_id, actor_id, current, target, project_id, *, usage=None, error_code=None):
+    research_access.authorize(db, project_id, actor_id, write=True)
     row = db.query(MeteredOperation).filter(MeteredOperation.id == operation_id,
                                             MeteredOperation.project_id == project_id).with_for_update().first()
     if not row: raise HTTPException(404, "Metered operation not found")

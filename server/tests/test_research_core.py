@@ -106,6 +106,36 @@ class CountArithmeticTests(unittest.TestCase):
         self.assertEqual(counts["included_reports"], 2)
         self.assertEqual(counts["included_studies"], 2)
 
+    def test_merge_adjudication_is_bound_to_the_conflict(self):
+        # A pre-existing v1 adjudication does not satisfy a later conflicting v2 merge;
+        # a v2 adjudication does. The v1 snapshot keeps its own sets (merge not applied).
+        review = FIXTURE["review"]
+        report_a, report_b = "33000000-0000-4000-8000-000000000001", "33000000-0000-4000-8000-000000000002"
+        candidate_a, candidate_b = "66000000-0000-4000-8000-000000000001", "66000000-0000-4000-8000-000000000002"
+        owner = FIXTURE["actors"]["owner"]
+        base = list(review["decisions"])
+        adjudication_v1 = {"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 1,
+                           "actor_id": owner, "decision": "included", "role": "adjudication", "created_at": "2026-01-01T00:00:00Z"}
+        merge_v2 = {"kind": "report_merge", "created_at": "2026-02-01T00:00:00Z",
+                    "payload": {"source": report_a, "target": report_b, "conflicting_stages": ["fulltext"],
+                                "conflicting_decisions": [{"stage": "fulltext", "source": "included", "target": "excluded"}],
+                                "protocol_version": 2}}
+        occurrences, events, candidates, links = review["occurrences"], list(review["mapping_events"]), review["candidates"], [l for l in review["report_studies"] if l["study_id"]]
+        counts = compute_flow_counts(occurrences, events + [merge_v2], candidates, base + [adjudication_v1], links, 2,
+                                     screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        # C's separate v1 adjudication stands; the merged candidate B is pending because
+        # the pre-existing adjudication cannot satisfy the later conflicting merge.
+        self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (1, 1))
+        adjudication_v2 = {"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 2,
+                           "actor_id": owner, "decision": "included", "role": "adjudication", "created_at": "2026-03-01T00:00:00Z"}
+        counts = compute_flow_counts(occurrences, events + [merge_v2], candidates, base + [adjudication_v1, adjudication_v2], links, 2,
+                                     screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        # B resolves via the v2 adjudication; C remains included through its own v1 adjudication.
+        self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (2, 0))
+        before = compute_flow_counts(occurrences, events, candidates, list(review["decisions"]), links, 1,
+                                     screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual((before["included_reports"], before["fulltext_excluded"], before["pending_adjudication"]), (3, 1, 0))
+
     def test_unresolved_study_linkage_is_not_corroboration(self):
         review = FIXTURE["review"]
         links = [dict(link) for link in review["report_studies"] if link["study_id"]]

@@ -30,10 +30,10 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
         def utf8(connection, record): connection.set_client_encoding("UTF8")
         cls.engine.dialect._json_serializer = lambda value: json.dumps(value, ensure_ascii=False)
         cls.engine.dispose()
-        order = (ProjectInvestigation, ResearchProject, ResearchSourceVersion, ResearchEntity, ResearchEntityRevision,
+        order = (ProjectInvestigation, ResearchSourceVersion, ResearchEntity, ResearchEntityRevision,
                  ResearchRelation, ReviewProtocol, ReviewReport, ReviewReportVersion, ReviewOccurrence, ReviewStudy,
                  ReviewReportStudy, ReviewCandidate, ReviewDecision, ReviewMappingEvent, ResearchProposal,
-                 MeteredPriceTable, MeteredOperation)
+                 MeteredPriceTable, MeteredOperation)  # research_projects comes from the shared harness setup
         with cls.engine.begin() as conn:
             for model in order: model.__table__.create(conn)
 
@@ -116,7 +116,7 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                                                 [UUID(i) for i in event["payload"]["removed"]], commit=False)
             db.commit()
             for decision in review_data["decisions"]:
-                research_review.record_decision(db, project, UUID(decision["actor"]), UUID(decision["candidate_id"]),
+                research_review.record_decision(db, project, UUID(decision["actor_id"]), UUID(decision["candidate_id"]),
                                                 decision["stage"], decision["protocol_version"], decision["decision"],
                                                 role=decision.get("role", "primary"), reason=decision["reason"], commit=False)
             db.commit()
@@ -132,7 +132,7 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             research_review.amend_protocol(db, project, owner, new_version=2, commit=False)
             db.commit()
             for decision in review_data["protocol_v2_decisions"]:
-                research_review.record_decision(db, project, UUID(decision["actor"]), UUID(decision["candidate_id"]),
+                research_review.record_decision(db, project, UUID(decision["actor_id"]), UUID(decision["candidate_id"]),
                                                 decision["stage"], decision["protocol_version"], decision["decision"],
                                                 reason=decision["reason"], commit=False)
             db.commit()
@@ -210,7 +210,10 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             research_review.record_decision(db, s.project, s.owner, candidate.id, "title_abstract", 1, "included")
             research_review.record_decision(db, s.project, reviewer_1, candidate.id, "fulltext", 1, "included")
             visible_to_2 = research_review.visible_decisions(db, s.project, reviewer_2, 1)
-            self.assertEqual([d for d in visible_to_2 if d.actor_id == reviewer_1], [])  # hidden until both submit
+            self.assertEqual([d for d in visible_to_2 if d.actor_id == reviewer_1], [])  # dual: hidden until both submit
+            # Solo-stage decisions are final and visible to every authorized reader.
+            visible_ta = research_review.visible_decisions(db, s.project, reviewer_2, 1)
+            self.assertEqual(len([d for d in visible_ta if d.stage == "title_abstract"]), 1)
             counts = research_review.flow_counts(db, s.project, s.owner, 1)
             self.assertEqual((counts["fulltext_assessed"], counts["pending_adjudication"]), (0, 1))  # one reviewer is not dual review
             # One reviewer cannot satisfy dual review by submitting twice.
@@ -219,7 +222,7 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(duplicate.exception.status_code, 409)
             research_review.record_decision(db, s.project, reviewer_2, candidate.id, "fulltext", 1, "excluded")
             visible = research_review.visible_decisions(db, s.project, reviewer_2, 1)
-            self.assertEqual(len([d for d in visible if d.candidate_id == candidate.id]), 2)
+            self.assertEqual(len([d for d in visible if d.candidate_id == candidate.id and d.stage == "fulltext"]), 2)
             # Disagreement exists, so the named adjudicator may now decide.
             research_review.record_decision(db, s.project, s.owner, candidate.id, "fulltext", 1, "included", role="adjudication")
             counts = research_review.flow_counts(db, s.project, s.owner, 1)
@@ -308,6 +311,14 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as repeat:
                 research_convert.convert_project(db, s.project, s.owner)
             self.assertEqual(repeat.exception.status_code, 409)
+            # One authoritative write path: legacy v1 investigation writes are refused once converted.
+            from app.schemas.investigation import SaveInvestigation, InvestigationDocument
+            from fastapi import HTTPException as HTTPError
+            with self.assertRaises(HTTPError) as legacy_write:
+                __import__("app.services.investigation", fromlist=["save"]).save(
+                    db, s.project, s.owner, SaveInvestigation(document=InvestigationDocument()),
+                    f'"investigation:{s.project}:7"')
+            self.assertEqual(legacy_write.exception.status_code, 409)
 
     async def test_conversion_refuses_hash_mismatch_without_binding(self):
         s = self.seed()
@@ -330,7 +341,7 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
         from fastapi import HTTPException
         s = self.seed()
         other = self.seed()
-        paper = self.seed_paper(s.project, s.owner, "Fixture C", "Title\nExact line two.\nLimitations.")
+        paper = self.seed_paper(s.project, s.owner, "Fixture C", "Title\nExact fixture result.\nLimitations.")
         document, ids = self._v1_document(paper)
         self._write_v1_row(s.project, document)
         with self.Session() as db:
@@ -342,6 +353,25 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                                                                                       "start_line": 1, "end_line": 1,
                                                                                       "quote": "x", "quote_sha256": "a" * 64}})
             self.assertEqual(forged.exception.status_code, 422)
+            from app.services.investigation import text_hash
+            version_id = db.query(ResearchSourceVersion).filter(ResearchSourceVersion.project_id == s.project).one().id
+            # A fabricated quotation carrying a previously valid digest is rejected: the
+            # digest must match the submitted text itself.
+            with self.assertRaises(HTTPException) as forged_text:
+                research_entities.create_entity(db, s.project, s.owner, "finding",
+                                                {"label": "Fabricated text", "anchor": {"source_version_id": str(version_id),
+                                                                                        "start_line": 1, "end_line": 1,
+                                                                                        "quote": "FABRICATED",
+                                                                                        "quote_sha256": text_hash("Exact fixture result.")}})
+            self.assertEqual(forged_text.exception.status_code, 422)
+            # A correct quotation claimed at a different range is rejected by line verification.
+            with self.assertRaises(HTTPException) as forged_range:
+                research_entities.create_entity(db, s.project, s.owner, "finding",
+                                                {"label": "Wrong range", "anchor": {"source_version_id": str(version_id),
+                                                                                    "start_line": 1, "end_line": 3,
+                                                                                    "quote": "Exact fixture result.",
+                                                                                    "quote_sha256": text_hash("Exact fixture result.")}})
+            self.assertEqual(forged_range.exception.status_code, 422)
             with self.assertRaises(HTTPException) as bogus_type:
                 research_entities.create_entity(db, s.project, s.owner, "speculation", {"text": "x"})
             self.assertEqual(bogus_type.exception.status_code, 422)
@@ -559,6 +589,19 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             metered.admit(db, s.project, s.owner, operation.id)
             metered.assert_dispatchable(db, s.project, s.owner, operation.id)
             metered.start(db, s.project, s.owner, operation.id)
+            # Dispatch and state transitions recheck current authorization inside the transaction.
+            member = uuid4()
+            with self.engine.begin() as conn:
+                conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": member, "e": str(member) + "@test.invalid"})
+                conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'viewer')"), {"id": uuid4(), "p": s.project, "u": member})
+            with self.assertRaises(HTTPException) as viewer_dispatch:
+                metered.assert_dispatchable(db, s.project, member, operation.id)
+            self.assertEqual(viewer_dispatch.exception.status_code, 403)
+            with self.engine.begin() as conn:
+                conn.execute(self.text("DELETE FROM project_role WHERE project_id = :p AND user_id = :u"), {"p": s.project, "u": member})
+            with self.assertRaises(HTTPException) as revoked_dispatch:
+                metered.assert_dispatchable(db, s.project, member, operation.id)
+            self.assertEqual(revoked_dispatch.exception.status_code, 404)
             settled = metered.settle(db, s.project, s.owner, operation.id,
                                      {"units": {"input_tokens": 10432, "output_tokens": 1717}})
             self.assertEqual(settled.state, "completed")
@@ -639,3 +682,12 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                              "Keep legacy description")
             self.assertEqual(conn.execute(self.text("SELECT count(*) FROM information_schema.tables WHERE table_schema = :s AND table_name = ANY(:names)"),
                                           {"s": self.schema, "names": names}).scalar_one(), len(names))
+            # The migration carries the occurrence-retry uniqueness: the same provider,
+            # search and external hit cannot create two occurrences on a migrated database.
+            from psycopg2 import errors as pg_errors
+            conn.execute(self.text("INSERT INTO review_occurrences (id,project_id,provider,search_ref,external_hit_id) VALUES (:a,:p,'fixture','q','hit-1')"), {"a": uuid4(), "p": s.project})
+            nested = conn.begin_nested()
+            with self.assertRaises(Exception) as duplicate:
+                conn.execute(self.text("INSERT INTO review_occurrences (id,project_id,provider,search_ref,external_hit_id) VALUES (:a,:p,'fixture','q','hit-1')"), {"a": uuid4(), "p": s.project})
+            nested.rollback()
+            self.assertIn("uq_review_occurrence_hit", str(duplicate.exception))
