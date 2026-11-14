@@ -24,3 +24,16 @@ def authorize(db: Session, project_id, actor_id, *, write=False, lock=False):
     if write and project.admin_id != actor_id and role.role not in ("admin", "editor"):
         raise HTTPException(403, "Editing requires an editor role")
     return project
+
+
+def advance_change_sequence(db, project_id):
+    """Every committed research mutation advances the project's monotonic change
+    sequence inside its own transaction (contract 1). The root row is created on the
+    first research mutation and stays v1 until conversion flips the generation."""
+    from app.database.models import ResearchProject
+    row = db.query(ResearchProject).filter(ResearchProject.project_id == project_id).with_for_update().first()
+    if row is None:
+        row = ResearchProject(project_id=project_id, storage_generation="v1", change_sequence=0)
+        db.add(row); db.flush()
+    row.change_sequence = (row.change_sequence or 0) + 1
+    return row.change_sequence

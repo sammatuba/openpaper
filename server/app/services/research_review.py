@@ -36,6 +36,7 @@ def create_protocol(db: Session, project_id, actor_id, *, version, mode="literat
                          unit_of_analysis=unit_of_analysis, count_policy=count_policy or {}, criteria=criteria or [],
                          screening_modes=screening_modes or {}, status=status, parent_version_id=parent_version_id)
     db.add(row)
+    row.change_sequence = research_access.advance_change_sequence(db, project_id)
     if commit: db.commit()
     return row
 
@@ -81,7 +82,9 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
                                        "removed": [str(i) for i in removed_occurrence_ids],
                                        "protocol_version": protocol_version}, actor_id=actor_id))
     db.flush()  # draw the durable sequence anchor at call order
+    receipt = {"change_sequence": research_access.advance_change_sequence(db, project_id)}
     if commit: db.commit()
+    return receipt
 
 
 def _protocol_for(db: Session, project_id, protocol_version):
@@ -117,6 +120,7 @@ def record_decision(db: Session, project_id, actor_id, candidate_id, stage, prot
                          criterion_judgments=criterion_judgments or [])
     db.add(row)
     db.flush()  # draw the durable sequence anchor at call order
+    row.change_sequence = research_access.advance_change_sequence(db, project_id)
     if commit: db.commit()
     return row
 
@@ -309,6 +313,7 @@ def link_study(db: Session, project_id, actor_id, report_id, study_id, rationale
                                        "linkage_state": linkage_state, "rationale": rationale,
                                        "protocol_version": protocol_version}, actor_id=actor_id))
     db.flush()  # draw the durable sequence anchor at call order
+    research_access.advance_change_sequence(db, project_id)
     if commit: db.commit()
 
 
@@ -371,8 +376,10 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
                                        "conflicting_decisions": conflicts, "conflicting_stages": stages,
                                        "protocol_version": protocol_version}, actor_id=actor_id))
     db.flush()  # draw the durable sequence anchor at call order
+    change_sequence = research_access.advance_change_sequence(db, project_id)
     if commit: db.commit()
-    return {"conflicting_decisions": conflicts, "conflicting_stages": stages, "requires_adjudication": bool(conflicts)}
+    return {"conflicting_decisions": conflicts, "conflicting_stages": stages,
+            "requires_adjudication": bool(conflicts), "change_sequence": change_sequence}
 
 
 def split_report(db: Session, project_id, actor_id, source_report_id, rationale, *, protocol_version, commit=True):
@@ -386,6 +393,7 @@ def split_report(db: Session, project_id, actor_id, source_report_id, rationale,
                               payload={"source": str(source.id), "rationale": rationale,
                                        "protocol_version": protocol_version}, actor_id=actor_id))
     db.flush()  # draw the durable sequence anchor at call order
+    research_access.advance_change_sequence(db, project_id)
     if commit: db.commit()
 
 

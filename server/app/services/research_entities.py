@@ -91,9 +91,7 @@ def _project_row(db: Session, project_id, *, lock=False):
 
 
 def _bump(db: Session, project_id) -> int:
-    row = _project_row(db, project_id, lock=True)
-    row.change_sequence = (row.change_sequence or 0) + 1
-    return row.change_sequence
+    return research_access.advance_change_sequence(db, project_id)
 
 
 def _check_storage_generation(db: Session, project_id):

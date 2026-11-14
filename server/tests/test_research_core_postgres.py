@@ -15,7 +15,7 @@ from app.database.models import (Conversation, Message, MeteredOperation, Metere
                                  ResearchRelation, ResearchSourceVersion, ReviewCandidate, ReviewDecision,
                                  ReviewMappingEvent, ReviewOccurrence, ReviewProtocol, ReviewReport,
                                  ReviewReportStudy, ReviewReportVersion, ReviewStudy, ResearchProposal)
-from app.services import metered, research_convert, research_entities, research_proposals, research_review
+from app.services import metered, research_access, research_convert, research_entities, research_proposals, research_review
 
 FIXTURE = json.loads((Path(__file__).resolve().parents[2] / "docs/work/ai-native-research-fixture.json").read_text())
 
@@ -1142,6 +1142,52 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
         with ThreadPoolExecutor(max_workers=3) as pool:
             outcomes = list(pool.map(race, range(3)))
         self.assertEqual(sorted(outcomes), [200, 429, 429])  # exactly one admission wins
+
+    async def test_review_mutations_advance_change_sequence(self):
+        # R27: every committed review mutation advances the project change sequence
+        # atomically; failures roll the sequence back with the rest of the transaction.
+        from app.database.models import ResearchProject
+        s = self.seed()
+        with self.Session() as db:
+            sequence_at_start = db.get(ResearchProject, s.project)
+            self.assertIsNone(sequence_at_start)  # root created by the first research mutation
+            research_review.create_protocol(db, s.project, s.owner, version=1, commit=False)
+            db.commit()
+            root = db.get(ResearchProject, s.project)
+            self.assertEqual(root.change_sequence, 1)
+            report = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(report); db.commit()  # parent before child
+            candidate = ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report.id)
+            db.add(candidate); db.commit()
+            occurrence = ReviewOccurrence(id=uuid4(), project_id=s.project, provider="fixture",
+                                          search_ref="fixture-search", external_hit_id="hit-1")
+            db.add(occurrence); db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate.id, occurrence.id, [])
+            research_review.record_decision(db, s.project, s.owner, candidate.id, "title_abstract", 1, "included")
+            root = db.get(ResearchProject, s.project)
+            self.assertEqual(root.change_sequence, 3)  # mapping + decision each advanced it
+            # A failed mutation rolls the sequence back with its transaction.
+            with self.assertRaises(HTTPException):
+                research_review.record_decision(db, s.project, uuid4(), candidate.id, "title_abstract", 1, "included")
+            root = db.get(ResearchProject, s.project)
+            self.assertEqual(root.change_sequence, 3)
+            # Concurrent mutations serialize without lost updates.
+            from concurrent.futures import ThreadPoolExecutor
+            def bump(_):
+                with self.Session() as db:
+                    sequence = research_access.advance_change_sequence(db, s.project)
+                    if _ == 0:
+                        research_review.create_protocol(db, s.project, s.owner, version=2, commit=False)
+                    db.commit()
+                    return sequence
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                sequences = list(pool.map(bump, range(3)))
+            # Draw order is nondeterministic, but the three draws are strictly increasing
+            # with no duplicates (no lost updates), and every advance persists.
+            self.assertEqual(len(set(sequences)), 3)
+            db.expire_all()  # the identity map caches the root from earlier reads
+            root = db.get(ResearchProject, s.project)
+            self.assertEqual(root.change_sequence, 7)  # create_protocol advanced once more
 
     # ---------- migration discipline ----------
 
