@@ -227,6 +227,7 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             research_review.record_decision(db, s.project, s.owner, candidate_y, "title_abstract", 1, "included")
             research_review.record_decision(db, s.project, s.owner, candidate_x, "fulltext", 1, "included")
             research_review.record_decision(db, s.project, s.owner, candidate_y, "fulltext", 1, "excluded")
+            counts_before = research_review.flow_counts(db, s.project, s.owner, 1)  # pre-merge snapshot
             result = research_review.merge_reports(db, s.project, s.owner, source.id, target.id, "Fixture: same report re-derived",
                                                    protocol_version=1)
             self.assertTrue(result["requires_adjudication"])
@@ -259,6 +260,19 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             # the affected review for re-decision is amendment machinery for P10.
             counts = research_review.flow_counts(db, s.project, s.owner, 1)
             self.assertEqual((counts["included_reports"], counts["fulltext_excluded"], counts["pending_adjudication"]), (2, 0, 0))
+            # R23: a merge onto a candidate absent from the requested snapshot is rejected
+            # and preserves the current snapshot exactly.
+            counts_stable = research_review.flow_counts(db, s.project, s.owner, 1)
+            late_report2 = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(late_report2); db.commit()
+            late_candidate2 = ReviewCandidate(id=uuid4(), project_id=s.project, report_id=late_report2.id,
+                                              selected_version_id=None, protocol_version=2)
+            db.add(late_candidate2); db.commit()
+            with self.assertRaises(HTTPException) as snapshot2:
+                research_review.merge_reports(db, s.project, s.owner, target.id, late_report2.id,
+                                              "Fixture: onto later candidate", protocol_version=1)
+            self.assertEqual(snapshot2.exception.status_code, 422)
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), counts_stable)
             # Historic snapshots: a merge at a later protocol version leaves v1 sets untouched.
 
     async def test_independent_review_privacy(self):
@@ -981,6 +995,10 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             conn.execute(self.text("INSERT INTO review_reports (id,project_id,identity_state) VALUES (:a,:p,'unreviewed'),(:b,:p,'unreviewed')"), {"a": report_a, "b": report_b, "p": merge_project})
         with self.Session() as db:
             research_review.create_protocol(db, merge_project, merge_owner, version=1, commit=False)
+            db.commit()
+            # Both racers need v1 candidates: the membership guard requires them.
+            db.add_all([ReviewCandidate(id=uuid4(), project_id=merge_project, report_id=report_a, protocol_version=1),
+                        ReviewCandidate(id=uuid4(), project_id=merge_project, report_id=report_b, protocol_version=1)])
             db.commit()
         def merge_race(direction):
             with self.Session() as db:

@@ -326,6 +326,13 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
     if not source or not target: raise HTTPException(422, "Merge requires two distinct project reports")
     if source.identity_state == "merged": raise HTTPException(409, "Source report is already merged")
     if target.identity_state == "merged": raise HTTPException(409, "Target is already merged; merge into the current representative")
+    # Both candidates must exist in the requested snapshot: merging onto (or from) a
+    # candidate introduced by a later acquisition set would corrupt historic counts (R23).
+    for role, report in (("source", source), ("target", target)):
+        candidate = db.query(ReviewCandidate).filter(ReviewCandidate.project_id == project_id,
+                                                     ReviewCandidate.report_id == report.id).first()
+        if not candidate or candidate.protocol_version > protocol_version:
+            raise HTTPException(422, f"{role.capitalize()} candidate does not exist in the requested protocol snapshot")
     merges, _conflicts, _incoming = _current_merges(db, project_id, protocol_version)
     visited = set()
     cursor = str(target.id)
