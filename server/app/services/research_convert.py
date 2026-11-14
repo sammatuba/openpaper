@@ -9,6 +9,7 @@ part of this package.
 import json
 from uuid import UUID, uuid4
 from fastapi import HTTPException
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 from app.database.models import (Paper, ProjectInvestigation, ResearchEntity, ResearchEntityRevision,
                                  ResearchProject, ResearchRelation, ResearchSourceVersion)
@@ -150,16 +151,22 @@ def convert_project(db: Session, project_id, actor_id):
                                         if block.get("quote_snapshot") and block["quote_snapshot"].get("kind") == "anchored" else None),
                      "provenance_origin": block.get("provenance", {}).get("kind", "human")}
                     for section in sections for block in section.get("blocks", [])]}
-    if root is None:
-        root = ResearchProject(project_id=project_id, storage_generation="v1", change_sequence=0)
-        db.add(root); db.flush()
     created = len(claims) + len(findings) + len(relations) + len(source_versions)
-    root.storage_generation = "v2"
-    # Monotonic: review mutations may have advanced the sequence before conversion;
-    # the converted records extend it, never reset it (R28).
-    root.change_sequence = (root.change_sequence or 0) + created
-    root.conversion_manifest = manifest
+    if root is None:
+        db.execute(sa_text("INSERT INTO research_projects (project_id, storage_generation, change_sequence) "
+                           "VALUES (:p, 'v2', :created)"), {"p": str(project_id), "created": created})
+    else:
+        # Monotonic atomic flip (R29): the increment happens in SQL, so a cached ORM root
+        # cannot compute from a stale value — review mutations may have advanced the
+        # sequence in this session before conversion.
+        db.execute(sa_text("UPDATE research_projects SET storage_generation = 'v2', "
+                           "change_sequence = change_sequence + :created, conversion_manifest = CAST(:manifest AS JSONB) "
+                           "WHERE project_id = :p"),
+                   {"created": created, "manifest": json.dumps(manifest, ensure_ascii=False), "p": str(project_id)})
     if row is not None and row.revision != revision_at_read:
         raise HTTPException(409, "v1 revision changed during conversion; aborted")
     db.commit()
+    manifest["change_sequence"] = db.execute(
+        sa_text("SELECT change_sequence FROM research_projects WHERE project_id = :p"),
+        {"p": str(project_id)}).scalar_one()
     return manifest

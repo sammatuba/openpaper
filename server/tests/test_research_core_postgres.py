@@ -1204,10 +1204,16 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                                                "claims": [], "findings": [], "relations": [],
                                                "manuscript": {"title": "", "sections": []}})
             with self.Session() as db:
+                # The same session previously read the root: its cached ORM value must not
+                # compute the increment (R29).
+                cached = db.get(ResearchProject, fresh_project)
+                self.assertEqual(cached.change_sequence, 3)
                 manifest = research_convert.convert_project(db, fresh_project, s.owner)
                 self.assertEqual(manifest["counts"]["claims"], 0)
+                self.assertEqual(manifest["change_sequence"], 3)  # empty conversion: unchanged, never reset
+                db.expire_all()
                 root = db.get(ResearchProject, fresh_project)
-                self.assertEqual((root.storage_generation, root.change_sequence), ("v2", 3))  # never reset
+                self.assertEqual((root.storage_generation, root.change_sequence), ("v2", 3))
             # Link receipts carry the committed sequence.
             with self.Session() as db:
                 link_report = ReviewReport(id=uuid4(), project_id=fresh_project)
