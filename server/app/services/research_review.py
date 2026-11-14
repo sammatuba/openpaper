@@ -93,6 +93,8 @@ def record_decision(db: Session, project_id, actor_id, candidate_id, stage, prot
     if not candidate: raise HTTPException(404, "Review candidate not found")
     if decision not in ("included", "excluded", "unclear"): raise HTTPException(422, "Invalid decision value")
     protocol = _protocol_for(db, project_id, protocol_version)
+    if candidate.protocol_version > protocol_version:
+        raise HTTPException(422, "Decision protocol version predates the candidate acquisition")
     prior = db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_id,
                                             ReviewDecision.stage == stage).all()
     if role == "adjudication":
@@ -220,11 +222,15 @@ def _has_conflict(db: Session, project_id, candidate, stage, protocol):
         if candidate_id: relevant.extend(by_candidate.get(str(candidate_id), []))
     # A merge that recorded a conflicting stage carries a genuine disagreement.
     if stage in (conflict_stages.get(report) or {}): return True
-    # Otherwise: same-candidate disagreement between DISTINCT actors, using each actor's
-    # effective (latest) submission — a solo reviewer superseding cannot fabricate one (R14).
+    # Otherwise: same-candidate disagreement within the LATEST applicable decision cohort
+    # (consistent with count derivation) — decisions from different cohorts never combine,
+    # and each actor's effective latest submission supersedes earlier ones (R14/R15).
     rows = [row for row in by_candidate.get(str(candidate.id), [])
             if row.stage == stage and row.role != "adjudication" and row.protocol_version <= protocol.version]
-    effective = _latest_per_actor(rows)
+    if not rows: return False
+    top = max(int(row.protocol_version) for row in rows)
+    cohort = [row for row in rows if int(row.protocol_version) == top]
+    effective = _latest_per_actor(cohort)
     if len(effective) < 2: return False
     return len({row.decision for row in effective}) > 1
 
@@ -235,8 +241,8 @@ def visible_decisions(db: Session, project_id, actor_id, protocol_version):
     research_access.authorize(db, project_id, actor_id)
     # Historical reads see only the decisions that existed at the requested snapshot (R14).
     rows = db.query(ReviewDecision).join(ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(
-        ReviewCandidate.project_id == project_id, ReviewDecision.protocol_version <= protocol_version).order_by(
-        ReviewDecision.created_at).all()
+        ReviewCandidate.project_id == project_id, ReviewDecision.protocol_version <= protocol_version,
+        ReviewCandidate.protocol_version <= protocol_version).order_by(ReviewDecision.created_at).all()
     protocols = {p.version: p for p in db.query(ReviewProtocol).filter(ReviewProtocol.project_id == project_id).all()}
 
     def mode_for(version, stage):

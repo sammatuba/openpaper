@@ -164,8 +164,10 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 research_review.map_occurrences(db, project, owner, UUID("66000000-0000-4000-8000-000000000002"),
                                                 later_occurrence.id, [], protocol_version=1)
             self.assertEqual(premature.exception.status_code, 422)
+            # The candidate guard itself: a v1 occurrence mapped onto the v2 candidate.
             with self.assertRaises(HTTPException) as premature_candidate:
-                research_review.map_occurrences(db, project, owner, later_candidate.id, later_occurrence.id, [],
+                research_review.map_occurrences(db, project, owner, later_candidate.id,
+                                                UUID("22000000-0000-4000-8000-000000000004"), [],
                                                 protocol_version=1)
             self.assertEqual(premature_candidate.exception.status_code, 422)
             db.commit()
@@ -297,6 +299,22 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             research_review.record_decision(db, s.project, reviewer_1, candidate.id, "fulltext", 2, "included")
             historical = research_review.visible_decisions(db, s.project, reviewer_2, 1)
             self.assertEqual([d for d in historical if d.protocol_version == 2], [])
+            # Adjudication evaluates the latest applicable cohort only: v1 dual excludes
+            # plus a lone v2 inclusion do not combine into a fabricated disagreement.
+            with self.assertRaises(HTTPException) as cohort:
+                research_review.record_decision(db, s.project, s.owner, candidate.id, "fulltext", 2,
+                                                "included", role="adjudication")
+            self.assertEqual(cohort.exception.status_code, 409)
+            # Decisions cannot predate the candidate's acquisition: a v2-introduced
+            # candidate refuses a v1 decision.
+            v2_report = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(v2_report); db.commit()
+            v2_candidate = ReviewCandidate(id=uuid4(), project_id=s.project, report_id=v2_report.id,
+                                           selected_version_id=None, protocol_version=2)
+            db.add(v2_candidate); db.commit()
+            with self.assertRaises(HTTPException) as predate:
+                research_review.record_decision(db, s.project, s.owner, v2_candidate.id, "title_abstract", 1, "included")
+            self.assertEqual(predate.exception.status_code, 422)
             # The lone v2 submission is dual-hidden from the peer but visible to its author.
             self.assertEqual(len([d for d in research_review.visible_decisions(db, s.project, reviewer_2, 2)
                                   if d.protocol_version == 2]), 0)
