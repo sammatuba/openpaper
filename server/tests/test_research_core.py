@@ -136,6 +136,38 @@ class CountArithmeticTests(unittest.TestCase):
                                      screening_modes={"title_abstract": "solo", "fulltext": "dual"})
         self.assertEqual((before["included_reports"], before["fulltext_excluded"], before["pending_adjudication"]), (3, 1, 0))
 
+    def test_chained_merge_keeps_pending_adjudication_on_the_representative(self):
+        # R4: A→B creates a pending conflict; merging B onward into C must carry the
+        # unresolved conflict to C, not erase it with B's candidate.
+        review = FIXTURE["review"]
+        report_a, report_b, report_c = ("33000000-0000-4000-8000-000000000001",
+                                        "33000000-0000-4000-8000-000000000002",
+                                        "33000000-0000-4000-8000-000000000003")
+        candidate_a, candidate_c = "66000000-0000-4000-8000-000000000001", "66000000-0000-4000-8000-000000000003"
+        events = list(review["mapping_events"]) + [
+            {"kind": "report_merge", "created_at": "2026-02-01T00:00:00Z",
+             "payload": {"source": report_a, "target": report_b, "conflicting_stages": ["fulltext"],
+                         "conflicting_decisions": [{"stage": "fulltext", "source": "included", "target": "excluded"}],
+                         "protocol_version": 1}},
+            {"kind": "report_merge", "created_at": "2026-02-02T00:00:00Z",
+             "payload": {"source": report_b, "target": report_c, "conflicting_stages": [],
+                         "conflicting_decisions": [], "protocol_version": 1}}]
+        counts = compute_flow_counts(review["occurrences"], events, review["candidates"], list(review["decisions"]),
+                                     [l for l in review["report_studies"] if l["study_id"]], 1,
+                                     screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual(counts["pending_adjudication"], 1)
+        self.assertEqual(counts["retained_candidates"], 4)  # A and B folded into C
+        # Resolving the inherited conflict on C restores its inclusion.
+        resolution = {"candidate_id": candidate_c, "stage": "fulltext", "protocol_version": 1,
+                      "actor_id": FIXTURE["actors"]["owner"], "decision": "included",
+                      "role": "adjudication", "created_at": "2026-02-03T00:00:00Z"}
+        resolved = compute_flow_counts(review["occurrences"], events, review["candidates"],
+                                       list(review["decisions"]) + [resolution],
+                                       [l for l in review["report_studies"] if l["study_id"]], 1,
+                                       screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual(resolved["pending_adjudication"], 0)
+        self.assertEqual(resolved["included_reports"], counts["included_reports"] + 1)
+
     def test_unresolved_study_linkage_is_not_corroboration(self):
         review = FIXTURE["review"]
         links = [dict(link) for link in review["report_studies"] if link["study_id"]]

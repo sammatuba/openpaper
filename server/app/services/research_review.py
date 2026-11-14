@@ -128,7 +128,32 @@ def _current_merges(db: Session, project_id, protocol_version):
                 for stage in list(staged):
                     staged[stage].discard(source)
                     if not staged[stage]: del staged[stage]
-    return merges, conflict_stages
+
+    def _representative(report):
+        seen = set()
+        while report in merges and report not in seen:
+            seen.add(report); report = merges[report]
+        return report
+
+    # Conflicts and membership follow the chain: a report merged into a later
+    # representative carries its unresolved conflicts there (R4: A→B then B→C must not
+    # erase the pending adjudication recorded against B).
+    chained_conflicts, incoming = {}, {}
+    for source_report, target in merges.items():
+        incoming.setdefault(_representative(target), set()).add(source_report)
+    for target, staged in conflict_stages.items():
+        for stage, sources in staged.items():
+            rep = _representative(target)
+            chained_conflicts.setdefault(rep, {}).setdefault(stage, set()).update(sources)
+            incoming.setdefault(rep, set()).update(sources)
+    return merges, chained_conflicts, incoming
+
+
+def _resolve_representative(merges, report):
+    seen = set()
+    while report in merges and report not in seen:
+        seen.add(report); report = merges[report]
+    return report
 
 
 def _candidate_of_report(db: Session, project_id, report_id):
@@ -138,11 +163,13 @@ def _candidate_of_report(db: Session, project_id, report_id):
 
 
 def _has_conflict(db: Session, project_id, candidate, stage, protocol):
-    """Genuine disagreement among this candidate's decisions and the decisions of reports
-    currently merged into it at a conflicting stage."""
-    merges, conflict_stages = _current_merges(db, project_id, protocol.version)
-    merged_sources = {source for source, target in merges.items() if target == str(candidate.report_id)}
-    merged_sources |= (conflict_stages.get(str(candidate.report_id)) or {}).get(stage, set())
+    """Genuine disagreement among this candidate's decisions and the decisions of every
+    report that feeds into it through the current merge chain, at this or an inherited
+    conflicting stage."""
+    merges, conflict_stages, incoming = _current_merges(db, project_id, protocol.version)
+    report = str(candidate.report_id)
+    merged_sources = set(incoming.get(report, set()))
+    merged_sources |= (conflict_stages.get(report) or {}).get(stage, set())
     decisions = db.query(ReviewDecision).join(ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(
         ReviewCandidate.project_id == project_id).all()
     by_candidate = {}
@@ -222,7 +249,7 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
     if not source or not target: raise HTTPException(422, "Merge requires two distinct project reports")
     if source.identity_state == "merged": raise HTTPException(409, "Source report is already merged")
     if target.identity_state == "merged": raise HTTPException(409, "Target is already merged; merge into the current representative")
-    merges, _conflicts = _current_merges(db, project_id, protocol_version)
+    merges, _conflicts, _incoming = _current_merges(db, project_id, protocol_version)
     visited = set()
     cursor = str(target.id)
     while cursor in merges and cursor not in visited:
@@ -230,6 +257,8 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
         cursor = merges[cursor]
         if cursor == str(source.id):
             raise HTTPException(409, "Merge would create a cycle between reports")
+    if _resolve_representative(merges, str(source.id)) == str(target.id):
+        raise HTTPException(409, "Merge would create a cycle between reports")
     protocol = _protocol_for(db, project_id, protocol_version)
     conflicts, stages = [], []
     for stage in ("title_abstract", "fulltext"):
@@ -307,14 +336,14 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
         return value
 
     removed = set()
-    merged_sources, conflict_stages = set(), {}
+    merge_map, conflict_stages = {}, {}
     for event in mapping_events:
         kind = field(event, "kind")
         payload = field(event, "payload") or {}
         if kind == "occurrence_map":
             for occurrence_id in payload.get("removed", []): removed.add(str(occurrence_id))
         elif kind == "report_merge" and int(payload.get("protocol_version", 1)) <= protocol_version:
-            merged_sources.add(str(payload["source"]))
+            merge_map[str(payload["source"])] = str(payload["target"])
             for conflict in payload.get("conflicting_decisions", []):
                 stages = conflict_stages.setdefault(str(payload["target"]), {})
                 # Track every conflicting merge: resolution requires an adjudication recorded
@@ -323,13 +352,20 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
                     {"source": str(payload["source"]), "version": int(payload.get("protocol_version", 1)),
                      "created_at": field(event, "created_at")})
         elif kind == "report_split" and int(payload.get("protocol_version", 1)) <= protocol_version:
-            merged_sources.discard(str(payload["source"]))
+            merge_map.pop(str(payload["source"]), None)
             for staged in conflict_stages.values():
                 for stage in list(staged):
                     staged[stage] = [m for m in staged[stage] if m.get("source") != str(payload["source"])]
                     if not staged[stage]: del staged[stage]
+    # Conflicts follow the merge chain to the final representative (R4): A→B then B→C
+    # keeps the A-vs-B adjudication pending on C instead of erasing it.
+    conflict_stages = {
+        _resolve_representative(merge_map, target): {
+            stage: merges_list for stage, merges_list in staged.items()}
+        for target, staged in conflict_stages.items()}
     identified = len({str(field(o, "id")) for o in occurrences})
     duplicate_removals = len(removed)
+    merged_sources = set(merge_map)
     retained = [c for c in candidates if field(c, "retained") and str(field(c, "report_id")) not in merged_sources]
     candidate_ids = {str(field(c, "id")) for c in retained}
     report_of_candidate = {str(field(c, "id")): str(field(c, "report_id")) for c in retained}
