@@ -153,8 +153,11 @@ def convert_project(db: Session, project_id, actor_id):
                     for section in sections for block in section.get("blocks", [])]}
     created = len(claims) + len(findings) + len(relations) + len(source_versions)
     if root is None:
-        db.execute(sa_text("INSERT INTO research_projects (project_id, storage_generation, change_sequence) "
-                           "VALUES (:p, 'v2', :created)"), {"p": str(project_id), "created": created})
+        # Fresh-root path persists the durable manifest atomically with the flip (R30).
+        db.execute(sa_text("INSERT INTO research_projects (project_id, storage_generation, change_sequence, "
+                           "conversion_manifest) VALUES (:p, 'v2', :created, CAST(:manifest AS JSONB))"),
+                   {"p": str(project_id), "created": created,
+                    "manifest": json.dumps(manifest, ensure_ascii=False)})
     else:
         # Monotonic atomic flip (R29): the increment happens in SQL, so a cached ORM root
         # cannot compute from a stale value — review mutations may have advanced the

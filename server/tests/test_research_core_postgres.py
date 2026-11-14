@@ -1214,6 +1214,10 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 db.expire_all()
                 root = db.get(ResearchProject, fresh_project)
                 self.assertEqual((root.storage_generation, root.change_sequence), ("v2", 3))
+                # The durable manifest is persisted on the fresh-root path and readable
+                # from a fresh session (R30).
+                self.assertEqual(root.conversion_manifest["converter_version"], manifest["converter_version"])
+                self.assertEqual(root.conversion_manifest["counts"], manifest["counts"])
             # Link receipts carry the committed sequence.
             with self.Session() as db:
                 link_report = ReviewReport(id=uuid4(), project_id=fresh_project)
