@@ -1,6 +1,6 @@
 {
   "intent": "docs/work/INTENT-investigation-workspace.md",
-  "phase": "Investigation workspace deployed; authenticated account acceptance remains open",
+  "phase": "AI-native platform P00-P02 implemented, locally verified (138 required / 522 full, zero skips) and opened as PR #3; 24 independent rework rounds addressed (53 findings), 25th round blocked by reviewer credits; investigation A25 acceptance still open",
   "branch": "feat/native-investigation-workspace",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,11 +8,11 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Operator current-session acceptance: sign in at canonical origin and exercise Case \u2192 Evidence \u2192 Draft save/reload, citation/PDF and export. Implementation/review/deployment/public gates are done; live AI requires a separate explicit action.",
+  "next_action": "Refill reviewer credits, run the 25th review round on PR #3 (./meos review --base feat/native-investigation-workspace), address findings, then merge the stacked PR; operator A25 acceptance remains open",
   "blocked_on": [
     "No current operator browser/session exposed for authenticated production UI acceptance."
   ],
-  "updated": "2026-11-11T01:56:13.570330+00:00",
+  "updated": "2026-11-13T00:00:00+00:00",
   "done": [
     "bootstrap (project, billing, APIs, registry, SA, queue, GCS bucket+CORS+HMAC)",
     "Cloud Build 98fc719b: 5 images",
@@ -20,7 +20,7 @@
     "secrets: DATABASE_URL, DATABASE_URL_DIRECT, GCS_HMAC_* set",
     "all 9 secrets set",
     "deploy: openpaper + openpaper-jobs live; /api/health 200 via Caddy, client 200, jobs 403 anon / 200 with identity token",
-    "X-Jobs-Secret rollout; scheduler \u2192 server 200",
+    "X-Jobs-Secret rollout; scheduler → server 200",
     "services pinned by digest (revision openpaper-00002)",
     "backup job verified end to end: dump, upload to gs://openpaper-sammatuba-papers/backups/, prune (14 days)",
     "OAuth redirect URI registered; Google sign-in verified in operator browser (callback 302, /api/auth/me 200)",
@@ -300,7 +300,7 @@
     "status": "implemented and verified locally; review finding fixed and regression-verified; uncommitted and undeployed",
     "intent": "docs/work/INTENT-project-workflow.md",
     "verification": "docs/work/VERIFICATION-project-workflow.md",
-    "direction": "User chose research dossier: questions \u2192 evidence \u2192 synthesis \u2192 experiment plan",
+    "direction": "User chose research dossier: questions → evidence → synthesis → experiment plan",
     "checks": [
       "production build including lint/TypeScript",
       "Textfold parser/source fidelity and upstream vendor checks",
@@ -315,7 +315,7 @@
     "review": ".meos/reviews/20261109T004539Z.md",
     "limitations": "Guided saved discussions and a manually edited brief; no automatically verified evidence, novelty verdict or experiment execution.",
     "review_verdict": "rework on the reviewed snapshot; one important finding resolved by author verification, no subsequent reviewer acceptance claimed",
-    "review_disposition": "Refreshed the persistent conversation list before navigation. Added mutable-create mock and actual create \u2192 workspace return \u2192 resume saved discussion check; it reproduced the old failure and passed after the fix on desktop/mobile. Final production build also passed.",
+    "review_disposition": "Refreshed the persistent conversation list before navigation. Added mutable-create mock and actual create → workspace return → resume saved discussion check; it reproduced the old failure and passed after the fix on desktop/mobile. Final production build also passed.",
     "browser_log": "/tmp/openpaper-workflow-final-browser.log",
     "material_unresolved_findings": [],
     "local_frontend": "stopped after verification"
@@ -350,7 +350,7 @@
     "status": "Implemented, independently accepted and deployed; authenticated current-account UI acceptance open",
     "next_milestone": "Account-only production acceptance",
     "planning_scope": "Historical planning preserved; operator subsequently authorized end-to-end implementation and deployment",
-    "implementation_scope": "M0\u2013M6 implemented; M7 review/release active",
+    "implementation_scope": "M0–M6 implemented; M7 review/release active",
     "verification": "See VERIFICATION-investigation-workspace.md; sourcec757bbf0, liveopenpaper-00014-vjm100%, migrationproject_investigation_01, independentaccept.",
     "verification_record": "docs/work/VERIFICATION-investigation-workspace.md"
   },
@@ -387,7 +387,7 @@
     "remaining_milestones": [
       "M7 account-only authenticated production acceptance"
     ],
-    "acceptance": "A01\u2013A24 pass; A25 rollout/readiness/public checks pass, authenticated current-account UI not exercised.",
+    "acceptance": "A01–A24 pass; A25 rollout/readiness/public checks pass, authenticated current-account UI not exercised.",
     "release": {
       "source_commit": "c757bbf00d6d1223eb1e1c489086a24d3de9512a",
       "source_directory": "/tmp/openpaper-investigation-release-c757bbf00d6d",
@@ -432,5 +432,55 @@
       "live_inference": false
     },
     "local_frontend": "Stopped verified managed Next3011 PID436600 after browser acceptance"
+  },
+  "ai_native_platform_strategy": {
+    "document": "docs/work/STRATEGY-ai-native-research-platform.md",
+    "date": "2026-11-13",
+    "status": "P00-P02 implemented, reviewed across four rounds (every finding fixed with regressions) and verified locally; committed on feat/ai-native-research-core, PR pending; P03-P12 not started",
+    "baseline_head": "ef2a6731f9e429d45b30055940c0238e965df3a9",
+    "scope": "Connected freeform multimedia canvas, rigorous research review, evidence integrity, scientific manuscript authoring, local Jupyter experiments, bounded Arrow analytics and authenticated ChatGPT MCP",
+    "execution": "P00-P02 executed 2026-11-13 per operator instruction; packages delivered as a stacked PR targeting feat/native-investigation-workspace",
+    "boundaries": "Local committed implementation on feat/ai-native-research-core (not merged, not deployed); no production migration, live inference, corpus expansion or account changes; existing open gates (A25, live-AI) untouched",
+    "existing_release_gates": "Existing production pointer and open authenticated operator acceptance remain unchanged; live-AI acceptance remains separately authorized",
+    "strategy_review": {
+      "verdict": "accept; no remaining material contract findings",
+      "initial_findings": "Three bounded rework findings: early spending enforcement, review identity/count semantics, and unverified link-only media",
+      "disposition": "All three corrected and independently rereviewed",
+      "scope": "Read-only strategy review only; no implementation or live verification"
+    },
+    "planning_verification": "Preserved unchanged from the planning pass (24 links, P00-P12/C01-C36 completeness, review arithmetic, JSON, pointer preservation)",
+    "intent": "docs/work/INTENT-ai-native-research-platform.md",
+    "baseline": "docs/work/BASELINE-ai-native-research-platform.md",
+    "contract": "docs/work/CONTRACT-ai-native-research-platform.md",
+    "fixture": "docs/work/ai-native-research-fixture.json",
+    "prototype": "docs/prototypes/ai-native-loop.html",
+    "verification": "docs/work/VERIFICATION-ai-native-research-platform.md",
+    "checks": "Required PG138 zero skips; full server522 OK zero skips; jobs21; worker2; research36; runner5; client tsc+build pass; git diff --check pass"
+  },
+  "ai_native_p0_p2": {
+    "migration_head": "research_core_01",
+    "new_tables": 17,
+    "fixture": "docs/work/ai-native-research-fixture.json",
+    "required_lane": "138 tests zero skips",
+    "full_server": "522 tests OK zero skips",
+    "c01_c05_c08_c10_c17_c26_c27_c29": "pass for new code paths (review rounds R1-R3 findings fixed with regressions)",
+    "conversion": "atomic; v1 row retained read-only; unconverted projects refuse typed writes",
+    "metered": "no price table shipped; every metered dispatch refused until explicitly priced",
+    "not_started": [
+      "P03 shell",
+      "P04 discovery",
+      "P05 editor",
+      "P06 MCP extension",
+      "P07 companion",
+      "P08 lab",
+      "P09 canvas",
+      "P10 review pipeline",
+      "P11 AI assistance",
+      "P12 release"
+    ],
+    "review_rounds": "R1 20261113T003601Z rework(4)->fixed; R2 20261113T005558Z rework(6)->fixed; R3 20261114T030828Z rework(4)->fixed; R4 20261114T031919Z rework(2)->fixed; R5 20261114T032603Z rework(2)->fixed; R6 20261114T033143Z rework(2)->fixed; R7 20261114T034202Z rework(2)->fixed; R8 20261114T034742Z rework(3)->fixed; R9 20261114T035430Z rework(2)->fixed; R10 20261114T040250Z rework(1)->fixed; R11 20261114T040730Z rework(3)->fixed; R12 20261114T041504Z rework(2)->fixed; R13 20261114T042132Z rework(2)->fixed; R14 20261114T042649Z rework(3)->fixed; R15 20261114T043309Z rework(3)->fixed; R16 20261114T043856Z rework(1)->fixed; R17 20261114T044738Z rework(3)->fixed; R18 20261114T045324Z rework(2)->fixed; R19 20261114T063011Z rework(2)->fixed; R20 20261114T063907Z rework(1)->fixed; R21 20261114T064337Z rework(2)->fixed; R22 20261114T064938Z rework(1)->fixed; R23 20261114T065525Z rework(1)->fixed; R24 20261114T070421Z rework(1)->fixed; R25 attempt 20261114T071025Z did not run (reviewer credits exhausted)",
+    "boundaries": "Local committed implementation on feat/ai-native-research-core (not merged, not deployed); no production migration, live inference, corpus expansion or account changes; existing open gates (A25, live-AI) untouched",
+    "pull_request": "https://github.com/sammatuba/openpaper/pull/3 (feat/ai-native-research-core -> feat/native-investigation-workspace)",
+    "implementation_commit": "ac6e939c (branch tip at PR open; 11 commits)"
   }
 }

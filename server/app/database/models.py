@@ -29,7 +29,7 @@ from sqlalchemy.orm import (  # type: ignore
     relationship,
     sessionmaker,
 )
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text as sa_text
 
 # Special notes:
 # - All models inherit from the `Base` class, which provides common fields and methods.
@@ -1839,3 +1839,267 @@ class ProjectDraftRequest(Base):
     error_code = Column(String(100), nullable=True)
     conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)
     message_id = Column(UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
+
+
+def sa_text_nextval():
+    return sa_text("nextval('research_event_seq')")
+
+
+class ResearchOrigin(str, Enum):
+    HUMAN = "human"
+    ASSEMBLED = "assembled"
+    ASSISTANT = "assistant"  # native assistant; requires durable local request/message identity
+    IMPORTED = "imported"
+    EXTERNAL_AI = "external_ai"  # externally authored (e.g. ChatGPT MCP); never relabeled assistant
+
+
+class ResearchProject(Base):
+    """Per-project authoritative storage generation and change sequence."""
+    __tablename__ = "research_projects"
+    __table_args__ = (CheckConstraint("storage_generation IN ('v1','v2')", name="ck_research_generation"),)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), primary_key=True)
+    storage_generation = Column(String(4), nullable=False, default="v1")
+    change_sequence = Column(BigInteger, nullable=False, default=0)
+    conversion_manifest = Column(JSONB, nullable=True)
+
+
+class ResearchSourceVersion(Base):
+    """Immutable extracted-source snapshot; content digests are not access capabilities."""
+    __tablename__ = "research_source_versions"
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False, index=True)
+    paper_id = Column(UUID(as_uuid=True), ForeignKey("papers.id", ondelete="SET NULL"), nullable=True, index=True)
+    kind = Column(String(20), nullable=False, default="paper_text")
+    extractor = Column(String(100), nullable=False)
+    text_sha256 = Column(String(64), nullable=False, index=True)
+    line_count = Column(Integer, nullable=True)
+    byte_size = Column(Integer, nullable=True)
+    source_metadata = Column("metadata", JSONB, nullable=False, default=dict)
+
+
+class ResearchEntity(Base):
+    """Canonical typed research record; payload schemas are strict per type."""
+    __tablename__ = "research_entities"
+    __table_args__ = (
+        CheckConstraint("type IN ('question','claim','finding','assumption','decision','gap')", name="ck_research_entity_type"),
+        CheckConstraint("revision > 0", name="ck_research_entity_revision"),
+        Index("ix_research_entities_project_type", "project_id", "type"),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False)
+    type = Column(String(20), nullable=False)
+    revision = Column(Integer, nullable=False, default=1)
+    payload = Column(JSONB, nullable=False)
+    archived = Column(Boolean, nullable=False, default=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class ResearchEntityRevision(Base):
+    """Append-only revision history; undo writes a new revision and never rewrites one."""
+    __tablename__ = "research_entity_revisions"
+    __table_args__ = (
+        UniqueConstraint("entity_id", "revision", name="uq_research_entity_revision"),
+        CheckConstraint("origin IN ('human','assembled','assistant','imported','external_ai')", name="ck_research_revision_origin"),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    entity_id = Column(UUID(as_uuid=True), ForeignKey("research_entities.id", ondelete="CASCADE"), nullable=False, index=True)
+    revision = Column(Integer, nullable=False)
+    payload = Column(JSONB, nullable=False)
+    origin = Column(String(20), nullable=False)
+    provenance = Column(JSONB, nullable=False, default=dict)
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    derived_from = Column(JSONB, nullable=True)  # {"entity_id": ..., "revision": ...} when derived
+
+
+class ResearchRelation(Base):
+    """Typed scientific relation; presentation-only connectors never enter this table."""
+    __tablename__ = "research_relations"
+    __table_args__ = (
+        CheckConstraint("relation_type IN ('supports','challenges','qualifies','assumes','motivates','tests','measures','derived_from','cites')", name="ck_research_relation_type"),
+        CheckConstraint("revision > 0", name="ck_research_relation_revision"),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False, index=True)
+    relation_type = Column(String(20), nullable=False)
+    source_id = Column(UUID(as_uuid=True), ForeignKey("research_entities.id", ondelete="CASCADE"), nullable=False)
+    target_id = Column(UUID(as_uuid=True), ForeignKey("research_entities.id", ondelete="CASCADE"), nullable=False)
+    rationale = Column(Text, nullable=False)
+    revision = Column(Integer, nullable=False, default=1)
+    archived = Column(Boolean, nullable=False, default=False)
+
+
+class ReviewProtocol(Base):
+    """Versioned review protocol; amendments create a new row and never rewrite history."""
+    __tablename__ = "review_protocols"
+    __table_args__ = (
+        UniqueConstraint("project_id", "version", name="uq_review_protocol_version"),
+        CheckConstraint("mode IN ('systematic','scoping','literature')", name="ck_review_protocol_mode"),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    mode = Column(String(16), nullable=False, default="literature")
+    unit_of_analysis = Column(String(30), nullable=False, default="report")
+    count_policy = Column(JSONB, nullable=False, default=dict)
+    criteria = Column(JSONB, nullable=False, default=list)
+    screening_modes = Column(JSONB, nullable=False, default=dict)  # {"title_abstract": "solo", "fulltext": "dual"}
+    status = Column(String(16), nullable=False, default="draft")
+    parent_version_id = Column(UUID(as_uuid=True), ForeignKey("review_protocols.id", ondelete="SET NULL"), nullable=True)
+
+
+class ReviewOccurrence(Base):
+    """One acquisition occurrence. Delivery retries/page resumes reuse the same row via the
+    (provider, search, external hit) uniqueness; a new search execution retrieving the same
+    report inserts a new occurrence."""
+    __tablename__ = "review_occurrences"
+    __table_args__ = (UniqueConstraint("project_id", "provider", "search_ref", "external_hit_id", name="uq_review_occurrence_hit"),)
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider = Column(String(50), nullable=False)
+    search_ref = Column(String(200), nullable=False)
+    external_hit_id = Column(String(200), nullable=False)
+    protocol_version = Column(Integer, nullable=False, default=1)  # acquisition-set update that introduced this occurrence
+    report_id = Column(UUID(as_uuid=True), ForeignKey("review_reports.id", ondelete="SET NULL"), nullable=True)
+    version_id = Column(UUID(as_uuid=True), ForeignKey("review_report_versions.id", ondelete="SET NULL"), nullable=True)
+
+
+class ReviewReport(Base):
+    """Scholarly report identity; versions share the report ID only after explicit identity review."""
+    __tablename__ = "review_reports"
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False, index=True)
+    identity_state = Column(String(16), nullable=False, default="unreviewed")
+    merged_into = Column(UUID(as_uuid=True), ForeignKey("review_reports.id", ondelete="SET NULL"), nullable=True)
+
+
+class ReviewReportVersion(Base):
+    __tablename__ = "review_report_versions"
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    report_id = Column(UUID(as_uuid=True), ForeignKey("review_reports.id", ondelete="CASCADE"), nullable=False, index=True)
+    version_label = Column(String(50), nullable=False, default="v1")
+    source_version_id = Column(UUID(as_uuid=True), ForeignKey("research_source_versions.id", ondelete="SET NULL"), nullable=True)
+    sha256 = Column(String(64), nullable=True)
+    bibliographic = Column(JSONB, nullable=False, default=dict)
+
+
+class ReviewStudy(Base):
+    """Underlying empirical investigation at the protocol's declared unit."""
+    __tablename__ = "review_studies"
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False, index=True)
+    description = Column(Text, nullable=False, default="")
+
+
+class ReviewReportStudy(Base):
+    """Many-to-many report/study linkage; unresolved linkage is never counted as corroboration.
+    protocol_version records when the linkage entered the review so historic snapshots
+    keep their original membership."""
+    __tablename__ = "review_report_studies"
+    report_id = Column(UUID(as_uuid=True), ForeignKey("review_reports.id", ondelete="CASCADE"), primary_key=True)
+    study_id = Column(UUID(as_uuid=True), ForeignKey("review_studies.id", ondelete="CASCADE"), primary_key=True)
+    linkage_state = Column(String(16), nullable=False, default="proposed")
+    protocol_version = Column(Integer, nullable=False, default=1)
+    rationale = Column(Text, nullable=False, default="")
+
+
+class ReviewCandidate(Base):
+    """One candidate per retained report; screening counts candidates, not search hits.
+    protocol_version records the acquisition-set update that introduced the candidate so
+    historic snapshots keep their original candidate sets."""
+    __tablename__ = "review_candidates"
+    __table_args__ = (UniqueConstraint("project_id", "report_id", name="uq_review_candidate_report"),)
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False, index=True)
+    report_id = Column(UUID(as_uuid=True), ForeignKey("review_reports.id", ondelete="CASCADE"), nullable=False)
+    selected_version_id = Column(UUID(as_uuid=True), ForeignKey("review_report_versions.id", ondelete="SET NULL"), nullable=True)
+    protocol_version = Column(Integer, nullable=False, default=1)
+    retained = Column(Boolean, nullable=False, default=True)
+    prescreen_category = Column(String(30), nullable=True)
+
+
+class ReviewDecision(Base):
+    """Screening decision event. Independent dual review hides peer decisions until both submit."""
+    __tablename__ = "review_decisions"
+    __table_args__ = (
+        CheckConstraint("decision IN ('included','excluded','unclear')", name="ck_review_decision_value"),
+        CheckConstraint("stage IN ('title_abstract','fulltext')", name="ck_review_decision_stage"),
+        CheckConstraint("role IN ('primary','secondary','adjudication')", name="ck_review_decision_role"),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    candidate_id = Column(UUID(as_uuid=True), ForeignKey("review_candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage = Column(String(16), nullable=False)
+    protocol_version = Column(Integer, nullable=False)
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    decision = Column(String(12), nullable=False)
+    role = Column(String(16), nullable=False, default="primary")
+    reason = Column(Text, nullable=False, default="")
+    cited_text = Column(Text, nullable=True)
+    criterion_judgments = Column(JSONB, nullable=False, default=list)
+    event_sequence = Column(BigInteger, nullable=False, server_default=sa_text_nextval())
+
+
+class ReviewMappingEvent(Base):
+    """Append-only dedup/merge/amend events; flow snapshots derive from these, never from edits."""
+    __tablename__ = "review_mapping_events"
+    __table_args__ = (CheckConstraint(
+        "kind IN ('occurrence_map','report_merge','report_split','version_replace','protocol_amend','study_link')",
+        name="ck_review_mapping_kind"),)
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(20), nullable=False)
+    payload = Column(JSONB, nullable=False)
+    # Shared monotonic ordering anchor: drawn from one sequence, a decision recorded in
+    # the same transaction as a merge still orders strictly after it.
+    event_sequence = Column(BigInteger, nullable=False, server_default=sa_text_nextval())
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class ResearchProposal(Base):
+    """Proposal/approval core. Client confirmations and tool annotations are never approval."""
+    __tablename__ = "research_proposals"
+    __table_args__ = (
+        UniqueConstraint("project_id", "idempotency_key", name="uq_research_proposal_key"),
+        CheckConstraint("state IN ('pending','approved','applied','discarded','expired','stale')", name="ck_research_proposal_state"),
+        CheckConstraint("origin IN ('human','assembled','assistant','imported','external_ai')", name="ck_research_proposal_origin"),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False, index=True)
+    origin = Column(String(20), nullable=False)
+    payload = Column(JSONB, nullable=False)
+    payload_sha256 = Column(String(64), nullable=False)
+    targets = Column(JSONB, nullable=False)  # {entity_id: expected_revision}
+    state = Column(String(16), nullable=False, default="pending")
+    approval = Column(JSONB, nullable=True)  # {approver_id, approved_at, expires_at, bound_payload_sha256, bound_targets}
+    receipt = Column(JSONB, nullable=True)
+    idempotency_key = Column(String(100), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class MeteredPriceTable(Base):
+    """Versioned unit prices. No row exists until an operator explicitly registers prices;
+    with an empty table every metered dispatch is refused."""
+    __tablename__ = "metered_price_tables"
+    version = Column(Integer, primary_key=True, autoincrement=False)
+    prices = Column(JSONB, nullable=False)  # {operation_type: {"unit_prices": {...}, "max_cost": ...}}
+
+
+class MeteredOperation(Base):
+    """Admission/reservation/replay ledger for metered operations (strategy 11.3, C29).
+    Estimate and settled usage are stored separately; uncertain completion retains the reservation."""
+    __tablename__ = "metered_operations"
+    __table_args__ = (
+        UniqueConstraint("project_id", "operation_type", "idempotency_key", name="uq_metered_operation_key"),
+        CheckConstraint("state IN ('reserved','admitted','running','completed','failed','uncertain','cancelled','expired')", name="ck_metered_operation_state"),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    operation_type = Column(String(60), nullable=False)
+    price_table_version = Column(Integer, nullable=True)
+    payload_sha256 = Column(String(64), nullable=False)
+    estimate = Column(JSONB, nullable=False)
+    reservation = Column(JSONB, nullable=False, default=dict)
+    state = Column(String(16), nullable=False, default="reserved")
+    usage = Column(JSONB, nullable=True)
+    error_code = Column(String(100), nullable=True)
+    idempotency_key = Column(String(100), nullable=True)

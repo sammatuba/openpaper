@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
-from app.database.models import Paper, Project, ProjectRole, ProjectPaper, ProjectInvestigation, ProjectDraftRequest, Message
+from app.database.models import Paper, Project, ProjectRole, ProjectPaper, ProjectInvestigation, ProjectDraftRequest, Message, ResearchProject
 from app.schemas.investigation import InvestigationDocument
 
 
@@ -121,6 +121,11 @@ def etag(project_id, revision):
 def save(db:Session, project_id, actor_id, request, if_match):
     try:
         access(db,project_id,actor_id,write=True,lock=True)
+        # One authoritative write path: after research-core conversion the v1 document is
+        # retained read-only history and legacy writes are refused (strategy 10.6).
+        root=db.query(ResearchProject).filter(ResearchProject.project_id==project_id).with_for_update().first()
+        if root and root.storage_generation=='v2':
+            raise HTTPException(409,'Research storage is converted; legacy investigation writes are refused')
         row,old=read_document(db,project_id)
         current=etag(project_id,row.revision if row else 0)
         if if_match is None: raise HTTPException(428,'If-Match is required')
