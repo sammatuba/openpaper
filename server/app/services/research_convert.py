@@ -46,7 +46,10 @@ def _v1_finding_payload(finding, source_version_id, unresolved):
 
 
 def convert_project(db: Session, project_id, actor_id):
-    research_access.authorize(db, project_id, actor_id, write=True)
+    # Lock the same project row v1 saves lock: when both storage rows are absent, a
+    # concurrent first v1 save must commit (or block) before conversion reads storage,
+    # otherwise conversion would make empty v2 authoritative over the saved data (R25).
+    research_access.authorize(db, project_id, actor_id, write=True, lock=True)
     root = db.query(ResearchProject).filter(ResearchProject.project_id == project_id).with_for_update().first()
     if root and root.storage_generation == "v2":
         raise HTTPException(409, "Project research storage is already converted")

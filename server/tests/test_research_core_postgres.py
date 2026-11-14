@@ -562,6 +562,97 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                                                        {"text": "Fixture decision.", "decided_by": str(s.owner)})
             self.assertIn("change_sequence", decision)
 
+    async def test_merge_carries_unresolved_source_disagreement(self):
+        # R25: merging a half-disagreed source (no adjudication) onto a decided target
+        # forces adjudication on the merged candidate instead of erasing the disagreement.
+        s = self.seed()
+        reviewer_1, reviewer_2 = uuid4(), uuid4()
+        with self.engine.begin() as conn:
+            for uid in (reviewer_1, reviewer_2):
+                conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": uid, "e": str(uid) + "@test.invalid"})
+                conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": uid})
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1,
+                                            screening_modes={"title_abstract": "solo", "fulltext": "dual"}, commit=False)
+            db.commit()
+            source, target = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([source, target]); db.commit()
+            version_s, version_t = ReviewReportVersion(id=uuid4(), report_id=source.id), ReviewReportVersion(id=uuid4(), report_id=target.id)
+            db.add_all([version_s, version_t]); db.commit()
+            candidate_s, candidate_t = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_s, project_id=s.project, report_id=source.id, selected_version_id=version_s.id),
+                        ReviewCandidate(id=candidate_t, project_id=s.project, report_id=target.id, selected_version_id=version_t.id)])
+            db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate_s, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_t, "title_abstract", 1, "included")
+            # Source reviewers disagree; no adjudication has been recorded.
+            research_review.record_decision(db, s.project, reviewer_1, candidate_s, "fulltext", 1, "included")
+            research_review.record_decision(db, s.project, reviewer_2, candidate_s, "fulltext", 1, "excluded")
+            # Target decided by two agreeing reviewers.
+            research_review.record_decision(db, s.project, reviewer_1, candidate_t, "fulltext", 1, "included")
+            research_review.record_decision(db, s.project, reviewer_2, candidate_t, "fulltext", 1, "included")
+            result = research_review.merge_reports(db, s.project, s.owner, source.id, target.id,
+                                                   "Fixture: unresolved disagreement", protocol_version=1)
+            self.assertTrue(result["requires_adjudication"])
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (0, 1))
+            # The named adjudicator resolves the carried disagreement.
+            research_review.record_decision(db, s.project, s.owner, candidate_t, "fulltext", 1, "included", role="adjudication")
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (1, 0))
+
+    async def test_conversion_waits_for_concurrent_first_save(self):
+        # R25: conversion takes the same project lock as v1 saves, so a first save that
+        # commits during conversion is converted (never overwritten by empty v2 storage).
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture F", "Title\nExact fixture result.\nLimitations.")
+        document, ids = self._v1_document(paper)
+        from sqlalchemy import text as raw_text
+        conn1 = self.engine.connect()
+        tx1 = conn1.begin()
+        conn1.execute(raw_text("SELECT id FROM project WHERE id = :p FOR UPDATE"), {"p": str(s.project)})
+        conn1.execute(raw_text("INSERT INTO project_investigations (project_id, schema_version, revision, document) "
+                                "VALUES (:p, 1, 1, :doc)"), {"p": str(s.project), "doc": json.dumps(document)})
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(lambda: _convert_in_session(self, s.project, s.owner))
+            import time
+            time.sleep(0.5)
+            self.assertFalse(future.done())  # blocked on the project lock: ordered after the save
+            tx1.commit()
+            manifest = future.result(timeout=10)
+        self.assertEqual(manifest["counts"]["claims"], 1)
+        conn1.close()
+
+    async def test_metered_rejects_malformed_quantities(self):
+        s = self.seed()
+        with self.Session() as db:
+            # Price tables are global; this suite registers its own version so the test is
+            # independent of the admission test's registrations.
+            metered.register_price_table(db, {"synthesis_task": {"unit_prices": {"input_tokens": 0.00001, "output_tokens": 0.00003},
+                                                                 "max_cost": 0.5}}, version=3)
+            limits = {"max_inflight": 2}
+            # Negative quantities cannot offset the cost cap (R25).
+            with self.assertRaises(HTTPException) as negative:
+                metered.reserve(db, s.project, s.owner, "synthesis_task",
+                                {"units": {"input_tokens": 1000000, "output_tokens": -1000000}},
+                                {}, idempotency_key="negative", limits=limits)
+            self.assertEqual(negative.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as not_finite:
+                metered.reserve(db, s.project, s.owner, "synthesis_task",
+                                {"units": {"input_tokens": float("nan")}}, {}, idempotency_key="nan", limits=limits)
+            self.assertEqual(not_finite.exception.status_code, 422)
+            estimate = {"units": {"input_tokens": 10000, "output_tokens": 2000}}
+            operation, _ = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate,
+                                           {"question": "fixture"}, idempotency_key="q-1", limits=limits)
+            metered.admit(db, s.project, s.owner, operation.id)
+            metered.start(db, s.project, s.owner, operation.id)
+            with self.assertRaises(HTTPException) as negative_usage:
+                metered.settle(db, s.project, s.owner, operation.id, {"units": {"input_tokens": -5}})
+            self.assertEqual(negative_usage.exception.status_code, 422)
+            metered.settle(db, s.project, s.owner, operation.id, {"units": {"input_tokens": 10432, "output_tokens": 1717}})
+            self.assertEqual(operation.state, "completed")
+
     async def test_editing_imported_content_preserves_its_provenance(self):
         s = self.seed()
         document, ids = self._v1_document(uuid4())
@@ -1074,3 +1165,9 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 conn.execute(self.text("INSERT INTO review_occurrences (id,project_id,provider,search_ref,external_hit_id) VALUES (:a,:p,'fixture','q','hit-1')"), {"a": uuid4(), "p": s.project})
             nested.rollback()
             self.assertIn("uq_review_occurrence_hit", str(duplicate.exception))
+
+
+def _convert_in_session(test, project, owner):
+    from app.services import research_convert
+    with test.Session() as db:
+        return research_convert.convert_project(db, project, owner)

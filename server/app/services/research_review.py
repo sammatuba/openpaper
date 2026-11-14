@@ -352,8 +352,15 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
     for stage in ("title_abstract", "fulltext"):
         source_decision = _effective(db, source.id, stage, protocol_version, protocol)
         target_decision = _effective(db, target.id, stage, protocol_version, protocol)
-        if source_decision[0] and target_decision[0] and source_decision[0] != target_decision[0]:
-            conflicts.append({"stage": stage, "source": source_decision[0], "target": target_decision[0]})
+        decided_differ = source_decision[0] and target_decision[0] and source_decision[0] != target_decision[0]
+        unresolved = any(state in ("adjudication", "pending_dual")
+                         for decision, state in (source_decision, target_decision) if decision is None)
+        if decided_differ or unresolved:
+            # Decided values differ, or either side carries an unresolved disagreement —
+            # both force adjudication on the merged candidate; unresolved reviewer
+            # disagreement must not vanish in the merge (R25).
+            conflicts.append({"stage": stage, "source": source_decision[0] or "unresolved",
+                              "target": target_decision[0] or "unresolved"})
             stages.append(stage)
     source.identity_state = "merged"; source.merged_into = target.id
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="report_merge",

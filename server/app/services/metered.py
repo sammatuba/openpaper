@@ -9,6 +9,7 @@ Estimate and settled usage are stored separately; uncertain completion is never
 silently retried. Dispatch is gated on a specific admitted operation via
 `assert_dispatchable`; no database transaction spans a provider call.
 """
+import math
 from uuid import uuid4
 from fastapi import HTTPException
 from sqlalchemy import func, text
@@ -56,8 +57,19 @@ def assert_dispatchable(db: Session, project_id, actor_id, operation_id):
     return row
 
 
+def _validate_units(units: dict):
+    """Quantities must be real, non-negative, finite numbers: negative or malformed
+    values must not bypass the admission cost cap (R25)."""
+    for name, quantity in units.items():
+        if isinstance(quantity, bool) or not isinstance(quantity, (int, float)):
+            raise HTTPException(422, f"Unit quantity for {name} must be a number")
+        if not math.isfinite(quantity) or quantity < 0:
+            raise HTTPException(422, f"Unit quantity for {name} must be a finite non-negative number")
+
+
 def _estimate_cost(estimate: dict, entry: dict):
     units = estimate.get("units") or {}
+    _validate_units(units)
     unit_prices = entry.get("unit_prices") or {}
     unknown = [name for name in units if name not in unit_prices]
     if unknown: raise HTTPException(422, f"Unpriced units in estimate: {', '.join(sorted(unknown))}")
@@ -122,6 +134,8 @@ def start(db: Session, project_id, actor_id, operation_id): return _transition(d
 
 
 def settle(db: Session, project_id, actor_id, operation_id, usage: dict):
+    units = (usage or {}).get("units") or {}
+    _validate_units(units)  # settled accounting obeys the same quantity rules
     return _transition(db, operation_id, actor_id, "running", "completed", project_id, usage=usage)
 
 
