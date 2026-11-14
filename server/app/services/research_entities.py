@@ -10,10 +10,26 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from app.database.models import (Paper, ProjectPaper, ResearchEntity, ResearchEntityRevision, ResearchProject,
-                                 ResearchRelation, ResearchOrigin, ResearchSourceVersion)
+from app.database.models import (Message, Paper, ProjectDraftRequest, ProjectPaper, ResearchEntity,
+                                 ResearchEntityRevision, ResearchProject, ResearchRelation, ResearchOrigin,
+                                 ResearchSourceVersion)
 from app.schemas.research_core import RELATION_TYPES, endpoint_allowed, validate_payload, validate_provenance
 from . import research_access
+
+
+def _validate_native_identity(db: Session, project_id, actor_id, provenance):
+    """Durable native-assistant identity (contract 2.2, v1 semantics): the request must
+    exist, belong to this project and actor, be completed, and link to the cited message."""
+    request_id, message_id = provenance.get("request_id"), provenance.get("message_id")
+    try:
+        request_row = db.get(ProjectDraftRequest, UUID(str(request_id)))
+        message = db.get(Message, UUID(str(message_id)))
+    except (ValueError, AttributeError) as error:
+        raise HTTPException(422, "Invalid assistant provenance") from error
+    if (not request_row or request_row.project_id != project_id or request_row.requester_id != actor_id
+        or request_row.state != "completed" or str(request_row.message_id) != provenance["message_id"]
+        or not message or message.conversation_id != request_row.conversation_id):
+        raise HTTPException(422, "Invalid assistant provenance")
 
 
 def _verify_anchor(db: Session, project_id, payload, latest):
@@ -73,6 +89,8 @@ def create_entity(db: Session, project_id, actor_id, entity_type: str, payload: 
     _verify_anchor(db, project_id, typed, None)
     try: provenance = validate_provenance(origin, provenance or {})
     except ValueError as error: raise HTTPException(422, str(error)) from error
+    if origin == ResearchOrigin.ASSISTANT.value:
+        _validate_native_identity(db, project_id, actor_id, provenance)
     entity = ResearchEntity(id=entity_id or uuid4(), project_id=project_id, type=entity_type, revision=1, payload=typed, created_by=actor_id)
     db.add(entity)
     db.flush()  # parent row must exist before its revision row in the same transaction
@@ -114,6 +132,8 @@ def revise_entity(db: Session, project_id, actor_id, entity_id, expected_revisio
     _verify_anchor(db, project_id, typed, latest)
     try: provenance = validate_provenance(origin, provenance or {})
     except ValueError as error: raise HTTPException(422, str(error)) from error
+    if origin == ResearchOrigin.ASSISTANT.value:
+        _validate_native_identity(db, project_id, actor_id, provenance)
     revision = entity.revision + 1
     entity.revision = revision; entity.payload = typed
     db.add(ResearchEntityRevision(id=uuid4(), entity_id=entity.id, revision=revision, payload=typed, origin=origin,

@@ -10,10 +10,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
-from app.database.models import (MeteredOperation, MeteredPriceTable, ProjectInvestigation, ResearchEntity,
-                                 ResearchEntityRevision, ResearchProject, ResearchRelation, ResearchSourceVersion,
-                                 ReviewCandidate, ReviewDecision, ReviewMappingEvent, ReviewOccurrence, ReviewProtocol,
-                                 ReviewReport, ReviewReportStudy, ReviewReportVersion, ReviewStudy, ResearchProposal)
+from app.database.models import (Conversation, Message, MeteredOperation, MeteredPriceTable, ProjectDraftRequest,
+                                 ProjectInvestigation, ResearchEntity, ResearchEntityRevision, ResearchProject,
+                                 ResearchRelation, ResearchSourceVersion, ReviewCandidate, ReviewDecision,
+                                 ReviewMappingEvent, ReviewOccurrence, ReviewProtocol, ReviewReport,
+                                 ReviewReportStudy, ReviewReportVersion, ReviewStudy, ResearchProposal)
 from app.services import metered, research_convert, research_entities, research_proposals, research_review
 
 FIXTURE = json.loads((Path(__file__).resolve().parents[2] / "docs/work/ai-native-research-fixture.json").read_text())
@@ -30,10 +31,10 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
         def utf8(connection, record): connection.set_client_encoding("UTF8")
         cls.engine.dialect._json_serializer = lambda value: json.dumps(value, ensure_ascii=False)
         cls.engine.dispose()
-        order = (ProjectInvestigation, ResearchSourceVersion, ResearchEntity, ResearchEntityRevision,
-                 ResearchRelation, ReviewProtocol, ReviewReport, ReviewReportVersion, ReviewOccurrence, ReviewStudy,
-                 ReviewReportStudy, ReviewCandidate, ReviewDecision, ReviewMappingEvent, ResearchProposal,
-                 MeteredPriceTable, MeteredOperation)  # research_projects comes from the shared harness setup
+        order = (Conversation, Message, ProjectInvestigation, ProjectDraftRequest, ResearchSourceVersion, ResearchEntity,
+                 ResearchEntityRevision, ResearchRelation, ReviewProtocol, ReviewReport, ReviewReportVersion,
+                 ReviewOccurrence, ReviewStudy, ReviewReportStudy, ReviewCandidate, ReviewDecision, ReviewMappingEvent,
+                 ResearchProposal, MeteredPriceTable, MeteredOperation)  # research_projects comes from the shared harness
         with cls.engine.begin() as conn:
             for model in order: model.__table__.create(conn)
 
@@ -375,6 +376,58 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             finding = db.get(ResearchEntity, UUID(ids["finding_id"]))
             self.assertNotIn("source_version_id", finding.payload["anchor"])
             self.assertIn("requires review", finding.payload["anchor"]["notes"])
+
+    async def test_native_assistant_provenance_is_validated(self):
+        # Contract 2.2 / v1 semantics: assistant provenance requires a completed durable
+        # draft request owned by this actor in this project, linked to the cited message.
+        s = self.seed()
+        document, ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        other = self.seed()
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            request_id, message_id, conversation_id = uuid4(), uuid4(), uuid4()
+            db.add(Conversation(id=conversation_id, user_id=s.owner, conversable_type="project", conversable_id=s.project))
+            db.add(Message(id=message_id, conversation_id=conversation_id, role="assistant", content="Fixture draft", sequence=1))
+            db.commit()
+            def draft_request(project, actor, state="completed", request_id=request_id, message_id=message_id):
+                return ProjectDraftRequest(id=request_id, project_id=project, requester_id=actor,
+                                           request_hash="a" * 64, snapshot={}, base_revision=1,
+                                           section_id=uuid4(), state=state,
+                                           conversation_id=conversation_id, message_id=message_id)
+            db.add(draft_request(s.project, s.owner)); db.commit()
+            claim_id = UUID(ids["claim_id"])
+            _ = other  # seeded before the loop: cross-project requests must be refused
+            provenance = {"request_id": str(request_id), "message_id": str(message_id)}
+            created = research_entities.create_entity(db, s.project, s.owner, "claim",
+                                                      {"statement": "Assisted claim."}, origin="assistant",
+                                                      provenance=provenance, entity_id=uuid4())
+            self.assertEqual(created["revision"], 1)
+            for mutate, expected in (
+                (lambda: research_entities.create_entity(db, s.project, s.owner, "claim",
+                                                         {"statement": "Ghost."}, origin="assistant",
+                                                         provenance={"request_id": str(uuid4()), "message_id": str(message_id)}), 422),
+                (lambda: research_entities.create_entity(db, s.project, s.owner, "claim",
+                                                         {"statement": "Cross."}, origin="assistant",
+                                                         provenance={"request_id": str(draft_request(other.project, other.owner, request_id=uuid4()).id),
+                                                                     "message_id": str(message_id)}), 422),
+                (lambda: research_entities.create_entity(db, s.project, s.viewer, "claim",
+                                                         {"statement": "Wrong actor."}, origin="assistant",
+                                                         provenance=provenance), 403),  # authorization precedes provenance validation
+            ):
+                with self.assertRaises(HTTPException) as forged:
+                    mutate()
+                self.assertEqual(forged.exception.status_code, expected)
+            # State transitions are re-checked on revisions too.
+            db.add(draft_request(s.project, s.owner, state="pending", request_id=uuid4())); db.commit()
+        with self.Session() as db:
+            pending_request = db.query(ProjectDraftRequest).filter(ProjectDraftRequest.state == "pending").first()
+            with self.assertRaises(HTTPException) as incomplete:
+                research_entities.revise_entity(db, s.project, s.owner, UUID(ids["claim_id"]), 1,
+                                                {"statement": "Pending identity"}, origin="assistant",
+                                                provenance={"request_id": str(pending_request.id),
+                                                            "message_id": str(pending_request.message_id)})
+            self.assertEqual(incomplete.exception.status_code, 422)
 
     # ---------- C05/C07: forgery, endpoint legality, isolation ----------
 
