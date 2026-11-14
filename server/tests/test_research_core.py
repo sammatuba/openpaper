@@ -345,6 +345,38 @@ class CountArithmeticTests(unittest.TestCase):
         self.assertEqual(counts["identified_occurrences"],
                          counts["duplicate_removals"] + counts["retained_occurrences"])
 
+    def test_amendment_after_resolved_merge_governs_over_the_old_resolution(self):
+        # R16: a resolved merge (v1 adjudication includes) followed by a newer v2 solo
+        # exclusion: the latest cohort governs at v2; the v1 snapshot keeps the resolution.
+        review = FIXTURE["review"]
+        report_a, report_b = "33000000-0000-4000-8000-000000000001", "33000000-0000-4000-8000-000000000002"
+        candidate_b = "66000000-0000-4000-8000-000000000002"
+        owner = FIXTURE["actors"]["owner"]
+        merge = {"kind": "report_merge", "created_at": "2026-02-01T00:00:00Z",
+                 "payload": {"source": report_a, "target": report_b, "conflicting_stages": ["fulltext"],
+                             "conflicting_decisions": [{"stage": "fulltext", "source": "included", "target": "excluded"}],
+                             "protocol_version": 1}}
+        resolution = {"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 1,
+                      "actor_id": owner, "decision": "included", "role": "adjudication",
+                      "created_at": "2026-02-02T00:00:00Z"}
+        amendment = {"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 2,
+                     "actor_id": owner, "decision": "excluded", "role": "primary",
+                     "created_at": "2026-03-01T00:00:00Z"}
+        links = [l for l in review["report_studies"] if l["study_id"]]
+        screening_modes = {"title_abstract": "solo", "fulltext": "dual"}
+        counts_v1 = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [merge],
+                                        review["candidates"], list(review["decisions"]) + [resolution], links, 1,
+                                        screening_modes=screening_modes)
+        # A's candidate folds into B: the merged set is included via the resolution.
+        self.assertEqual((counts_v1["included_reports"], counts_v1["pending_adjudication"]), (2, 0))
+        counts_v2 = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [merge],
+                                        review["candidates"],
+                                        list(review["decisions"]) + [resolution, amendment], links, 2,
+                                        screening_modes=screening_modes)
+        # The v2 exclusion governs for B; D stays excluded from its v1 cohort; C included.
+        self.assertEqual((counts_v2["fulltext_excluded"], counts_v2["included_reports"], counts_v2["pending_adjudication"]),
+                         (2, 1, 0))
+
     def test_chained_merge_accumulates_conflicts_per_representative_and_stage(self):
         # R5: A→B conflicts at title/abstract; B→C conflicts at fulltext. Resolving only
         # the full-text conflict on C must leave the title/abstract conflict pending.

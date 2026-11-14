@@ -488,7 +488,9 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
             elif len(values) > 1: pending.add((candidate_id, stage))
         # A merge with conflicting decisions forces adjudication on the merged candidate.
         # An adjudication resolves a conflict only if it was recorded no earlier than the
-        # latest conflicting merge it resolves (same-version requires a later timestamp).
+        # latest conflicting merge it resolves (same-version requires a later timestamp),
+        # AND no newer screening cohort exists: a later amendment cohort governs over an
+        # older resolution (R16).
         for stage, merges in (conflict_stages.get(report_of_candidate.get(candidate_id, "")) or {}).items():
             latest = max(merges, key=lambda m: (m["version"], as_time(m.get("created_at"))))
             qualifying = [d for d in decisions
@@ -497,7 +499,33 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
                           and (int(field(d, "protocol_version")) > latest["version"]
                                or (int(field(d, "protocol_version")) == latest["version"]
                                    and as_time(field(d, "created_at")) > as_time(latest.get("created_at"))))]
-            if qualifying: effective[(candidate_id, stage)] = field(_latest_decision(qualifying), "decision")
+            screening = [d for d in decisions
+                         if str(field(d, "candidate_id")) == candidate_id and field(d, "stage") == stage
+                         and field(d, "role") != "adjudication" and int(field(d, "protocol_version")) <= protocol_version]
+            resolution = _latest_decision(qualifying) if qualifying else None
+            newest_screening = _latest_decision(screening) if screening else None
+            if resolution is not None and (newest_screening is None
+                                           or (int(field(resolution, "protocol_version")),
+                                               as_time(field(resolution, "created_at")))
+                                           >= (int(field(newest_screening, "protocol_version")),
+                                               as_time(field(newest_screening, "created_at")))):
+                effective[(candidate_id, stage)] = field(resolution, "decision")
+                pending.discard((candidate_id, stage))
+            elif resolution is not None:
+                # The resolution was superseded by a later screening cohort: that cohort
+                # governs (unanimous per-actor decisions decide; internal disagreement
+                # stays pending).
+                newest_key = ((int(field(newest_screening, "protocol_version"))),
+                              as_time(field(newest_screening, "created_at")))
+                cohort = [d for d in screening
+                          if (int(field(d, "protocol_version")), as_time(field(d, "created_at"))) == newest_key]
+                cohort_decisions = {str(field(row, "actor_id")): field(row, "decision")
+                                    for row in _latest_per_actor(cohort)}
+                values = set(cohort_decisions.values())
+                if len(values) == 1:
+                    effective[(candidate_id, stage)] = values.pop()
+                    pending.discard((candidate_id, stage))
+                else: pending.add((candidate_id, stage))
             else:
                 pending.add((candidate_id, stage))
                 effective.pop((candidate_id, stage), None)
