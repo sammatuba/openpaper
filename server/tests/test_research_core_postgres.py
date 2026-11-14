@@ -273,6 +273,19 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                                               "Fixture: onto later candidate", protocol_version=1)
             self.assertEqual(snapshot2.exception.status_code, 422)
             self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), counts_stable)
+            # R24: a non-retained merge target is refused — folding occurrences into it
+            # would remove them from accounting.
+            non_retained_report = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(non_retained_report); db.commit()
+            non_retained = ReviewCandidate(id=uuid4(), project_id=s.project, report_id=non_retained_report.id,
+                                           selected_version_id=None, protocol_version=1, retained=False)
+            db.add(non_retained); db.commit()
+            conservation_before = research_review.flow_counts(db, s.project, s.owner, 1)
+            with self.assertRaises(HTTPException) as non_retained_refused:
+                research_review.merge_reports(db, s.project, s.owner, source.id, non_retained_report.id,
+                                              "Fixture: onto non-retained", protocol_version=1)
+            self.assertEqual(non_retained_refused.exception.status_code, 422)
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), conservation_before)
             # Historic snapshots: a merge at a later protocol version leaves v1 sets untouched.
 
     async def test_independent_review_privacy(self):
