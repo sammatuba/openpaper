@@ -136,6 +136,35 @@ class CountArithmeticTests(unittest.TestCase):
                                      screening_modes={"title_abstract": "solo", "fulltext": "dual"})
         self.assertEqual((before["included_reports"], before["fulltext_excluded"], before["pending_adjudication"]), (3, 1, 0))
 
+    def test_merge_conserves_occurrence_accounting_and_study_links(self):
+        # R11: merging A into B folds A's occurrences into B (conservation holds) and
+        # A's confirmed study links keep counting through the representative.
+        review = FIXTURE["review"]
+        report_a = "33000000-0000-4000-8000-000000000001"
+        merge = {"kind": "report_merge", "created_at": "2026-02-01T00:00:00Z",
+                 "payload": {"source": report_a, "target": "33000000-0000-4000-8000-000000000002",
+                             "conflicting_stages": [], "conflicting_decisions": [], "protocol_version": 1}}
+        links = [l for l in review["report_studies"] if l["study_id"]]
+        counts = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [merge],
+                                     review["candidates"], list(review["decisions"]), links, 1,
+                                     screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual(counts["identified_occurrences"], 10)
+        self.assertEqual(counts["retained_candidates"], 5)
+        self.assertEqual(counts["retained_occurrences"], 6)
+        self.assertEqual(counts["identified_occurrences"],
+                         counts["duplicate_removals"] + counts["retained_occurrences"])
+        # A's SA link resolves through the representative: SA stays counted.
+        self.assertEqual(counts["included_studies"], 2)
+        self.assertEqual(counts["included_reports"], 2)
+        split = {"kind": "report_split", "created_at": "2026-02-02T00:00:00Z",
+                 "payload": {"source": report_a, "rationale": "Fixture: split back", "protocol_version": 1}}
+        restored = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [merge, split],
+                                       review["candidates"], list(review["decisions"]), links, 1,
+                                       screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual((restored["retained_candidates"], restored["included_studies"]), (6, 2))
+        self.assertEqual(restored["identified_occurrences"],
+                         restored["duplicate_removals"] + restored["retained_occurrences"])
+
     def test_chained_merge_keeps_pending_adjudication_on_the_representative(self):
         # R4: A→B creates a pending conflict; merging B onward into C must carry the
         # unresolved conflict to C, not erase it with B's candidate.

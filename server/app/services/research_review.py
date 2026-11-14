@@ -380,6 +380,22 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
     duplicate_removals = len(removed)
     merged_sources = set(merge_map)
     candidates = [c for c in candidates if int(field(c, "protocol_version") or 1) <= protocol_version]
+    retained = [c for c in candidates if field(c, "retained") and str(field(c, "report_id")) not in merged_sources]
+    representatives = {str(field(c, "report_id")) for c in retained}
+    report_of_candidate = {str(field(c, "id")): str(field(c, "report_id")) for c in candidates}
+    # Occurrence mapping conservation (R11): every identified occurrence is a recorded
+    # duplicate removal or maps — through merge chains — onto a representative candidate;
+    # a merge folds the source's occurrences into the target instead of losing them.
+    mapped_occurrences = set()
+    for event in mapping_events:
+        if field(event, "kind") != "occurrence_map": continue
+        payload = field(event, "payload") or {}
+        if int(payload.get("protocol_version", 1)) > protocol_version: continue
+        candidate_report = report_of_candidate.get(str(payload.get("candidate")))
+        if candidate_report is None: continue
+        if _resolve_representative(merge_map, candidate_report) in representatives:
+            mapped_occurrences.add(str(payload.get("retained")))
+            for occurrence_id in payload.get("removed", []): mapped_occurrences.discard(str(occurrence_id))
     # Study linkage states derive from the base rows plus versioned study_link events.
     link_states = {}
     for link in report_studies:
@@ -393,9 +409,7 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
         link_states[(str(payload.get("report")), str(payload.get("study")))] = payload.get("linkage_state")
     versioned_links = [{"report_id": report, "study_id": study, "linkage_state": state}
                        for (report, study), state in link_states.items()]
-    retained = [c for c in candidates if field(c, "retained") and str(field(c, "report_id")) not in merged_sources]
     candidate_ids = {str(field(c, "id")) for c in retained}
-    report_of_candidate = {str(field(c, "id")): str(field(c, "report_id")) for c in retained}
 
     effective, pending = {}, set()
     for candidate_id in candidate_ids:
@@ -448,12 +462,16 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
     included_reports = {str(field(c, "report_id")) for c in included}
     studies = set()
     for link in versioned_links:
-        if field(link, "linkage_state") == "confirmed" and str(field(link, "report_id")) in included_reports:
+        # A merged source report's links resolve through its representative (R11):
+        # merging A into B keeps A's confirmed study links counted, once.
+        link_rep = _resolve_representative(merge_map, str(field(link, "report_id")))
+        if field(link, "linkage_state") == "confirmed" and link_rep in included_reports:
             studies.add(str(field(link, "study_id")))
     return {
         "identified_occurrences": identified,
         "duplicate_removals": duplicate_removals,
         "retained_candidates": len(retained),
+        "retained_occurrences": len(mapped_occurrences),
         "screened": len(screened),
         "title_abstract_excluded": len(ta_excluded),
         "reports_sought": len(sought),

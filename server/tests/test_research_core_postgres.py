@@ -164,9 +164,13 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                                        "Fixture: companion linkage withdrawn", linkage_state="unresolved",
                                        protocol_version=2, commit=False)
             db.commit()
-            # A first-time linkage created at v2 exists only in the v2 snapshot.
-            research_review.link_study(db, project, owner, later_report.id,
-                                       UUID("55000000-0000-4000-8000-000000000001"),
+            # A first-time linkage created at v2 links an already-included report to a
+            # previously uncounted study, so only the v2 snapshot grows.
+            study_se = ReviewStudy(id=UUID("55000000-0000-4000-8000-000000000004"), project_id=project,
+                                   description="Fixture study first linked at v2")
+            db.add(study_se); db.commit()
+            research_review.link_study(db, project, owner, UUID("33000000-0000-4000-8000-000000000004"),
+                                       UUID("55000000-0000-4000-8000-000000000004"),
                                        "Fixture: new linkage at v2", linkage_state="confirmed",
                                        protocol_version=2, commit=False)
             db.commit()
@@ -175,7 +179,7 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             # identified grows to 11 while removals stay 4.
             self.assertEqual((counts_v2b["identified_occurrences"], counts_v2b["duplicate_removals"]), (11, 4))
             self.assertEqual(counts_v2b["retained_candidates"], 7)
-            self.assertEqual(counts_v2b["included_studies"], 3)  # C->SB withdrawn, D->SD in, new v2 link to SA
+            self.assertEqual(counts_v2b["included_studies"], 4)  # SA, SB (B), SD and the new D->SE; C->SB withdrawn
             # The frozen v1 snapshot keeps its original sets, counts and linkage states.
             v1_again = research_review.flow_counts(db, project, owner, 1)
             self.assertEqual(v1_again, counts_v1)
