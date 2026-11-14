@@ -158,12 +158,16 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             db.add(later_candidate); db.commit()
             research_review.map_occurrences(db, project, owner, later_candidate.id, later_occurrence.id, [],
                                             protocol_version=2, commit=False)
-            # A mapping cannot place an occurrence into an earlier snapshot than the
-            # acquisition set that introduced it.
+            # A mapping cannot place an occurrence or candidate into an earlier snapshot
+            # than the acquisition set that introduced it.
             with self.assertRaises(HTTPException) as premature:
                 research_review.map_occurrences(db, project, owner, UUID("66000000-0000-4000-8000-000000000002"),
                                                 later_occurrence.id, [], protocol_version=1)
             self.assertEqual(premature.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as premature_candidate:
+                research_review.map_occurrences(db, project, owner, later_candidate.id, later_occurrence.id, [],
+                                                protocol_version=1)
+            self.assertEqual(premature_candidate.exception.status_code, 422)
             db.commit()
             research_review.link_study(db, project, owner, UUID("33000000-0000-4000-8000-000000000003"),
                                        UUID("55000000-0000-4000-8000-000000000002"),
@@ -287,10 +291,38 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             research_review.record_decision(db, s.project, reviewer_2, candidate.id, "fulltext", 1, "excluded")
             visible = research_review.visible_decisions(db, s.project, reviewer_2, 1)
             self.assertEqual(len([d for d in visible if d.candidate_id == candidate.id and d.stage == "fulltext"]), 2)
+            # A v2 decision does not exist in the v1 snapshot (historical read regression).
+            research_review.amend_protocol(db, s.project, s.owner, new_version=2, commit=False)
+            db.commit()
+            research_review.record_decision(db, s.project, reviewer_1, candidate.id, "fulltext", 2, "included")
+            historical = research_review.visible_decisions(db, s.project, reviewer_2, 1)
+            self.assertEqual([d for d in historical if d.protocol_version == 2], [])
+            # The lone v2 submission is dual-hidden from the peer but visible to its author.
+            self.assertEqual(len([d for d in research_review.visible_decisions(db, s.project, reviewer_2, 2)
+                                  if d.protocol_version == 2]), 0)
+            self.assertEqual(len([d for d in research_review.visible_decisions(db, s.project, reviewer_1, 2)
+                                  if d.protocol_version == 2]), 1)
             # Disagreement exists, so the named adjudicator may now decide.
             research_review.record_decision(db, s.project, s.owner, candidate.id, "fulltext", 1, "included", role="adjudication")
             counts = research_review.flow_counts(db, s.project, s.owner, 1)
             self.assertEqual(counts["included_reports"], 1)
+            # A solo reviewer superseding their own submission does not fabricate a
+            # disagreement for adjudication (effective decisions only).
+            with self.Session() as db:
+                report2 = ReviewReport(id=uuid4(), project_id=s.project)
+                db.add(report2); db.commit()
+                version2 = ReviewReportVersion(id=uuid4(), report_id=report2.id)
+                db.add(version2); db.commit()
+                candidate2 = ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report2.id,
+                                             selected_version_id=version2.id)
+                db.add(candidate2); db.commit()
+                # Solo stage permits repeated submissions by the same reviewer.
+                research_review.record_decision(db, s.project, reviewer_1, candidate2.id, "title_abstract", 1, "excluded")
+                research_review.record_decision(db, s.project, reviewer_1, candidate2.id, "title_abstract", 1, "included")
+                with self.assertRaises(HTTPException) as fabricated:
+                    research_review.record_decision(db, s.project, s.owner, candidate2.id, "title_abstract", 1,
+                                                    "excluded", role="adjudication")
+                self.assertEqual(fabricated.exception.status_code, 409)
 
     # ---------- C10: conversion ----------
 

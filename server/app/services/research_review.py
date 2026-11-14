@@ -66,10 +66,12 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
     if len(set(mapped)) != len(mapped): raise HTTPException(422, "Mapping sets must be disjoint")
     rows = db.query(ReviewOccurrence).filter(ReviewOccurrence.id.in_(mapped), ReviewOccurrence.project_id == project_id).all()
     if {str(r.id) for r in rows} != set(mapped): raise HTTPException(422, "Occurrences must belong to this project")
-    # A mapping cannot place an occurrence into an earlier snapshot than the acquisition
-    # set that introduced it (R13).
+    # A mapping cannot place an occurrence or candidate into an earlier snapshot than the
+    # acquisition set that introduced it (R13/R14).
     premature = [str(r.id) for r in rows if r.protocol_version > protocol_version]
     if premature: raise HTTPException(422, "Mapping protocol version predates the occurrence acquisition")
+    if candidate.protocol_version > protocol_version:
+        raise HTTPException(422, "Mapping protocol version predates the candidate acquisition")
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="occurrence_map",
                               payload={"candidate": str(candidate_id), "retained": str(retained_occurrence_id),
                                        "removed": [str(i) for i in removed_occurrence_ids],
@@ -216,17 +218,25 @@ def _has_conflict(db: Session, project_id, candidate, stage, protocol):
     for source in merged_sources:
         candidate_id = _candidate_of_report(db, project_id, source)
         if candidate_id: relevant.extend(by_candidate.get(str(candidate_id), []))
-    values = {row.decision for row in relevant
-              if row.stage == stage and row.role != "adjudication" and row.protocol_version <= protocol.version}
-    return len(values) > 1
+    # A merge that recorded a conflicting stage carries a genuine disagreement.
+    if stage in (conflict_stages.get(report) or {}): return True
+    # Otherwise: same-candidate disagreement between DISTINCT actors, using each actor's
+    # effective (latest) submission — a solo reviewer superseding cannot fabricate one (R14).
+    rows = [row for row in by_candidate.get(str(candidate.id), [])
+            if row.stage == stage and row.role != "adjudication" and row.protocol_version <= protocol.version]
+    effective = _latest_per_actor(rows)
+    if len(effective) < 2: return False
+    return len({row.decision for row in effective}) > 1
 
 
 def visible_decisions(db: Session, project_id, actor_id, protocol_version):
     """Dual stages hide the other reviewers' decisions until decisions from at least two
     distinct reviewers exist for that candidate/stage/version; solo stages are visible."""
     research_access.authorize(db, project_id, actor_id)
+    # Historical reads see only the decisions that existed at the requested snapshot (R14).
     rows = db.query(ReviewDecision).join(ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(
-        ReviewCandidate.project_id == project_id).order_by(ReviewDecision.created_at).all()
+        ReviewCandidate.project_id == project_id, ReviewDecision.protocol_version <= protocol_version).order_by(
+        ReviewDecision.created_at).all()
     protocols = {p.version: p for p in db.query(ReviewProtocol).filter(ReviewProtocol.project_id == project_id).all()}
 
     def mode_for(version, stage):
