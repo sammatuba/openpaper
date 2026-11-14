@@ -18,7 +18,7 @@ never from a stored picture. Rules enforced here:
   reports currently merged into the candidate count toward the conflict.
 """
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from app.database.models import (ReviewCandidate, ReviewDecision, ReviewMappingEvent, ReviewOccurrence,
@@ -208,12 +208,28 @@ def link_study(db: Session, project_id, actor_id, report_id, study_id, rationale
 def merge_reports(db: Session, project_id, actor_id, source_report_id, target_report_id, rationale, *, protocol_version, commit=True):
     """Reversible report merge: changes the current representative sets from this protocol
     version onward. Incompatible prior screening decisions force an unresolved adjudication
-    state on the merged candidate until a named adjudicator decides."""
+    state on the merged candidate until a named adjudicator decides. Both rows are locked
+    in id order, the target must be an unmerged representative, and cycles are rejected."""
     research_access.authorize(db, project_id, actor_id, write=True)
-    source = db.query(ReviewReport).filter(ReviewReport.id == source_report_id, ReviewReport.project_id == project_id).first()
-    target = db.query(ReviewReport).filter(ReviewReport.id == target_report_id, ReviewReport.project_id == project_id).first()
-    if not source or not target or source.id == target.id: raise HTTPException(422, "Merge requires two distinct project reports")
+    if source_report_id == target_report_id: raise HTTPException(422, "Merge requires two distinct project reports")
+    # Deterministic lock order (ascending id) so concurrent merges cannot deadlock; a
+    # locking read re-observes the latest committed state, so a racing opposite merge loses.
+    first, second = sorted([UUID(str(source_report_id)), UUID(str(target_report_id))])
+    db.query(ReviewReport).filter(ReviewReport.id == first).with_for_update().first()
+    db.query(ReviewReport).filter(ReviewReport.id == second).with_for_update().first()
+    source = db.query(ReviewReport).filter(ReviewReport.id == UUID(str(source_report_id)), ReviewReport.project_id == project_id).first()
+    target = db.query(ReviewReport).filter(ReviewReport.id == UUID(str(target_report_id)), ReviewReport.project_id == project_id).first()
+    if not source or not target: raise HTTPException(422, "Merge requires two distinct project reports")
     if source.identity_state == "merged": raise HTTPException(409, "Source report is already merged")
+    if target.identity_state == "merged": raise HTTPException(409, "Target is already merged; merge into the current representative")
+    merges, _conflicts = _current_merges(db, project_id, protocol_version)
+    visited = set()
+    cursor = str(target.id)
+    while cursor in merges and cursor not in visited:
+        visited.add(cursor)
+        cursor = merges[cursor]
+        if cursor == str(source.id):
+            raise HTTPException(409, "Merge would create a cycle between reports")
     protocol = _protocol_for(db, project_id, protocol_version)
     conflicts, stages = [], []
     for stage in ("title_abstract", "fulltext"):

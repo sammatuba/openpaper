@@ -182,10 +182,24 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             research_review.record_decision(db, s.project, s.owner, candidate_y, "fulltext", 1, "included", role="adjudication")
             counts = research_review.flow_counts(db, s.project, s.owner, 1)
             self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (1, 0))
+            # Cyclic and chained merges are rejected under lock.
+            with self.assertRaises(HTTPException) as cycle:
+                research_review.merge_reports(db, s.project, s.owner, target.id, source.id, "Fixture: reverse", protocol_version=1)
+            self.assertEqual(cycle.exception.status_code, 409)  # target is already merged
+            research_review.split_report(db, s.project, s.owner, source.id, "Fixture: identity review failed", protocol_version=1)
+            third = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(third); db.commit()
+            research_review.merge_reports(db, s.project, s.owner, source.id, target.id, "Fixture: re-merge", protocol_version=1)
+            with self.assertRaises(HTTPException) as chained:
+                research_review.merge_reports(db, s.project, s.owner, third.id, source.id, "Fixture: into merged", protocol_version=1)
+            self.assertEqual(chained.exception.status_code, 409)  # source already merged
+            with self.assertRaises(HTTPException) as self_merge:
+                research_review.merge_reports(db, s.project, s.owner, third.id, third.id, "Fixture: self", protocol_version=1)
+            self.assertEqual(self_merge.exception.status_code, 422)
+            research_review.split_report(db, s.project, s.owner, source.id, "Fixture: cleanup", protocol_version=1)
             # Reversal: split restores both candidates. The recorded adjudication decision
             # remains on the target candidate (append-only history — never rewritten); flagging
             # the affected review for re-decision is amendment machinery for P10.
-            research_review.split_report(db, s.project, s.owner, source.id, "Fixture: identity review failed", protocol_version=1)
             counts = research_review.flow_counts(db, s.project, s.owner, 1)
             self.assertEqual((counts["included_reports"], counts["fulltext_excluded"], counts["pending_adjudication"]), (2, 0, 0))
             # Historic snapshots: a merge at a later protocol version leaves v1 sets untouched.
@@ -320,6 +334,33 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                     f'"investigation:{s.project}:7"')
             self.assertEqual(legacy_write.exception.status_code, 409)
 
+    async def test_conversion_binds_each_finding_by_its_own_hash(self):
+        # Two findings anchored to one paper whose current bytes match only the newer
+        # capture: the stale-hash finding stays unresolved and is never rebound to the
+        # version created for the newer capture.
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture D", "Title\nNewer wording.\nLimitations.")
+        from app.services.investigation import text_hash
+        stale = {"id": str(uuid4()), "label": "Stale capture", "source": {"kind": "anchored", "paper_id": str(paper),
+                                                                          "start_line": 1, "end_line": 1, "quote": "Title",
+                                                                          "source_sha256": text_hash("Title\nOld wording.\nLimitations."),
+                                                                          "quote_sha256": text_hash("Title")}}
+        current = {"id": str(uuid4()), "label": "Current capture", "source": {"kind": "anchored", "paper_id": str(paper),
+                                                                              "start_line": 2, "end_line": 2, "quote": "Newer wording.",
+                                                                              "source_sha256": text_hash("Title\nNewer wording.\nLimitations."),
+                                                                              "quote_sha256": text_hash("Newer wording.")}}
+        document = {"format": "openpaper/investigation", "version": 1, "case": {}, "claims": [],
+                    "findings": [stale, current], "relations": [], "manuscript": {"title": "", "sections": []}}
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            manifest = research_convert.convert_project(db, s.project, s.owner)
+            self.assertEqual(len(manifest["unresolved_sources"]), 1)
+            self.assertEqual(db.query(ResearchSourceVersion).filter(ResearchSourceVersion.project_id == s.project).count(), 1)
+            stale_entity = db.get(ResearchEntity, UUID(stale["id"]))
+            current_entity = db.get(ResearchEntity, UUID(current["id"]))
+            self.assertNotIn("source_version_id", stale_entity.payload["anchor"])
+            self.assertEqual(current_entity.payload["anchor"]["quote"], "Newer wording.")
+
     async def test_conversion_refuses_hash_mismatch_without_binding(self):
         s = self.seed()
         paper = self.seed_paper(s.project, s.owner, "Fixture B", "Title\nOriginal wording.\nLimitations.")
@@ -407,6 +448,27 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 research_entities.create_relation(db, other.project, other.owner, "assumes",
                                                   UUID(ids["claim_id"]), UUID(assumption["entity_id"]), "Cross-project rationale.")
             self.assertEqual(foreign_relation.exception.status_code, 422)
+
+    async def test_load_entity_redacts_revoked_sources(self):
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture E", "Title\nExact fixture result.\nLimitations.")
+        document, ids = self._v1_document(paper)
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            loaded = research_entities.load_entity(db, s.project, s.owner, UUID(ids["finding_id"]))
+            self.assertIn("quote", loaded["entity"]["payload"]["anchor"])
+        with self.engine.begin() as conn:
+            conn.execute(self.text("DELETE FROM project_paper WHERE project_id = :p"), {"p": s.project})
+        with self.Session() as db:
+            loaded = research_entities.load_entity(db, s.project, s.owner, UUID(ids["finding_id"]))
+            anchor = loaded["entity"]["payload"]["anchor"]
+            self.assertNotIn("quote", anchor)
+            self.assertNotIn("quote_sha256", anchor)
+            self.assertEqual(anchor["paper_id"], str(paper))
+            for entry in loaded["history"]:
+                self.assertNotIn("quote", entry["payload"]["anchor"])
+            self.assertNotIn("Exact fixture result.", json.dumps(loaded))
 
     # ---------- C08: concurrency ----------
 
@@ -642,12 +704,34 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                     metered.reserve(db, s.project, s.outsider, "synthesis_task", {"units": {"input_tokens": 1}}, {},
                                     idempotency_key="x", limits={"max_inflight": 1})
                 self.assertEqual(outsider.exception.status_code, 404)
+        # Concurrent opposite merges cannot both win; the loser sees the committed state.
+        merge_project, merge_owner = uuid4(), uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": merge_owner, "e": str(merge_owner) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project (id,admin_id,title) VALUES (:p,:u,'Merge race fixture')"), {"p": merge_project, "u": merge_owner})
+            report_a, report_b = uuid4(), uuid4()
+            conn.execute(self.text("INSERT INTO review_reports (id,project_id,identity_state) VALUES (:a,:p,'unreviewed'),(:b,:p,'unreviewed')"), {"a": report_a, "b": report_b, "p": merge_project})
+        with self.Session() as db:
+            research_review.create_protocol(db, merge_project, merge_owner, version=1, commit=False)
+            db.commit()
+        def merge_race(direction):
+            with self.Session() as db:
+                try:
+                    research_review.merge_reports(db, merge_project, merge_owner, report_a, report_b, "Fixture: race",
+                                                  protocol_version=1) if direction == 0 else \
+                    research_review.merge_reports(db, merge_project, merge_owner, report_b, report_a, "Fixture: race",
+                                                  protocol_version=1)
+                    return 200
+                except HTTPException as error: return error.status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(merge_race, range(2)))
+        self.assertEqual(sorted(outcomes), [200, 409])
+
         # Concurrent reserves cannot race past the in-flight cap (atomic admission).
         race_project, race_owner = uuid4(), uuid4()
         with self.engine.begin() as conn:
             conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": race_owner, "e": str(race_owner) + "@test.invalid"})
             conn.execute(self.text("INSERT INTO project (id,admin_id,title) VALUES (:p,:u,'Race fixture')"), {"p": race_project, "u": race_owner})
-        from concurrent.futures import ThreadPoolExecutor
         def race(index):
             with self.Session() as db:
                 try:

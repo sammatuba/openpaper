@@ -5,12 +5,13 @@ Every mutation re-authorizes inside its transaction, validates expected revision
 sequence. AI-origin records keep their origin when edited and record derivation;
 origins are never reset or erased (strategy 10.5).
 """
+import copy
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from app.database.models import (Paper, ResearchEntity, ResearchEntityRevision, ResearchProject, ResearchRelation,
-                                 ResearchOrigin, ResearchSourceVersion)
+from app.database.models import (Paper, ProjectPaper, ResearchEntity, ResearchEntityRevision, ResearchProject,
+                                 ResearchRelation, ResearchOrigin, ResearchSourceVersion)
 from app.schemas.research_core import RELATION_TYPES, endpoint_allowed, validate_payload, validate_provenance
 from . import research_access
 
@@ -149,8 +150,26 @@ def load_entity(db: Session, project_id, actor_id, entity_id):
     entity = db.query(ResearchEntity).filter(ResearchEntity.id == entity_id, ResearchEntity.project_id == project_id).first()
     if not entity: raise HTTPException(404, "Research entity not found")
     history = db.query(ResearchEntityRevision).filter(ResearchEntityRevision.entity_id == entity.id).order_by(ResearchEntityRevision.revision).all()
+
+    def redact(payload):
+        """Access redaction (C07): an anchor whose source is no longer associated with
+        this project, or whose extracted text is gone, returns as a redacted locator —
+        the captured quotation never leaves the server on a revoked read."""
+        anchor = (payload or {}).get("anchor")
+        if not anchor or "source_version_id" not in anchor: return payload
+        version = db.query(ResearchSourceVersion).filter(ResearchSourceVersion.id == UUID(str(anchor["source_version_id"])),
+                                                         ResearchSourceVersion.project_id == project_id).first()
+        paper = db.query(Paper).filter(Paper.id == version.paper_id).first() if version and version.paper_id else None
+        associated = paper and db.query(ProjectPaper).filter(ProjectPaper.project_id == project_id,
+                                                             ProjectPaper.paper_id == paper.id).first()
+        if associated and paper.raw_content: return payload
+        return {**payload, "anchor": {"paper_id": str(version.paper_id) if version and version.paper_id else None}}
+
+    current_payload = redact(copy.deepcopy(entity.payload))
     return {"entity": {"id": str(entity.id), "type": entity.type, "revision": entity.revision,
-                       "payload": entity.payload, "archived": entity.archived},
-            "history": [{"revision": h.revision, "origin": h.origin, "provenance": h.provenance,
+                       "payload": current_payload, "archived": entity.archived},
+            "history": [{"revision": h.revision, "origin": h.origin,
+                         "payload": redact(copy.deepcopy(h.payload)),
+                         "provenance": h.provenance,
                          "derived_from": h.derived_from, "actor_id": str(h.actor_id) if h.actor_id else None,
                          "created_at": h.created_at.isoformat() if h.created_at else None} for h in history]}

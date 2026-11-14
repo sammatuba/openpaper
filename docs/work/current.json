@@ -1,6 +1,6 @@
 {
   "intent": "docs/work/INTENT-investigation-workspace.md",
-  "phase": "AI-native platform P00-P02 implemented and verified locally; investigation A25 authenticated acceptance still open",
+  "phase": "AI-native platform P00-P02 implemented, reviewed and verified locally (committed); investigation A25 authenticated acceptance still open",
   "branch": "feat/native-investigation-workspace",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,7 +8,7 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Open stacked PR (feat/ai-native-research-core -> feat/native-investigation-workspace); independent review via ./meos review; P03+ remains future work",
+  "next_action": "Third-round fixes committed; request fourth review round; then open stacked PR (feat/ai-native-research-core -> feat/native-investigation-workspace)",
   "blocked_on": [
     "No current operator browser/session exposed for authenticated production UI acceptance."
   ],
@@ -436,7 +436,7 @@
   "ai_native_platform_strategy": {
     "document": "docs/work/STRATEGY-ai-native-research-platform.md",
     "date": "2026-11-13",
-    "status": "P00-P02 implemented and verified locally; uncommitted, PR pending; P03-P12 not started",
+    "status": "P00-P02 implemented, reviewed (three rounds; findings from each round fixed with regressions) and verified locally; committed on feat/ai-native-research-core, PR pending; P03-P12 not started",
     "baseline_head": "ef2a6731f9e429d45b30055940c0238e965df3a9",
     "scope": "Connected freeform multimedia canvas, rigorous research review, evidence integrity, scientific manuscript authoring, local Jupyter experiments, bounded Arrow analytics and authenticated ChatGPT MCP",
     "execution": "P00-P02 executed 2026-11-13 per operator instruction; packages delivered as a stacked PR targeting feat/native-investigation-workspace",
@@ -455,15 +455,15 @@
     "fixture": "docs/work/ai-native-research-fixture.json",
     "prototype": "docs/prototypes/ai-native-loop.html",
     "verification": "docs/work/VERIFICATION-ai-native-research-platform.md",
-    "checks": "Required PG120 zero skips; full server504 OK zero skips; jobs21; worker2; research36; runner5; client tsc+build pass; git diff --check pass"
+    "checks": "Required PG121 zero skips; full server505 OK zero skips; jobs21; worker2; research36; runner5; client tsc+build pass; git diff --check pass"
   },
   "ai_native_p0_p2": {
     "migration_head": "research_core_01",
     "new_tables": 17,
     "fixture": "docs/work/ai-native-research-fixture.json",
-    "required_lane": "120 tests zero skips",
-    "full_server": "504 tests OK zero skips",
-    "c01_c05_c08_c10_c17_c26_c27_c29": "pass for new code paths",
+    "required_lane": "121 tests zero skips",
+    "full_server": "505 tests OK zero skips",
+    "c01_c05_c08_c10_c17_c26_c27_c29": "pass for new code paths (review rounds R1-R3 findings fixed with regressions)",
     "conversion": "atomic; v1 row retained read-only; unconverted projects refuse typed writes",
     "metered": "no price table shipped; every metered dispatch refused until explicitly priced",
     "not_started": [
@@ -477,6 +477,7 @@
       "P10 review pipeline",
       "P11 AI assistance",
       "P12 release"
-    ]
+    ],
+    "review_rounds": "R1 20261113T003601Z rework(4)->fixed; R2 20261113T005558Z rework(6)->fixed; R3 20261114T030828Z rework(4)->fixed"
   }
 }

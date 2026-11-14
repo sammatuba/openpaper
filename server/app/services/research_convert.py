@@ -58,32 +58,35 @@ def convert_project(db: Session, project_id, actor_id):
     relations = document.get("relations", [])
     sections = document.get("manuscript", {}).get("sections", [])
 
-    # Source versions: only bind exact content-hash matches (strategy 10.3).
-    anchored = {f["source"]["paper_id"]: f["source"] for f in findings if f["source"]["kind"] == "anchored"}
+    # Source versions: each finding's own source hash is matched independently against the
+    # paper's current bytes (strategy 10.3). One paper can therefore yield several versions
+    # only if its current bytes match — a stale capture stays unresolved, never rebound.
+    anchored_papers = sorted({f["source"]["paper_id"] for f in findings if f["source"]["kind"] == "anchored"})
     source_versions, unresolved, mappings = {}, [], {}
-    if anchored:
-        papers = db.query(Paper).filter(Paper.id.in_([UUID(pid) for pid in anchored])).all()
-        for paper in papers:
-            source = anchored[str(paper.id)]
-            if not paper.raw_content: unresolved.append({"paper_id": str(paper.id), "reason": "no_extracted_text"}); continue
-            from .investigation import text_hash
-            if text_hash(paper.raw_content) != source["source_sha256"]:
-                unresolved.append({"paper_id": str(paper.id), "reason": "source_hash_mismatch",
-                                   "expected": source["source_sha256"]}); continue
-            lines = paper.raw_content.split("\n")
-            version = ResearchSourceVersion(id=uuid4(), project_id=project_id, paper_id=paper.id, kind="paper_text",
-                                            extractor="v1_raw_content", text_sha256=source["source_sha256"],
-                                            line_count=len(lines), byte_size=len(paper.raw_content.encode("utf-8")),
-                                            source_metadata={"title": paper.title or "", "authors": paper.authors or [],
-                                                             "publish_date": paper.publish_date, "doi": paper.doi})
-            db.add(version); db.flush()
-            source_versions[str(paper.id)] = str(version.id)
-    for finding in findings:
-        source = finding["source"]
-        if source["kind"] == "anchored" and source["paper_id"] in source_versions:
-            mappings[finding["id"]] = {"source_version_id": source_versions[source["paper_id"]], "unresolved": False}
-        elif source["kind"] == "anchored":
-            mappings[finding["id"]] = {"source_version_id": None, "unresolved": True}
+    if anchored_papers:
+        from .investigation import text_hash
+        papers = {str(p.id): p for p in db.query(Paper).filter(Paper.id.in_([UUID(pid) for pid in anchored_papers])).all()}
+        for finding in findings:
+            source = finding["source"]
+            if source["kind"] != "anchored": continue
+            paper = papers.get(source["paper_id"])
+            key = (source["paper_id"], source["source_sha256"])
+            if paper and paper.raw_content and text_hash(paper.raw_content) == source["source_sha256"]:
+                if key not in source_versions:
+                    lines = paper.raw_content.split("\n")
+                    version = ResearchSourceVersion(id=uuid4(), project_id=project_id, paper_id=paper.id, kind="paper_text",
+                                                    extractor="v1_raw_content", text_sha256=source["source_sha256"],
+                                                    line_count=len(lines), byte_size=len(paper.raw_content.encode("utf-8")),
+                                                    source_metadata={"title": paper.title or "", "authors": paper.authors or [],
+                                                                     "publish_date": paper.publish_date, "doi": paper.doi})
+                    db.add(version); db.flush()
+                    source_versions[key] = str(version.id)
+                mappings[finding["id"]] = {"source_version_id": source_versions[key], "unresolved": False}
+            else:
+                unresolved.append({"paper_id": source["paper_id"],
+                                   "reason": "no_extracted_text" if paper and not paper.raw_content else "source_hash_mismatch",
+                                   "expected": source["source_sha256"]})
+                mappings[finding["id"]] = {"source_version_id": None, "unresolved": True}
 
     provenance = {"origin_label": f"v1 storage conversion ({CONVERTER_VERSION})", "reviewed": True}
     entity_ids = set()
