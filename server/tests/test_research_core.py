@@ -168,6 +168,27 @@ class CountArithmeticTests(unittest.TestCase):
         self.assertEqual(resolved["pending_adjudication"], 0)
         self.assertEqual(resolved["included_reports"], counts["included_reports"] + 1)
 
+    def test_later_acquisition_events_do_not_touch_historic_counts(self):
+        # The DB layer filters occurrences and occurrence-map events by protocol version;
+        # the pure function honours the recorded versions of the mapping events it gets.
+        review = FIXTURE["review"]
+        later_map = {"kind": "occurrence_map", "payload": {"candidate": "66000000-0000-4000-8000-000000000002",
+                                                           "retained": "22000000-0000-4000-8000-000000000004",
+                                                           "removed": ["22000000-0000-4000-8000-000000000011"],
+                                                           "protocol_version": 2}}
+        counts_v1 = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [later_map],
+                                        review["candidates"], list(review["decisions"]),
+                                        [l for l in review["report_studies"] if l["study_id"]], 1,
+                                        screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual((counts_v1["identified_occurrences"], counts_v1["duplicate_removals"]), (10, 4))
+        occurrences_v2 = list(review["occurrences"]) + [
+            {"id": "22000000-0000-4000-8000-000000000011", "search_execution": "11000000-0000-4000-8000-000000000002"}]
+        counts_v2 = compute_flow_counts(occurrences_v2, list(review["mapping_events"]) + [later_map],
+                                        review["candidates"], list(review["decisions"]),
+                                        [l for l in review["report_studies"] if l["study_id"]], 2,
+                                        screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual((counts_v2["identified_occurrences"], counts_v2["duplicate_removals"]), (11, 5))
+
     def test_chained_merge_accumulates_conflicts_per_representative_and_stage(self):
         # R5: A→B conflicts at title/abstract; B→C conflicts at fulltext. Resolving only
         # the full-text conflict on C must leave the title/abstract conflict pending.

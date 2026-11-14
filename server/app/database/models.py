@@ -1954,6 +1954,7 @@ class ReviewOccurrence(Base):
     provider = Column(String(50), nullable=False)
     search_ref = Column(String(200), nullable=False)
     external_hit_id = Column(String(200), nullable=False)
+    protocol_version = Column(Integer, nullable=False, default=1)  # acquisition-set update that introduced this occurrence
     report_id = Column(UUID(as_uuid=True), ForeignKey("review_reports.id", ondelete="SET NULL"), nullable=True)
     version_id = Column(UUID(as_uuid=True), ForeignKey("review_report_versions.id", ondelete="SET NULL"), nullable=True)
 

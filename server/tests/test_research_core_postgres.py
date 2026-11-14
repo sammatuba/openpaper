@@ -377,6 +377,32 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("source_version_id", finding.payload["anchor"])
             self.assertIn("requires review", finding.payload["anchor"]["notes"])
 
+    async def test_editing_imported_content_preserves_its_provenance(self):
+        s = self.seed()
+        document, ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            claim = db.get(ResearchEntity, UUID(ids["claim_id"]))
+            self.assertEqual(claim.payload["statement"], "Fixture claim statement.")
+            result = research_entities.revise_entity(db, s.project, s.owner, UUID(ids["claim_id"]), 1,
+                                                     {"statement": "Edited after conversion."})
+            self.assertEqual(result["revision"], 2)
+            history = db.query(ResearchEntityRevision).filter(ResearchEntityRevision.entity_id == UUID(ids["claim_id"])).all()
+            latest = history[-1]
+            self.assertEqual(latest.origin, "imported")  # never promoted to human-authored
+            self.assertTrue(latest.provenance.get("edited"))
+            self.assertIn("v1 storage conversion", latest.provenance["origin_label"])
+            self.assertEqual(latest.derived_from, {"entity_id": ids["claim_id"], "revision": 1})
+            # A human edit derives with preserved imported origin; a different origin kind is refused.
+            human_edit = research_entities.revise_entity(db, s.project, s.owner, UUID(ids["claim_id"]), 2,
+                                                         {"statement": "Edited after conversion."}, origin="human")
+            self.assertEqual(human_edit["revision"], 3)
+            with self.assertRaises(HTTPException) as reoriginate:
+                research_entities.revise_entity(db, s.project, s.owner, UUID(ids["claim_id"]), 3,
+                                                {"statement": "Assembled promotion attempt."}, origin="assembled")
+            self.assertEqual(reoriginate.exception.status_code, 422)
+
     async def test_native_assistant_provenance_is_validated(self):
         # Contract 2.2 / v1 semantics: assistant provenance requires a completed durable
         # draft request owned by this actor in this project, linked to the cited message.

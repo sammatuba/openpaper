@@ -56,7 +56,7 @@ def amend_protocol(db: Session, project_id, actor_id, *, new_version, criteria=N
     return amended
 
 
-def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_occurrence_id, removed_occurrence_ids, *, commit=True):
+def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_occurrence_id, removed_occurrence_ids, *, protocol_version=1, commit=True):
     """Record one occurrence→candidate mapping: exactly one retained representative,
     every other mapped occurrence an inspectable removal. Sets must be disjoint."""
     research_access.authorize(db, project_id, actor_id, write=True)
@@ -68,7 +68,8 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
     if {str(r.id) for r in rows} != set(mapped): raise HTTPException(422, "Occurrences must belong to this project")
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="occurrence_map",
                               payload={"candidate": str(candidate_id), "retained": str(retained_occurrence_id),
-                                       "removed": [str(i) for i in removed_occurrence_ids]}, actor_id=actor_id))
+                                       "removed": [str(i) for i in removed_occurrence_ids],
+                                       "protocol_version": protocol_version}, actor_id=actor_id))
     if commit: db.commit()
 
 
@@ -340,7 +341,7 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
     for event in mapping_events:
         kind = field(event, "kind")
         payload = field(event, "payload") or {}
-        if kind == "occurrence_map":
+        if kind == "occurrence_map" and int(payload.get("protocol_version", 1)) <= protocol_version:
             for occurrence_id in payload.get("removed", []): removed.add(str(occurrence_id))
         elif kind == "report_merge" and int(payload.get("protocol_version", 1)) <= protocol_version:
             merge_map[str(payload["source"])] = str(payload["target"])
@@ -448,7 +449,10 @@ def flow_counts(db: Session, project_id, actor_id, protocol_version):
     research_access.authorize(db, project_id, actor_id)
     protocol = db.query(ReviewProtocol).filter(ReviewProtocol.project_id == project_id,
                                                ReviewProtocol.version <= protocol_version).order_by(ReviewProtocol.version.desc()).first()
-    occurrences = db.query(ReviewOccurrence).filter(ReviewOccurrence.project_id == project_id).all()
+    # Frozen acquisition sets: an occurrence belongs to the acquisition-set update that
+    # introduced it; historic snapshots keep their original sets (strategy 6.1).
+    occurrences = db.query(ReviewOccurrence).filter(ReviewOccurrence.project_id == project_id,
+                                                    ReviewOccurrence.protocol_version <= protocol_version).all()
     events = db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project_id).order_by(ReviewMappingEvent.created_at).all()
     candidates = db.query(ReviewCandidate).filter(ReviewCandidate.project_id == project_id).all()
     decisions = db.query(ReviewDecision).join(ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(

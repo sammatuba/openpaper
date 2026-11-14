@@ -100,6 +100,7 @@ def upgrade():
         sa.Column("provider",sa.String(50),nullable=False),
         sa.Column("search_ref",sa.String(200),nullable=False),
         sa.Column("external_hit_id",sa.String(200),nullable=False),
+        sa.Column("protocol_version",sa.Integer(),nullable=False,server_default="1"),
         sa.Column("report_id",sa.UUID(),sa.ForeignKey("review_reports.id",ondelete="SET NULL")),
         sa.Column("version_id",sa.UUID(),sa.ForeignKey("review_report_versions.id",ondelete="SET NULL")),
         sa.UniqueConstraint("project_id","provider","search_ref","external_hit_id",name="uq_review_occurrence_hit"),*timestamps())

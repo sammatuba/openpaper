@@ -132,6 +132,21 @@ def revise_entity(db: Session, project_id, actor_id, entity_id, expected_revisio
         provenance = {**(latest.provenance or {}), **{k: v for k, v in supplied.items() if k not in identity_keys}, "edited": True}
         derived = {"entity_id": str(entity.id), "revision": latest.revision}
         inherited_identity = origin == ResearchOrigin.ASSISTANT.value
+    elif latest and latest.origin == ResearchOrigin.IMPORTED.value and origin not in ai_origins:
+        # Imported content stays imported through edits: origin, import metadata and
+        # reviewed state are preserved with derivation, never promoted to human-authored
+        # (contract 2.2, strategy 10.5). AI-authored contributions may still build on it
+        # as a new derivation (next branch).
+        if origin not in ("human", latest.origin):
+            raise HTTPException(422, "Derived imported content cannot be re-originated")
+        identity_keys = ("client_identity", "content_sha256", "request_id", "message_id")
+        supplied = provenance or {}
+        for key in identity_keys:
+            if supplied.get(key) and (latest.provenance or {}).get(key) != supplied[key]:
+                raise HTTPException(422, "Cannot fabricate import identity")
+        origin = latest.origin
+        provenance = {**(latest.provenance or {}), **{k: v for k, v in supplied.items() if k not in identity_keys}, "edited": True}
+        derived = {"entity_id": str(entity.id), "revision": latest.revision}
     elif origin in ai_origins and latest is not None:
         # AI-authored content applied onto human/imported state still derives from that state (C27).
         derived = {"entity_id": str(entity.id), "revision": latest.revision}
