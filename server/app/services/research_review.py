@@ -174,9 +174,12 @@ def as_time(value):
 
 
 def _resolves_after(decision, merge):
-    """Does this adjudication postdate the merge event it resolves? Durable shared-sequence
-    ordering when both carry event_sequence (same-transaction inserts still order strictly);
-    version-then-timestamp otherwise."""
+    """Does this adjudication resolve the merge event? Both bounds must hold (R21):
+    the adjudication's protocol version covers the merge version, AND the durable
+    shared-sequence order places it after the merge (same-transaction inserts still
+    order strictly); version-then-timestamp otherwise."""
+    if int(field(decision, "protocol_version")) < int(merge["version"]):
+        return False
     res_seq, merge_seq = field(decision, "event_sequence"), field(merge, "event_sequence")
     if res_seq is not None and merge_seq is not None:
         return int(res_seq) > int(merge_seq)

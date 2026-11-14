@@ -459,6 +459,19 @@ class CountArithmeticTests(unittest.TestCase):
         # The resolution covers the first conflict only; the second conflicting merge
         # (sequence 12) leaves the representative pending, and C folds into B.
         self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (0, 1))
+        # R21: an older-cohort (v1) adjudication never resolves a v2 merge conflict,
+        # however late its event sequence is.
+        late_v1_resolution = dict(resolution, event_sequence=101)
+        counts = compute_flow_counts(review["occurrences"],
+                                     list(review["mapping_events"]) + [merge1, {"kind": "report_merge",
+                          "created_at": "2026-01-01T00:00:00Z", "event_sequence": 100,
+                          "payload": {"source": "33000000-0000-4000-8000-000000000004", "target": report_b,
+                                      "conflicting_stages": ["fulltext"],
+                                      "conflicting_decisions": [{"stage": "fulltext", "source": "included", "target": "excluded"}],
+                                      "protocol_version": 2}}],
+                                     review["candidates"], list(review["decisions"]) + [late_v1_resolution], links, 2,
+                                     screening_modes=screening_modes)
+        self.assertEqual(counts["pending_adjudication"], 1)
         # Repeated solo submissions with equal timestamps: the later sequence wins even
         # when its UUID sorts lexicographically earlier.
         first = {"candidate_id": "66000000-0000-4000-8000-000000000001", "stage": "title_abstract",
