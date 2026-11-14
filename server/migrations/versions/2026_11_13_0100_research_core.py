@@ -120,6 +120,7 @@ def upgrade():
         sa.Column("project_id",sa.UUID(),sa.ForeignKey("project.id",ondelete="CASCADE"),nullable=False),
         sa.Column("report_id",sa.UUID(),sa.ForeignKey("review_reports.id",ondelete="CASCADE"),nullable=False),
         sa.Column("selected_version_id",sa.UUID(),sa.ForeignKey("review_report_versions.id",ondelete="SET NULL")),
+        sa.Column("protocol_version",sa.Integer(),nullable=False,server_default="1"),
         sa.Column("retained",sa.Boolean(),nullable=False,server_default=sa.true()),
         sa.Column("prescreen_category",sa.String(30)),
         sa.UniqueConstraint("project_id","report_id",name="uq_review_candidate_report"),*timestamps())

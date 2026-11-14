@@ -142,12 +142,45 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(counts_v2, expected_v2, counts_v2)
             self.assertEqual(research_review.flow_counts(db, project, owner, 1), counts_v1)
             self.assertEqual(research_review.flow_counts(db, project, viewer, 1), counts_v1)
+            # Later acquisition-set updates (v2): a new occurrence, candidate and a study
+            # linkage update join the v2 snapshot while the frozen v1 set stays untouched.
+            later_occurrence = ReviewOccurrence(id=uuid4(), project_id=project, provider="fixture-scholar",
+                                                search_ref="11000000-0000-4000-8000-000000000002",
+                                                external_hit_id="hit-b-later", protocol_version=2,
+                                                report_id=UUID("33000000-0000-4000-8000-000000000002"),
+                                                version_id=UUID("44000000-0000-4000-8000-000000000003"))
+            db.add(later_occurrence)
+            later_report = ReviewReport(id=uuid4(), project_id=project, identity_state="confirmed")
+            db.add(later_report)
+            db.commit()  # parent before child
+            later_candidate = ReviewCandidate(id=uuid4(), project_id=project, report_id=later_report.id,
+                                              selected_version_id=None, protocol_version=2)
+            db.add(later_candidate); db.commit()
+            research_review.map_occurrences(db, project, owner, later_candidate.id, later_occurrence.id, [],
+                                            protocol_version=2, commit=False)
+            db.commit()
+            research_review.link_study(db, project, owner, UUID("33000000-0000-4000-8000-000000000003"),
+                                       UUID("55000000-0000-4000-8000-000000000002"),
+                                       "Fixture: companion linkage withdrawn", linkage_state="unresolved",
+                                       protocol_version=2, commit=False)
+            db.commit()
+            counts_v2b = research_review.flow_counts(db, project, owner, 2)
+            # The later occurrence is the retained representative of the later candidate:
+            # identified grows to 11 while removals stay 4.
+            self.assertEqual((counts_v2b["identified_occurrences"], counts_v2b["duplicate_removals"]), (11, 4))
+            self.assertEqual(counts_v2b["retained_candidates"], 7)
+            self.assertEqual(counts_v2b["included_studies"], 3)  # C->SB withdrawn; D->SD included at v2
+            # The frozen v1 snapshot keeps its original sets, counts and linkage states.
+            v1_again = research_review.flow_counts(db, project, owner, 1)
+            self.assertEqual(v1_again, counts_v1)
+            self.assertEqual((v1_again["identified_occurrences"], v1_again["retained_candidates"], v1_again["included_studies"]),
+                             (10, 6, 2))
             with self.assertRaises(HTTPException) as denied:
                 research_review.record_decision(db, project, viewer, UUID("66000000-0000-4000-8000-000000000001"),
                                                 "fulltext", 1, "included")
             self.assertEqual(denied.exception.status_code, 403)
             self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project,
-                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 6)
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 7)  # 6 fixture maps + the later acquisition map
         outsider = uuid4()
         with self.Session() as db:
             with self.assertRaises(HTTPException) as hidden:

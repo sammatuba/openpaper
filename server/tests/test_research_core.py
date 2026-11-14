@@ -182,12 +182,40 @@ class CountArithmeticTests(unittest.TestCase):
                                         screening_modes={"title_abstract": "solo", "fulltext": "dual"})
         self.assertEqual((counts_v1["identified_occurrences"], counts_v1["duplicate_removals"]), (10, 4))
         occurrences_v2 = list(review["occurrences"]) + [
-            {"id": "22000000-0000-4000-8000-000000000011", "search_execution": "11000000-0000-4000-8000-000000000002"}]
+            {"id": "22000000-0000-4000-8000-000000000011", "protocol_version": 2,
+             "search_execution": "11000000-0000-4000-8000-000000000002"}]
+        later_candidate = {"id": "66000000-0000-4000-8000-000000000007", "report_id": "33000000-0000-4000-8000-000000000002",
+                           "selected_version_id": None, "retained": True, "protocol_version": 2}
         counts_v2 = compute_flow_counts(occurrences_v2, list(review["mapping_events"]) + [later_map],
-                                        review["candidates"], list(review["decisions"]),
+                                        list(review["candidates"]) + [later_candidate], list(review["decisions"]),
                                         [l for l in review["report_studies"] if l["study_id"]], 2,
                                         screening_modes={"title_abstract": "solo", "fulltext": "dual"})
         self.assertEqual((counts_v2["identified_occurrences"], counts_v2["duplicate_removals"]), (11, 5))
+        self.assertEqual(counts_v2["retained_candidates"], 7)
+        # v1 sees neither the later occurrence nor the later candidate.
+        counts_v1_again = compute_flow_counts(occurrences_v2, list(review["mapping_events"]) + [later_map],
+                                              list(review["candidates"]) + [later_candidate], list(review["decisions"]),
+                                              [l for l in review["report_studies"] if l["study_id"]], 1,
+                                              screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual((counts_v1_again["identified_occurrences"], counts_v1_again["retained_candidates"]), (10, 6))
+        # A versioned linkage withdrawal applies at v2 only.
+        events_with_link = list(review["mapping_events"]) + [later_map, {
+            "kind": "study_link", "payload": {"report": "33000000-0000-4000-8000-000000000001",
+                                              "study": "55000000-0000-4000-8000-000000000001",
+                                              "linkage_state": "unresolved", "protocol_version": 2}}]
+        counts_v2_link = compute_flow_counts(occurrences_v2, events_with_link,
+                                             list(review["candidates"]) + [later_candidate], list(review["decisions"]),
+                                             [l for l in review["report_studies"] if l["study_id"]], 2,
+                                             screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        # This scenario has no v2 reopen, so D stays excluded: included {A,B,C} map to
+        # SA+SB (2). Withdrawing A->SA at v2 drops it to SB only (1); v1 keeps SA+SB.
+        self.assertEqual(counts_v2_link["included_studies"], 1)
+        self.assertEqual(counts_v1_again["included_studies"], 2)
+        counts_v2_before = compute_flow_counts(occurrences_v2, list(review["mapping_events"]) + [later_map],
+                                               list(review["candidates"]) + [later_candidate], list(review["decisions"]),
+                                               [l for l in review["report_studies"] if l["study_id"]], 2,
+                                               screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual(counts_v2_before["included_studies"], 2)
 
     def test_chained_merge_accumulates_conflicts_per_representative_and_stage(self):
         # R5: A→B conflicts at title/abstract; B→C conflicts at fulltext. Resolving only

@@ -1996,13 +1996,16 @@ class ReviewReportStudy(Base):
 
 
 class ReviewCandidate(Base):
-    """One candidate per retained report; screening counts candidates, not search hits."""
+    """One candidate per retained report; screening counts candidates, not search hits.
+    protocol_version records the acquisition-set update that introduced the candidate so
+    historic snapshots keep their original candidate sets."""
     __tablename__ = "review_candidates"
     __table_args__ = (UniqueConstraint("project_id", "report_id", name="uq_review_candidate_report"),)
     id = Column(UUID(as_uuid=True), primary_key=True)
     project_id = Column(UUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"), nullable=False, index=True)
     report_id = Column(UUID(as_uuid=True), ForeignKey("review_reports.id", ondelete="CASCADE"), nullable=False)
     selected_version_id = Column(UUID(as_uuid=True), ForeignKey("review_report_versions.id", ondelete="SET NULL"), nullable=True)
+    protocol_version = Column(Integer, nullable=False, default=1)
     retained = Column(Boolean, nullable=False, default=True)
     prescreen_category = Column(String(30), nullable=True)
 

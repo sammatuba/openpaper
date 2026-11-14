@@ -216,7 +216,7 @@ def visible_decisions(db: Session, project_id, actor_id, protocol_version):
     return visible
 
 
-def link_study(db: Session, project_id, actor_id, report_id, study_id, rationale, *, linkage_state="confirmed", commit=True):
+def link_study(db: Session, project_id, actor_id, report_id, study_id, rationale, *, linkage_state="confirmed", protocol_version=1, commit=True):
     research_access.authorize(db, project_id, actor_id, write=True)
     report = db.query(ReviewReport).filter(ReviewReport.id == report_id, ReviewReport.project_id == project_id).first()
     study = db.query(ReviewStudy).filter(ReviewStudy.id == study_id, ReviewStudy.project_id == project_id).first()
@@ -229,7 +229,8 @@ def link_study(db: Session, project_id, actor_id, report_id, study_id, rationale
         db.add(ReviewReportStudy(report_id=report_id, study_id=study_id, linkage_state=linkage_state, rationale=rationale))
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="study_link",
                               payload={"report": str(report_id), "study": str(study_id),
-                                       "linkage_state": linkage_state, "rationale": rationale}, actor_id=actor_id))
+                                       "linkage_state": linkage_state, "rationale": rationale,
+                                       "protocol_version": protocol_version}, actor_id=actor_id))
     if commit: db.commit()
 
 
@@ -369,9 +370,25 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
         for stage, merges_list in staged.items():
             bucket.setdefault(stage, []).extend(merges_list)
     conflict_stages = chained_conflicts
+    # Frozen acquisition sets: occurrences, candidates and study linkages join the review
+    # through versioned updates; a snapshot at protocol version V sees exactly the sets
+    # that existed then (strategy 6.1).
+    occurrences = [o for o in occurrences if int(field(o, "protocol_version") or 1) <= protocol_version]
     identified = len({str(field(o, "id")) for o in occurrences})
     duplicate_removals = len(removed)
     merged_sources = set(merge_map)
+    candidates = [c for c in candidates if int(field(c, "protocol_version") or 1) <= protocol_version]
+    # Study linkage states derive from the base rows plus versioned study_link events.
+    link_states = {}
+    for link in report_studies:
+        if field(link, "study_id"): link_states[(str(field(link, "report_id")), str(field(link, "study_id")))] = field(link, "linkage_state")
+    for event in mapping_events:
+        if field(event, "kind") != "study_link": continue
+        payload = field(event, "payload") or {}
+        if int(payload.get("protocol_version", 1)) > protocol_version: continue
+        link_states[(str(payload.get("report")), str(payload.get("study")))] = payload.get("linkage_state")
+    versioned_links = [{"report_id": report, "study_id": study, "linkage_state": state}
+                       for (report, study), state in link_states.items()]
     retained = [c for c in candidates if field(c, "retained") and str(field(c, "report_id")) not in merged_sources]
     candidate_ids = {str(field(c, "id")) for c in retained}
     report_of_candidate = {str(field(c, "id")): str(field(c, "report_id")) for c in retained}
@@ -426,7 +443,7 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
     included = [c for c in assessed if effective[(str(field(c, "id")), "fulltext")] == "included"]
     included_reports = {str(field(c, "report_id")) for c in included}
     studies = set()
-    for link in report_studies:
+    for link in versioned_links:
         if field(link, "linkage_state") == "confirmed" and str(field(link, "report_id")) in included_reports:
             studies.add(str(field(link, "study_id")))
     return {
