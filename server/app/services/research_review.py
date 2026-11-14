@@ -63,6 +63,9 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
     research_access.authorize(db, project_id, actor_id, write=True)
     candidate = db.query(ReviewCandidate).filter(ReviewCandidate.id == candidate_id, ReviewCandidate.project_id == project_id).first()
     if not candidate: raise HTTPException(404, "Review candidate not found")
+    # Mapped occurrences are accounted under their candidate: a non-retained candidate
+    # would remove them from flow accounting (R26).
+    if not candidate.retained: raise HTTPException(422, "Cannot map occurrences onto a non-retained candidate")
     mapped = [str(retained_occurrence_id), *[str(i) for i in removed_occurrence_ids]]
     if len(set(mapped)) != len(mapped): raise HTTPException(422, "Mapping sets must be disjoint")
     rows = db.query(ReviewOccurrence).filter(ReviewOccurrence.id.in_(mapped), ReviewOccurrence.project_id == project_id).all()

@@ -159,6 +159,16 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             db.add(later_candidate); db.commit()
             research_review.map_occurrences(db, project, owner, later_candidate.id, later_occurrence.id, [],
                                             protocol_version=2, commit=False)
+            # Mapped occurrences are accounted under retained candidates only (R26).
+            non_retained_report = ReviewReport(id=uuid4(), project_id=project)
+            db.add(non_retained_report); db.commit()
+            non_retained_candidate = ReviewCandidate(id=uuid4(), project_id=project,
+                                                     report_id=non_retained_report.id, retained=False)
+            db.add(non_retained_candidate); db.commit()
+            with self.assertRaises(HTTPException) as non_retained_map:
+                research_review.map_occurrences(db, project, owner, non_retained_candidate.id,
+                                                UUID("22000000-0000-4000-8000-000000000004"), [])
+            self.assertEqual(non_retained_map.exception.status_code, 422)
             # A mapping cannot place an occurrence or candidate into an earlier snapshot
             # than the acquisition set that introduced it.
             with self.assertRaises(HTTPException) as premature:
