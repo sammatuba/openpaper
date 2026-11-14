@@ -256,6 +256,58 @@ class CountArithmeticTests(unittest.TestCase):
                                                screening_modes={"title_abstract": "solo", "fulltext": "dual"})
         self.assertEqual(counts_v2_before["included_studies"], 2)
 
+    def test_remapping_supersedes_prior_occurrence_state(self):
+        # R12: a later mapping update that swaps a candidate's retained occurrence with one
+        # of its duplicates supersedes the earlier mapping; sets stay disjoint and the
+        # conservation identity holds at every snapshot.
+        review = FIXTURE["review"]
+        remap = {"kind": "occurrence_map", "created_at": "2026-02-01T00:00:00Z",
+                 "payload": {"candidate": "66000000-0000-4000-8000-000000000002",
+                             "retained": "22000000-0000-4000-8000-000000000007",  # former duplicate O07
+                             "removed": ["22000000-0000-4000-8000-000000000004"],  # former representative O04
+                             "protocol_version": 2}}
+        links = [l for l in review["report_studies"] if l["study_id"]]
+        counts_v2 = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [remap],
+                                        review["candidates"], list(review["decisions"]), links, 2,
+                                        screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual((counts_v2["identified_occurrences"], counts_v2["duplicate_removals"],
+                          counts_v2["retained_occurrences"]), (10, 4, 6))
+        self.assertEqual(counts_v2["identified_occurrences"],
+                         counts_v2["duplicate_removals"] + counts_v2["retained_occurrences"])
+        # The v1 snapshot keeps the original mapping.
+        counts_v1 = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [remap],
+                                        review["candidates"], list(review["decisions"]), links, 1,
+                                        screening_modes={"title_abstract": "solo", "fulltext": "dual"})
+        self.assertEqual((counts_v1["duplicate_removals"], counts_v1["retained_occurrences"]), (4, 6))
+
+    def test_adjudication_selection_is_order_independent(self):
+        # R12: two qualifying adjudications at different versions resolve deterministically
+        # regardless of input order.
+        review = FIXTURE["review"]
+        owner = FIXTURE["actors"]["owner"]
+        merged_source, merged_target = "33000000-0000-4000-8000-000000000001", "33000000-0000-4000-8000-000000000002"
+        candidate_b = "66000000-0000-4000-8000-000000000002"
+        merge = {"kind": "report_merge", "created_at": "2026-01-01T00:00:00Z",
+                 "payload": {"source": merged_source, "target": merged_target,
+                             "conflicting_stages": ["fulltext"],
+                             "conflicting_decisions": [{"stage": "fulltext", "source": "included", "target": "excluded"}],
+                             "protocol_version": 1}}
+        links = [l for l in review["report_studies"] if l["study_id"]]
+        base = list(review["decisions"])
+        first = {"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 2,
+                 "actor_id": owner, "decision": "included", "role": "adjudication",
+                 "created_at": "2026-02-01T00:00:00Z", "id": "77000000-0000-4000-8000-000000000101"}
+        second = {"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 3,
+                  "actor_id": owner, "decision": "excluded", "role": "adjudication",
+                  "created_at": "2026-03-01T00:00:00Z", "id": "77000000-0000-4000-8000-000000000102"}
+        screening_modes = {"title_abstract": "solo", "fulltext": "dual"}
+        forward = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [merge],
+                                      review["candidates"], base + [first, second], links, 3, screening_modes=screening_modes)
+        backward = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [merge],
+                                       review["candidates"], base + [second, first], links, 3, screening_modes=screening_modes)
+        self.assertEqual(forward["included_reports"], 1)  # the v3 exclusion decides
+        self.assertEqual(backward, forward)
+
     def test_chained_merge_accumulates_conflicts_per_representative_and_stage(self):
         # R5: A→B conflicts at title/abstract; B→C conflicts at fulltext. Resolving only
         # the full-text conflict on C must leave the title/abstract conflict pending.

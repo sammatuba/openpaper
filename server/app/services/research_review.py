@@ -150,6 +150,26 @@ def _current_merges(db: Session, project_id, protocol_version):
     return merges, chained_conflicts, incoming
 
 
+def field(row, name):
+    return row.get(name) if isinstance(row, dict) else getattr(row, name)
+
+
+def as_time(value):
+    if value is None: return datetime.min.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        try: return datetime.fromisoformat(value)
+        except ValueError: return datetime.min.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _latest_decision(rows):
+    """Deterministic adjudication selection: highest protocol version, then latest
+    timestamp, then id — input order never changes the outcome (R12)."""
+    return sorted(rows, key=lambda row: (int(field(row, "protocol_version")),
+                                         as_time(field(row, "created_at")),
+                                         str(field(row, "id"))))[-1]
+
+
 def _resolve_representative(merges, report):
     seen = set()
     while report in merges and report not in seen:
@@ -305,7 +325,7 @@ def _effective(db: Session, report_id, stage, protocol_version, protocol):
     for version in sorted(by_version, reverse=True):
         group = by_version[version]
         adjudication = [r for r in group if r.role == "adjudication"]
-        if adjudication: return adjudication[-1].decision, "decided"
+        if adjudication: return _latest_decision(adjudication).decision, "decided"
         latest_per_actor = {}
         for row in group:
             if row.role in ("primary", "secondary"): latest_per_actor[str(row.actor_id)] = row
@@ -326,8 +346,6 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
     """Pure count derivation (unit-testable without a database). Inputs are mappings/lists
     of plain dicts or model rows with the relevant attributes. Merges apply from their
     recorded protocol version onward; historic snapshots keep their original sets."""
-    def field(row, name): return row.get(name) if isinstance(row, dict) else getattr(row, name)
-
     screening_modes = screening_modes or {}
 
     def mode_for(stage): return screening_modes.get(stage, "solo")
@@ -339,13 +357,17 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
             except ValueError: return datetime.min.replace(tzinfo=timezone.utc)
         return value
 
-    removed = set()
+    # Occurrence mapping state derives from versioned mapping events in order: a later
+    # mapping of the same occurrence supersedes the earlier one, so the retained and
+    # removed sets stay disjoint under supported remapping updates (R12).
+    occurrence_state = {}
     merge_map, conflict_stages = {}, {}
     for event in mapping_events:
         kind = field(event, "kind")
         payload = field(event, "payload") or {}
         if kind == "occurrence_map" and int(payload.get("protocol_version", 1)) <= protocol_version:
-            for occurrence_id in payload.get("removed", []): removed.add(str(occurrence_id))
+            for occurrence_id in payload.get("removed", []): occurrence_state[str(occurrence_id)] = "removed"
+            if payload.get("retained"): occurrence_state[str(payload["retained"])] = "retained"
         elif kind == "report_merge" and int(payload.get("protocol_version", 1)) <= protocol_version:
             merge_map[str(payload["source"])] = str(payload["target"])
             for conflict in payload.get("conflicting_decisions", []):
@@ -377,7 +399,7 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
     # that existed then (strategy 6.1).
     occurrences = [o for o in occurrences if int(field(o, "protocol_version") or 1) <= protocol_version]
     identified = len({str(field(o, "id")) for o in occurrences})
-    duplicate_removals = len(removed)
+    duplicate_removals = sum(1 for state in occurrence_state.values() if state == "removed")
     merged_sources = set(merge_map)
     candidates = [c for c in candidates if int(field(c, "protocol_version") or 1) <= protocol_version]
     retained = [c for c in candidates if field(c, "retained") and str(field(c, "report_id")) not in merged_sources]
@@ -394,7 +416,7 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
         candidate_report = report_of_candidate.get(str(payload.get("candidate")))
         if candidate_report is None: continue
         if _resolve_representative(merge_map, candidate_report) in representatives:
-            mapped_occurrences.add(str(payload.get("retained")))
+            if payload.get("retained"): mapped_occurrences.add(str(payload["retained"]))
             for occurrence_id in payload.get("removed", []): mapped_occurrences.discard(str(occurrence_id))
     # Study linkage states derive from the base rows plus versioned study_link events.
     link_states = {}
@@ -422,7 +444,7 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
             group = [d for d in rows if int(field(d, "protocol_version")) == top]
             adjudication = [d for d in group if field(d, "role") == "adjudication"]
             if adjudication:
-                effective[(candidate_id, stage)] = field(adjudication[-1], "decision")
+                effective[(candidate_id, stage)] = field(_latest_decision(adjudication), "decision")
                 continue
             distinct = {}
             for row in group:
@@ -445,7 +467,7 @@ def compute_flow_counts(occurrences, mapping_events, candidates, decisions, repo
                           and (int(field(d, "protocol_version")) > latest["version"]
                                or (int(field(d, "protocol_version")) == latest["version"]
                                    and as_time(field(d, "created_at")) > as_time(latest.get("created_at"))))]
-            if qualifying: effective[(candidate_id, stage)] = field(qualifying[-1], "decision")
+            if qualifying: effective[(candidate_id, stage)] = field(_latest_decision(qualifying), "decision")
             else:
                 pending.add((candidate_id, stage))
                 effective.pop((candidate_id, stage), None)
