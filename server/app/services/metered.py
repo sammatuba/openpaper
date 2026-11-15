@@ -97,7 +97,11 @@ def reserve(db: Session, project_id, actor_id, operation_type: str, estimate: di
         if existing:
             if existing.payload_sha256 != digest:
                 raise HTTPException(409, "Idempotency key reused with a different payload")
-            return existing, {"replayed": True}
+            # Replay recovers the persisted original reserve receipt (R32) — later
+            # transitions draw their own sequences.
+            return existing, {"replayed": True,
+                              "change_sequence": ((existing.reservation or {}).get("receipt") or {}).get(
+                                  "change_sequence", existing.change_sequence)}
     cost = _estimate_cost(estimate, entry)
     if cost > entry["max_cost"]: raise HTTPException(429, "Estimated cost exceeds the operation cap")
     inflight = db.query(func.count(MeteredOperation.id)).filter(
@@ -106,13 +110,17 @@ def reserve(db: Session, project_id, actor_id, operation_type: str, estimate: di
     if inflight >= limits["max_inflight"]: raise HTTPException(429, "In-flight metered operation cap reached")
     reservation = {"max_cost": entry["max_cost"], "price_table_version": table.version,
                    "estimated_cost": cost, "reserved_by": str(actor_id), "limits": dict(limits)}
+    # The reserve-time sequence is stored in the reservation: later transitions draw
+    # their own sequences, and replay must recover THIS original (R32).
+    reservation["receipt"] = {"change_sequence": None}  # filled after the draw
     row = MeteredOperation(id=uuid4(), project_id=project_id, actor_id=actor_id,
                            operation_type=operation_type, price_table_version=table.version,
                            payload_sha256=digest, estimate=estimate, reservation=reservation,
                            state="reserved", idempotency_key=idempotency_key)
     db.add(row)
-    receipt = {"replayed": False, "estimated_cost": cost,
-               "change_sequence": research_access.advance_change_sequence(db, project_id)}
+    row.change_sequence = research_access.advance_change_sequence(db, project_id)
+    row.reservation = {**reservation, "receipt": {"change_sequence": row.change_sequence}}
+    receipt = {"replayed": False, "estimated_cost": cost, "change_sequence": row.change_sequence}
     if commit: db.commit()
     return row, receipt
 

@@ -2071,6 +2071,7 @@ class ResearchProposal(Base):
     state = Column(String(16), nullable=False, default="pending")
     approval = Column(JSONB, nullable=True)  # {approver_id, approved_at, expires_at, bound_payload_sha256, bound_targets}
     receipt = Column(JSONB, nullable=True)
+    change_sequence = Column(BigInteger, nullable=False, default=0)  # drawn by the latest committed mutation
     idempotency_key = Column(String(100), nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
@@ -2102,4 +2103,5 @@ class MeteredOperation(Base):
     state = Column(String(16), nullable=False, default="reserved")
     usage = Column(JSONB, nullable=True)
     error_code = Column(String(100), nullable=True)
+    change_sequence = Column(BigInteger, nullable=False, default=0)  # drawn by the latest committed transition
     idempotency_key = Column(String(100), nullable=True)

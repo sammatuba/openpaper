@@ -46,12 +46,20 @@ def create_proposal(db: Session, project_id, actor_id, origin: str, payload: dic
         if existing:
             if existing.payload_sha256 != digest or existing.targets != targets:
                 raise HTTPException(409, "Idempotency key reused with a different proposal")
-            return existing, {"replayed": True}
+            # Replay recovers the persisted original creation receipt (R32) — later
+            # mutations on the proposal draw their own sequences.
+            return existing, {"replayed": True,
+                              "change_sequence": (existing.receipt or {}).get("change_sequence",
+                                                                              existing.change_sequence)}
     proposal = ResearchProposal(id=proposal_id or uuid4(), project_id=project_id, origin=origin,
                                 payload=payload, payload_sha256=digest, targets=targets, state="pending",
                                 idempotency_key=idempotency_key, created_by=actor_id)
     db.add(proposal)
-    receipt = {"replayed": False, "change_sequence": research_access.advance_change_sequence(db, project_id)}
+    proposal.change_sequence = research_access.advance_change_sequence(db, project_id)
+    # The creation receipt is persisted durably: later mutations (approval, stale,
+    # expiry) draw their own sequences, and replay must recover THIS original (R32).
+    proposal.receipt = {"change_sequence": proposal.change_sequence}
+    receipt = {"replayed": False, "change_sequence": proposal.change_sequence}
     if commit: db.commit()
     return proposal, receipt
 

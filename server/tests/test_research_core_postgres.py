@@ -456,7 +456,7 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((relation.relation_type, str(relation.source_id), str(relation.target_id)),
                              ("supports", ids["finding_id"], ids["claim_id"]))
             root = db.get(ResearchProject, s.project)
-            self.assertEqual((root.storage_generation, root.change_sequence), ("v2", 4))
+            self.assertEqual((root.storage_generation, root.change_sequence), ("v2", 5))  # 4 created + the flip
             v1 = db.get(ProjectInvestigation, s.project)
             self.assertEqual(v1.revision, 7)  # v1 snapshot retained read-only
             self.assertEqual(v1.document["manuscript"]["sections"][0]["blocks"][0]["provenance"]["kind"], "assistant")
@@ -1228,10 +1228,12 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(cached.change_sequence, 3)
                 manifest = research_convert.convert_project(db, fresh_project, s.owner)
                 self.assertEqual(manifest["counts"]["claims"], 0)
-                self.assertEqual(manifest["change_sequence"], 3)  # empty conversion: unchanged, never reset
+                # The generation flip is itself a mutation: an empty conversion still
+                # advances the sequence (R32): 3 prior advances + the flip = 4.
+                self.assertEqual(manifest["change_sequence"], 4)
                 db.expire_all()
                 root = db.get(ResearchProject, fresh_project)
-                self.assertEqual((root.storage_generation, root.change_sequence), ("v2", 3))
+                self.assertEqual((root.storage_generation, root.change_sequence), ("v2", 4))
                 # The durable manifest is persisted on the fresh-root path and readable
                 # from a fresh session (R30).
                 self.assertEqual(root.conversion_manifest["converter_version"], manifest["converter_version"])
@@ -1244,11 +1246,14 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 receipt = research_review.link_study(db, fresh_project, s.owner, link_report.id,
                                                      link_study_row.id, "Fixture linkage")
             with self.Session() as db:
-                self.assertEqual(receipt["change_sequence"], 4)
+                self.assertEqual(receipt["change_sequence"], 5)  # after the conversion flip
                 root = db.get(ResearchProject, fresh_project)
-                self.assertEqual(root.change_sequence, 4)
-            # Proposal and metered mutations advance the sequence too (R31): creation,
-            # approval, replay (no advance), and refusal (rollback).
+                self.assertEqual(root.change_sequence, 5)
+            # Proposal and metered mutations advance the sequence and persist receipts
+            # (R31/R32): creation, approval, replay recovery, and rollback. Root reads use
+            # raw SQL: the identity map caches stale values after raw-SQL advances.
+            from unittest.mock import patch
+            from sqlalchemy import text as raw_text
             with self.Session() as db:
                 claim_id = uuid4()
                 db.add(ResearchEntity(id=claim_id, project_id=s.project, type="claim", revision=1,
@@ -1257,20 +1262,37 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                                               payload={"statement": "Sequence claim."}, origin="human",
                                               provenance={}, actor_id=s.owner))
                 db.commit()
-                before = db.get(ResearchProject, s.project).change_sequence
+            def root_sequence():
+                with self.Session() as db:
+                    return db.execute(raw_text("SELECT change_sequence FROM research_projects WHERE project_id = :p"),
+                                      {"p": str(s.project)}).scalar_one()
+            before = root_sequence()
+            print("DEBUG before:", before)
+            with self.Session() as db:
                 proposal_payload = {"edits": [{"entity_id": str(claim_id), "payload": {"statement": "Seq proposal."}}]}
                 proposal, receipt = research_proposals.create_proposal(db, s.project, s.owner, "human",
                                                                        proposal_payload, {str(claim_id): 1},
                                                                        idempotency_key="seq-1")
                 self.assertEqual(receipt["change_sequence"], before + 1)
                 research_proposals.approve_proposal(db, s.project, s.owner, proposal.id)
+                self.assertEqual(root_sequence(), before + 2)
                 self.assertEqual(db.get(ResearchProposal, proposal.id).change_sequence, before + 2)
-                # Replay returns the original receipt without a new mutation.
+                # Replay recovers the persisted original receipt without a new mutation.
                 replay, replay_receipt = research_proposals.create_proposal(db, s.project, s.owner, "human",
                                                                             proposal_payload, {str(claim_id): 1},
                                                                             idempotency_key="seq-1")
                 self.assertTrue(replay_receipt["replayed"])
-                self.assertEqual(db.get(ResearchProject, s.project).change_sequence, before + 2)
+                self.assertEqual(replay_receipt["change_sequence"], before + 1)
+                self.assertEqual(root_sequence(), before + 2)
+                # Rollback after advancement: the proposal row and its sequence draw are
+                # discarded together — nothing persists, nothing advances.
+                research_proposals.create_proposal(db, s.project, s.owner, "human", proposal_payload,
+                                                   {str(claim_id): 2}, idempotency_key="seq-rollback",
+                                                   commit=False)
+                db.rollback()
+                self.assertEqual(root_sequence(), before + 2)
+                self.assertEqual(db.query(ResearchProposal).filter(
+                    ResearchProposal.idempotency_key == "seq-rollback").count(), 0)
                 # Metered reservations carry the sequence in their receipt.
                 metered.register_price_table(db, {"bounded_task": {"unit_prices": {"calls": 1.0}, "max_cost": 10.0}},
                                              version=900)
@@ -1279,6 +1301,19 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                                                                      limits={"max_inflight": 5})
                 self.assertIn("change_sequence", metered_receipt)
                 self.assertGreater(metered_receipt["change_sequence"], before + 2)
+                # Metered replay recovers the persisted receipt; refusal rolls back.
+                metered_replay, metered_replay_receipt = metered.reserve(db, s.project, s.owner, "bounded_task",
+                                                                         {"units": {"calls": 1}}, {},
+                                                                         idempotency_key="seq-1",
+                                                                         limits={"max_inflight": 5})
+                self.assertTrue(metered_replay_receipt["replayed"])
+                self.assertEqual(metered_replay_receipt["change_sequence"],
+                                 metered_receipt["change_sequence"])
+                metered.reserve(db, s.project, s.owner, "bounded_task", {"units": {"calls": 1}},
+                                {"n": "rollback"}, idempotency_key="metered-rollback",
+                                limits={"max_inflight": 5}, commit=False)
+                db.rollback()
+            self.assertEqual(root_sequence(), before + 3)  # reservation + refusal-free replay
 
     # ---------- migration discipline ----------
 

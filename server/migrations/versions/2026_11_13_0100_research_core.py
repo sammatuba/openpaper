@@ -159,7 +159,9 @@ def upgrade():
         sa.Column("payload_sha256",sa.String(64),nullable=False),
         sa.Column("targets",JSONB(),nullable=False),
         sa.Column("state",sa.String(16),nullable=False,server_default="pending"),
-        sa.Column("approval",JSONB()),sa.Column("receipt",JSONB()),sa.Column("idempotency_key",sa.String(100)),
+        sa.Column("approval",JSONB()),sa.Column("receipt",JSONB()),
+        sa.Column("change_sequence",sa.BigInteger(),nullable=False,server_default="0"),
+        sa.Column("idempotency_key",sa.String(100)),
         sa.Column("created_by",sa.UUID(),sa.ForeignKey("users.id",ondelete="SET NULL")),
         sa.UniqueConstraint("project_id","idempotency_key",name="uq_research_proposal_key"),
         sa.CheckConstraint("state IN ('pending','approved','applied','discarded','expired','stale')",name="ck_research_proposal_state"),
@@ -177,7 +179,9 @@ def upgrade():
         sa.Column("estimate",JSONB(),nullable=False),
         sa.Column("reservation",JSONB(),nullable=False,server_default="{}"),
         sa.Column("state",sa.String(16),nullable=False,server_default="reserved"),
-        sa.Column("usage",JSONB()),sa.Column("error_code",sa.String(100)),sa.Column("idempotency_key",sa.String(100)),
+        sa.Column("usage",JSONB()),sa.Column("error_code",sa.String(100)),
+        sa.Column("change_sequence",sa.BigInteger(),nullable=False,server_default="0"),
+        sa.Column("idempotency_key",sa.String(100)),
         sa.UniqueConstraint("project_id","operation_type","idempotency_key",name="uq_metered_operation_key"),
         sa.CheckConstraint("state IN ('reserved','admitted','running','completed','failed','uncertain','cancelled','expired')",name="ck_metered_operation_state"),*timestamps())
     op.create_index("ix_metered_operations_project_id","metered_operations",["project_id"])
