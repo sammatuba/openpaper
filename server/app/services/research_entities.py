@@ -221,6 +221,7 @@ def load_entity(db: Session, project_id, actor_id, entity_id):
         version = db.query(ResearchSourceVersion).filter(ResearchSourceVersion.id == UUID(str(anchor["source_version_id"])),
                                                          ResearchSourceVersion.project_id == project_id).first()
         paper = db.query(Paper).filter(Paper.id == version.paper_id).first() if version and version.paper_id else None
+        if paper is not None: db.refresh(paper)  # committed raw_content, even when cached (R42)
         associated = paper and db.query(ProjectPaper).filter(ProjectPaper.project_id == project_id,
                                                              ProjectPaper.paper_id == paper.id).first()
         if associated and paper.raw_content: return payload

@@ -664,8 +664,9 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(operation.state, "completed")
 
     async def test_load_entity_redacts_with_cached_paper(self):
-        # R41: the redaction check refreshes the cached Paper — a session retaining the
-        # paper across the revocation still redacts (quotation never leaves the server).
+        # R42: the redaction check refreshes the cached Paper — a session retaining the
+        # paper across a text-clearing commit still redacts (quotation never leaves the
+        # server through current payload or history).
         s = self.seed()
         paper = self.seed_paper(s.project, s.owner, "Fixture H", "Title\nExact fixture result.\nLimitations.")
         document, ids = self._v1_document(paper)
@@ -680,7 +681,7 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 loaded = research_entities.load_entity(db, s.project, s.owner, UUID(ids["finding_id"]))
                 self.assertIn("quote", loaded["entity"]["payload"]["anchor"])
             with self.engine.begin() as conn:
-                conn.execute(self.text("DELETE FROM project_paper WHERE project_id = :p"), {"p": s.project})
+                conn.execute(self.text("UPDATE papers SET raw_content = NULL WHERE id = :p"), {"p": paper})
             # Session A redacts through its cached paper.
             loaded = research_entities.load_entity(db_a, s.project, s.owner, UUID(ids["finding_id"]))
             self.assertNotIn("quote", loaded["entity"]["payload"]["anchor"])
