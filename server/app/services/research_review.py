@@ -86,6 +86,8 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
     # transfers ownership, so splitting a merge can never restore two candidates sharing one
     # occurrence (R47). Consolidating two live candidates is merge_reports, not a remap.
     owner = {}
+    target = str(candidate_id)
+    retained_by_target = set()
     prior = db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project_id,
                                                 ReviewMappingEvent.kind == "occurrence_map").all()
     for event in sorted(prior, key=_event_order):
@@ -93,10 +95,19 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
         event_candidate = str(payload.get("candidate"))
         for occurrence_id in [payload.get("retained"), *payload.get("removed", [])]:
             if occurrence_id: owner[str(occurrence_id)] = event_candidate
-    target = str(candidate_id)
+        if event_candidate == target:
+            for occurrence_id in payload.get("removed", []): retained_by_target.discard(str(occurrence_id))
+            if payload.get("retained"): retained_by_target.add(str(payload["retained"]))
     for occurrence_id in mapped:
         if occurrence_id in owner and owner[occurrence_id] != target:
             raise HTTPException(409, "Occurrence already belongs to another candidate; merge reports instead of remapping")
+    # A candidate retains exactly one representative occurrence. Replacing it must retire the
+    # previous one (record it as a removal); otherwise one unmerged candidate carries two retained
+    # representatives and inflates retained_occurrences above retained_candidates (R48). The
+    # occurrence rows are locked above, so this validation and the insert are atomic.
+    resulting = (retained_by_target - {str(i) for i in removed_occurrence_ids}) | {str(retained_occurrence_id)}
+    if len(resulting) != 1:
+        raise HTTPException(409, "A candidate retains exactly one representative; record the previous representative as removed when replacing it")
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="occurrence_map",
                               payload={"candidate": str(candidate_id), "retained": str(retained_occurrence_id),
                                        "removed": [str(i) for i in removed_occurrence_ids],
@@ -392,6 +403,24 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
             conflicts.append({"stage": stage, "source": source_decision[0] or "unresolved",
                               "target": target_decision[0] or "unresolved"})
             stages.append(stage)
+    # A merge affects every snapshot from its protocol version onward. Detecting conflicts only
+    # at the merge version misses disagreements that emerge in later snapshots (more decisions),
+    # silently discarding a later included/excluded conflict. Reject a backdated merge that would
+    # drop a conflict visible only in a later affected snapshot; merge at the current version (or
+    # resolve first) so the conflict is recorded and forces adjudication (R48).
+    later_versions = [p.version for p in db.query(ReviewProtocol).filter(
+        ReviewProtocol.project_id == project_id, ReviewProtocol.version > protocol_version).all()]
+    for version in sorted(later_versions):
+        later_protocol = _protocol_for(db, project_id, version)
+        for stage in ("title_abstract", "fulltext"):
+            if stage in stages: continue
+            source_decision = _effective(db, source.id, stage, version, later_protocol)
+            target_decision = _effective(db, target.id, stage, version, later_protocol)
+            decided_differ = source_decision[0] and target_decision[0] and source_decision[0] != target_decision[0]
+            unresolved = any(state in ("adjudication", "pending_dual")
+                             for decision, state in (source_decision, target_decision) if decision is None)
+            if decided_differ or unresolved:
+                raise HTTPException(409, "Backdated merge would discard a conflicting decision in a later protocol snapshot; merge at the current version or resolve the conflict first")
     source.identity_state = "merged"; source.merged_into = target.id
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="report_merge",
                               payload={"source": str(source.id), "target": str(target.id), "rationale": rationale,

@@ -392,6 +392,125 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(counts["retained_occurrences"], 1)
             self.assertEqual(counts["identified_occurrences"], counts["duplicate_removals"] + counts["retained_occurrences"])
 
+    async def test_remap_must_retire_previous_representative(self):
+        # R48 finding 1: a candidate retains exactly one representative. A→O1 then A→O2 with no
+        # removal would leave A holding two retained representatives (retained_occurrences >
+        # retained_candidates). Replacing the representative must record the previous one as
+        # removed. Removing the single-representative guard lets the bare replacement commit.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)])
+            db.commit()
+            o1, o2, o3 = uuid4(), uuid4(), uuid4()
+            db.add_all([ReviewOccurrence(id=o1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
+                        ReviewOccurrence(id=o2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2"),
+                        ReviewOccurrence(id=o3, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-3")])
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, o1, [])
+            research_review.map_occurrences(db, s.project, s.owner, candidate_b, o3, [])
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "included")
+            before = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((before["retained_candidates"], before["retained_occurrences"], before["screened"]), (2, 2, 2))
+            # A replaces its representative O1 with O2 but does not remove O1: refused.
+            with self.assertRaises(HTTPException) as bare:
+                research_review.map_occurrences(db, s.project, s.owner, candidate_a, o2, [])
+            self.assertEqual(bare.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 2)
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), before)
+            # The replacement is allowed when it retires the previous representative O1.
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, o2, [o1])
+            after = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((after["identified_occurrences"], after["duplicate_removals"], after["retained_occurrences"], after["retained_candidates"]), (3, 1, 2, 2))
+            self.assertEqual(after["identified_occurrences"], after["duplicate_removals"] + after["retained_occurrences"])
+
+    async def test_concurrent_remaps_single_winner(self):
+        # R48 finding 1 (concurrent): two replacements of A's representative race. The occurrence
+        # row lock serializes them; the loser re-reads A's committed representative and, still
+        # removing only the original O1, would leave two representatives — refused (409). Removing
+        # with_for_update lets both replacements commit (two retained representatives on A).
+        import time
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(report_a); db.commit()
+            candidate_a = uuid4()
+            db.add(ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id)); db.commit()
+            o1, o2, o3 = uuid4(), uuid4(), uuid4()
+            db.add_all([ReviewOccurrence(id=o1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
+                        ReviewOccurrence(id=o2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2"),
+                        ReviewOccurrence(id=o3, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-3")])
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, o1, [])
+        winner = self.Session()
+        try:
+            research_review.map_occurrences(winner, s.project, s.owner, candidate_a, o2, [o1], commit=False)
+            def loser_remap():
+                with self.Session() as db:
+                    try:
+                        research_review.map_occurrences(db, s.project, s.owner, candidate_a, o3, [o1])
+                        return 200
+                    except HTTPException as error:
+                        return error.status_code
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(loser_remap)
+                time.sleep(0.5)
+                self.assertFalse(future.done())  # blocked on the O1 row lock the winner holds
+                winner.commit()
+                self.assertEqual(future.result(timeout=10), 409)
+        finally:
+            winner.close()
+        with self.Session() as db:
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 2)
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            # A keeps exactly one retained representative (O2); O1 is retired. The loser's O3 was
+            # never mapped, so it stays an identified-but-unmapped occurrence (not a removal).
+            self.assertEqual((counts["retained_candidates"], counts["retained_occurrences"], counts["duplicate_removals"]), (1, 1, 1))
+
+    async def test_backdated_merge_cannot_discard_later_conflicts(self):
+        # R48 finding 2: a merge affects every snapshot from its version onward. v2 decisions
+        # include A and exclude B; merging A into B at v1 must not silently discard that later
+        # conflict (requires_adjudication=False would leave v2 with zero pending). The backdated
+        # merge is refused; merging at v2 records the conflict and forces adjudication. Removing
+        # the later-snapshot conflict check lets the v1 merge commit and drops the v2 conflict.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            research_review.create_protocol(db, s.project, s.owner, version=2, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)])
+            db.commit()
+            # Conflicting decisions exist only in the later (v2) snapshot.
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 2, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 2, "excluded")
+            with self.assertRaises(HTTPException) as backdated:
+                research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: backdated", protocol_version=1)
+            self.assertEqual(backdated.exception.status_code, 409)
+            # No merge recorded; the reports keep their independent identities.
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "report_merge").count(), 0)
+            self.assertNotEqual(db.get(ReviewReport, report_a.id).identity_state, "merged")
+            self.assertIsNone(db.get(ReviewReport, report_a.id).merged_into)
+            # Merging at the current version records the conflict and forces adjudication.
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: current", protocol_version=2)
+            self.assertTrue(result["requires_adjudication"])
+            v2 = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((v2["included_reports"], v2["pending_adjudication"]), (0, 1))
+
     async def test_merge_with_conflicting_decisions_requires_adjudication(self):
         s = self.seed()
         with self.Session() as db:
