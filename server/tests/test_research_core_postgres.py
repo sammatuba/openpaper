@@ -906,34 +906,38 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(db.get(ResearchProject, s.project).change_sequence, sequence_before)
 
     async def test_stale_cached_entity_raises_412_not_integrity_error(self):
-        # R36: the locking read must observe the committed row even when this session
-        # already holds a cached instance — a stale revision guard surfaces as 412,
-        # never as an IntegrityError from the revision write.
+        # R36/R37: the locking read must observe the committed row even when the session
+        # holds a cached instance. The caching session stays OPEN across the intervening
+        # commit, and the stale write goes through the SAME cached session — without the
+        # refresh this raises IntegrityError instead of 412.
         from unittest.mock import patch
         from fastapi import HTTPException
         s = self.seed()
         document, ids = self._v1_document(uuid4())
         self._write_v1_row(s.project, document)
-        with self.Session() as db:
-            research_convert.convert_project(db, s.project, s.owner)
+        db_a = self.Session()
+        try:
+            research_convert.convert_project(db_a, s.project, s.owner)
             claim_id = UUID(ids["claim_id"])
-            # This session caches the entity at revision 1.
-            cached = db.get(ResearchEntity, claim_id)
+            # Session A caches the entity at revision 1 and stays open.
+            cached = db_a.get(ResearchEntity, claim_id)
             self.assertEqual(cached.revision, 1)
-        with self.Session() as db:
-            # An intervening session commits revision 2.
-            research_entities.revise_entity(db, s.project, s.owner, claim_id, 1, {"statement": "Intervening edit."})
-        with self.Session() as db:
-            # The stale session retains its cached instance across the intervening commit
-            # and now revises with an expected revision of 1.
-            with patch.object(db, "commit", side_effect=RuntimeError("Rollback after 412")):
+            # Session B commits revision 2 while A holds its cached instance.
+            with self.Session() as db_b:
+                research_entities.revise_entity(db_b, s.project, s.owner, claim_id, 1,
+                                                {"statement": "Intervening edit."})
+            # Session A revises with an expected revision of 1: the guard must observe
+            # the committed revision 2 and raise 412 (never an IntegrityError).
+            with patch.object(db_a, "commit", side_effect=RuntimeError("Rollback after 412")):
                 with self.assertRaises(HTTPException) as stale:
-                    research_entities.revise_entity(db, s.project, s.owner, claim_id, 1,
+                    research_entities.revise_entity(db_a, s.project, s.owner, claim_id, 1,
                                                     {"statement": "Stale-guard edit."})
             self.assertEqual(stale.exception.status_code, 412)
-            db.rollback()  # discard the failed transaction from the cached session
-            entity = db.get(ResearchEntity, claim_id)
+            db_a.rollback()  # discard the failed transaction from session A
+            entity = db_a.get(ResearchEntity, claim_id)
             self.assertEqual((entity.revision, entity.payload["statement"]), (2, "Intervening edit."))
+        finally:
+            db_a.close()
 
     # ---------- C26/C27: proposals ----------
 

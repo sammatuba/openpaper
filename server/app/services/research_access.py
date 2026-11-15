@@ -20,6 +20,10 @@ def authorize(db: Session, project_id, actor_id, *, write=False, lock=False):
     roles = db.query(ProjectRole).filter(ProjectRole.project_id == project_id, ProjectRole.user_id == actor_id)
     if lock: roles = roles.with_for_update()
     role = roles.first()
+    # Committed ownership/membership state, even when this session cached the rows:
+    # a demotion committed by another session must be observed here (R37).
+    db.refresh(project)
+    if role is not None: db.refresh(role)
     if project.admin_id != actor_id and role is None: raise HTTPException(404, "Project not found")
     if write and project.admin_id != actor_id and role.role not in ("admin", "editor"):
         raise HTTPException(403, "Editing requires an editor role")

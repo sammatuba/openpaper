@@ -55,6 +55,7 @@ def convert_project(db: Session, project_id, actor_id):
     if root and root.storage_generation == "v2":
         raise HTTPException(409, "Project research storage is already converted")
     row = db.query(ProjectInvestigation).filter(ProjectInvestigation.project_id == project_id).with_for_update().first()
+    if row is not None: db.refresh(row)  # committed document, even when this session cached it (R37)
     document = json.loads(json.dumps(row.document)) if row else {}
     revision_at_read = row.revision if row else None
     claims = document.get("claims", [])
@@ -181,6 +182,8 @@ def convert_project(db: Session, project_id, actor_id):
     db.execute(sa_text("UPDATE research_projects SET conversion_manifest = CAST(:manifest AS JSONB) "
                        "WHERE project_id = :p"),
                {"manifest": json.dumps(manifest, ensure_ascii=False), "p": str(project_id)})
+    if row is not None:
+        db.refresh(row)  # re-read before the final CAS comparison (R37)
     if row is not None and row.revision != revision_at_read:
         raise HTTPException(409, "v1 revision changed during conversion; aborted")
     db.commit()
