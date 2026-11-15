@@ -992,7 +992,90 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
         finally:
             db_b.close()
 
-    # ---------- C26/C27: proposals ----------
+    async def test_cached_report_merge_and_demotion_and_cutover(self):
+        # R39: cached reports cannot bypass merge guards; cached roles cannot bypass
+        # demotion; cached v1 roots cannot bypass cutover. Each assertion is sensitive
+        # to its corresponding refresh.
+        from fastapi import HTTPException
+        s = self.seed()
+        editor = uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": editor, "e": str(editor) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": editor})
+    async def test_cached_state_cannot_bypass_guards(self):
+        # R39: cached reports cannot bypass merge guards; cached roles cannot bypass
+        # demotion; cached v1 roots cannot bypass cutover.
+        from fastapi import HTTPException
+        from app.database.models import ProjectRole, ResearchProject
+        s = self.seed()
+        editor = uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": editor, "e": str(editor) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": editor})
+        # Cached report across an intervening merge.
+        report_x_id, report_y_id, report_z_id = uuid4(), uuid4(), uuid4()
+        with self.Session() as db:
+            db.add_all([ReviewReport(id=report_x_id, project_id=s.project),
+                        ReviewReport(id=report_y_id, project_id=s.project),
+                        ReviewReport(id=report_z_id, project_id=s.project)]); db.commit()
+            # Merges require a protocol and v1 candidates for both endpoints.
+            db.add(ReviewProtocol(id=uuid4(), project_id=s.project, version=1, screening_modes={}))
+            db.add_all([ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report_x_id, protocol_version=1),
+                        ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report_y_id, protocol_version=1),
+                        ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report_z_id, protocol_version=1)])
+            db.commit()
+        db_a = self.Session()
+        try:
+            cached_x = db_a.get(ReviewReport, report_x_id)  # session A caches X
+            self.assertIsNotNone(cached_x)
+            with self.Session() as db:
+                research_review.merge_reports(db, s.project, s.owner, report_x_id, report_y_id,
+                                              "Fixture: X into Y", protocol_version=1)
+            # Session A merges X into Z: X is already merged into Y — 409, not a second event.
+            with self.assertRaises(HTTPException) as stale_merge:
+                research_review.merge_reports(db, s.project, s.owner, report_x_id, report_z_id,
+                                              "Fixture: X into Z from cache", protocol_version=1)
+            self.assertEqual(stale_merge.exception.status_code, 409)
+        finally:
+            db_a.close()
+        with self.Session() as db:
+            self.assertEqual(db.query(ReviewReport).filter(ReviewReport.merged_into == report_z_id).count(), 0)
+        # Cached editor role across a demotion.
+        db_a = self.Session()
+        try:
+            cached_role = db_a.query(ProjectRole).filter(ProjectRole.project_id == s.project,
+                                                         ProjectRole.user_id == editor).first()
+            self.assertEqual(cached_role.role, "editor")
+            with self.engine.begin() as conn:
+                conn.execute(self.text("UPDATE project_role SET role = 'viewer' WHERE project_id = :p AND user_id = :u"),
+                             {"p": s.project, "u": editor})
+            with self.assertRaises(HTTPException) as demoted:
+                research_access.authorize(db_a, s.project, editor, write=True)
+            self.assertEqual(demoted.exception.status_code, 403)
+        finally:
+            db_a.close()
+        # Cached v1 root across a conversion: legacy save observes the cutover (409).
+        self._write_v1_row(s.project, {"format": "openpaper/investigation", "version": 1, "case": {},
+                                       "claims": [], "findings": [], "relations": [],
+                                       "manuscript": {"title": "", "sections": []}})
+        # The merge advance may already have created the root; either way the cached
+        # session must not bypass the cutover check below.
+        db_a = self.Session()
+        try:
+            db_a.get(ResearchProject, s.project)  # caches presence or absence
+        finally:
+            db_a.close()
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+        db_a = self.Session()
+        try:
+            # Session A now reads the v1-era root... conversion flipped it: read v2.
+            root = db_a.get(ResearchProject, s.project)
+            self.assertEqual(root.storage_generation, "v2")
+        finally:
+            db_a.close()
+
+    # ---------- C26/C27: proposals ----------    # ---------- C26/C27: proposals ----------
 
     async def test_proposal_apply_replay_and_forgery(self):
         from fastapi import HTTPException

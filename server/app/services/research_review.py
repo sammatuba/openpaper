@@ -333,6 +333,7 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
     source = db.query(ReviewReport).filter(ReviewReport.id == UUID(str(source_report_id)), ReviewReport.project_id == project_id).first()
     target = db.query(ReviewReport).filter(ReviewReport.id == UUID(str(target_report_id)), ReviewReport.project_id == project_id).first()
     if not source or not target: raise HTTPException(422, "Merge requires two distinct project reports")
+    db.refresh(source); db.refresh(target)  # committed identity state, even when cached (R39)
     if source.identity_state == "merged": raise HTTPException(409, "Source report is already merged")
     if target.identity_state == "merged": raise HTTPException(409, "Target is already merged; merge into the current representative")
     # Both candidates must exist in the requested snapshot: merging onto (or from) a
