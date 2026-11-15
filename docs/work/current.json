@@ -1,6 +1,6 @@
 {
   "intent": "docs/work/INTENT-investigation-workspace.md",
-  "phase": "AI-native platform P00-P02 implemented; R49 rework(3 important) fixed locally (unpushed); local battery green (162 required / 546 full, zero skips); 50th review round pending; PR #3 open; investigation A25 acceptance still open",
+  "phase": "AI-native platform P00-P02 implemented; R50 rework(3 important + 1 minor) fixed locally (unpushed); local battery green (166 required / 550 full, zero skips); 51st review round pending; PR #3 open; investigation A25 acceptance still open",
   "branch": "feat/native-investigation-workspace",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,7 +8,7 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Run the fiftieth review round (./meos review --base feat/native-investigation-workspace); if accept, push feat/ai-native-research-core and merge stacked PR #3; then begin P03 guided shell; operator A25 acceptance remains open",
+  "next_action": "Run the fifty-first review round (./meos review --base feat/native-investigation-workspace); if accept, push feat/ai-native-research-core and merge stacked PR #3; then begin P03 guided shell; operator A25 acceptance remains open",
   "blocked_on": [
     "No current operator browser/session exposed for authenticated production UI acceptance."
   ],
@@ -436,7 +436,7 @@
   "ai_native_platform_strategy": {
     "document": "docs/work/STRATEGY-ai-native-research-platform.md",
     "date": "2026-11-13",
-    "status": "P00-P02 implemented, reviewed across 49 rounds (every finding fixed with mutation-verified regressions) and verified locally; committed on feat/ai-native-research-core, PR pending; P03-P12 not started",
+    "status": "P00-P02 implemented, reviewed across 50 rounds (every finding fixed with mutation-verified regressions) and verified locally; committed on feat/ai-native-research-core, PR pending; P03-P12 not started",
     "baseline_head": "ef2a6731f9e429d45b30055940c0238e965df3a9",
     "scope": "Connected freeform multimedia canvas, rigorous research review, evidence integrity, scientific manuscript authoring, local Jupyter experiments, bounded Arrow analytics and authenticated ChatGPT MCP",
     "execution": "P00-P02 executed 2026-11-13 per operator instruction; packages delivered as a stacked PR targeting feat/native-investigation-workspace",
@@ -455,14 +455,14 @@
     "fixture": "docs/work/ai-native-research-fixture.json",
     "prototype": "docs/prototypes/ai-native-loop.html",
     "verification": "docs/work/VERIFICATION-ai-native-research-platform.md",
-    "checks": "Required PG162 zero skips; full server546 OK zero skips; jobs21; worker2; research36; runner5; client tsc+build pass; git diff --check pass"
+    "checks": "Required PG166 zero skips; full server550 OK zero skips; jobs21; worker2; research36; runner5; client tsc+build pass; git diff --check pass"
   },
   "ai_native_p0_p2": {
     "migration_head": "research_core_01",
     "new_tables": 17,
     "fixture": "docs/work/ai-native-research-fixture.json",
-    "required_lane": "162 tests zero skips",
-    "full_server": "546 tests OK zero skips",
+    "required_lane": "166 tests zero skips",
+    "full_server": "550 tests OK zero skips",
     "c01_c05_c08_c10_c17_c26_c27_c29": "pass for new code paths (review rounds R1-R3 findings fixed with regressions)",
     "conversion": "atomic; v1 row retained read-only; unconverted projects refuse typed writes",
     "metered": "no price table shipped; every metered dispatch refused until explicitly priced",
@@ -478,11 +478,11 @@
       "P11 AI assistance",
       "P12 release"
     ],
-    "review_rounds": "R1-R24 (53 findings, all fixed); R25 20261114T141931Z rework(3)->fixed; R26 20261114T144628Z rework(2)->fixed; R27 20261114T145404Z rework(2)->fixed; R28 20261114T150933Z rework(5)->fixed; R29 20261114T160446Z rework(2)->fixed; R30 20261114T161230Z rework(2)->fixed; R31 20261115T111202Z rework(2)->fixed; R32 20261115T112009Z rework(3)->fixed; R33 20261115T114129Z rework(3)->fixed; R34 20261115T121504Z rework(2)->fixed; R35 20261115T122147Z rework(2)->fixed; R36 20261115T122650Z rework(1)->fixed; R37 20261115T123324Z rework(3)->fixed; R38 20261115T124039Z rework(3)->fixed; R39 20261115T124651Z rework(3)->fixed; R40 20261115T140726Z rework(3)->fixed; R41 20261115T141657Z rework(4)->fixed; R42 20261115T142417Z rework(3)->fixed; R43 20261115T143019Z rework(3)->fixed; R44 20261115T143757Z rework(3)->fixed; R45 20261115T153038Z rework(2)->fixed; R46 20261115T154755Z rework(3)->fixed; R47 20261115T161241Z rework(3)->fixed; R48 20261115T163929Z rework(2)->fixed; R49 20261115T165918Z rework(3)->fixed; R25 attempt-1 20261114T071025Z did not run (credits)",
+    "review_rounds": "R1-R24 (53 findings, all fixed); R25 20261114T141931Z rework(3)->fixed; R26 20261114T144628Z rework(2)->fixed; R27 20261114T145404Z rework(2)->fixed; R28 20261114T150933Z rework(5)->fixed; R29 20261114T160446Z rework(2)->fixed; R30 20261114T161230Z rework(2)->fixed; R31 20261115T111202Z rework(2)->fixed; R32 20261115T112009Z rework(3)->fixed; R33 20261115T114129Z rework(3)->fixed; R34 20261115T121504Z rework(2)->fixed; R35 20261115T122147Z rework(2)->fixed; R36 20261115T122650Z rework(1)->fixed; R37 20261115T123324Z rework(3)->fixed; R38 20261115T124039Z rework(3)->fixed; R39 20261115T124651Z rework(3)->fixed; R40 20261115T140726Z rework(3)->fixed; R41 20261115T141657Z rework(4)->fixed; R42 20261115T142417Z rework(3)->fixed; R43 20261115T143019Z rework(3)->fixed; R44 20261115T143757Z rework(3)->fixed; R45 20261115T153038Z rework(2)->fixed; R46 20261115T154755Z rework(3)->fixed; R47 20261115T161241Z rework(3)->fixed; R48 20261115T163929Z rework(2)->fixed; R49 20261115T165918Z rework(3)->fixed; R50 20261115T171805Z rework(3 important + 1 minor)->fixed; R25 attempt-1 20261114T071025Z did not run (credits)",
     "boundaries": "Local committed implementation on feat/ai-native-research-core (not merged, not deployed); no production migration, live inference, corpus expansion or account changes; existing open gates (A25, live-AI) untouched",
     "pull_request": "https://github.com/sammatuba/openpaper/pull/3 (feat/ai-native-research-core -> feat/native-investigation-workspace)",
     "implementation_commit": "ac6e939c (branch tip at PR open; 11 commits)",
-    "unpushed_commit": "0bddab76 (R44) + 131b725f (wrapup) + 99f08229 (R45) + 74ab7cb2 (R46) + 5af40609 (R47) + 89c769e9 (R48) + R49 fix commit (candidate-row lock for concurrent first mappings; per-snapshot single-representative validation; merged-away decision guard under the report-row lock; first-mapping/historical-snapshot/merged-away decision regressions; totals reconciliation) — needs git push",
-    "pending_review": "fiftieth review round pending (R49 rework(3) fixed locally; battery 162/546 zero skips)"
+    "unpushed_commit": "0bddab76 (R44) + 131b725f (wrapup) + 99f08229 (R45) + 74ab7cb2 (R46) + 5af40609 (R47) + 89c769e9 (R48) + 06c77661 (R49) + R50 fix commit (per-snapshot cycle validation; backdated-decision later-merge conflict guard; decision-version boundaries in the later-conflict scan; split_report lock+refresh; four regressions; totals reconciliation) — needs git push",
+    "pending_review": "fifty-first review round pending (R50 rework(3 important + 1 minor) fixed locally; battery 166/550 zero skips)"
   }
 }

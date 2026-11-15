@@ -654,6 +654,115 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
                                                                  ReviewMappingEvent.kind == "report_merge").count(), 1)
 
+    async def test_backdated_merge_cannot_create_cycle_at_later_snapshot(self):
+        # R50 finding 1: cycle validation must hold at EVERY affected snapshot. A→B at v3, split A
+        # at v4, then B→A backdated to v1 leaves both edges active at v3 (the split only removes
+        # A→B from v4 onward), collapsing the representative set to zero. The backdated merge is
+        # refused and v3 is preserved. Collapsing the cycle loop to the requested snapshot lets it commit.
+        s = self.seed()
+        with self.Session() as db:
+            for version in (1, 3, 4):
+                research_review.create_protocol(db, s.project, s.owner, version=version, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)]); db.commit()
+            o1, o2 = uuid4(), uuid4()
+            db.add_all([ReviewOccurrence(id=o1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
+                        ReviewOccurrence(id=o2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2")])
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, o1, [], protocol_version=1)
+            research_review.map_occurrences(db, s.project, s.owner, candidate_b, o2, [], protocol_version=1)
+            research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: A into B", protocol_version=3)
+            research_review.split_report(db, s.project, s.owner, report_a.id, "Fixture: split A", protocol_version=4)
+            v3_before = research_review.flow_counts(db, s.project, s.owner, 3)
+            self.assertEqual(v3_before["identified_occurrences"],
+                             v3_before["duplicate_removals"] + v3_before["retained_occurrences"])
+            self.assertEqual(v3_before["retained_candidates"], 1)
+            with self.assertRaises(HTTPException) as cycle:
+                research_review.merge_reports(db, s.project, s.owner, report_b.id, report_a.id, "Fixture: backdated B into A", protocol_version=1)
+            self.assertEqual(cycle.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "report_merge").count(), 1)
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 3), v3_before)
+
+    async def test_backdated_decision_cannot_invalidate_later_merge(self):
+        # R50 finding 2: exclude B at v1, merge A→B at v2 unflagged, then include A at v1. The
+        # merged-away guard covers v1 (A is not merged there), but A's backdated inclusion applies
+        # at the v2 merge snapshot and silently drops from counts. The decision is refused; v2 keeps
+        # B's exclusion with no pending adjudication. Removing the backdated-conflict guard lets it commit.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            research_review.create_protocol(db, s.project, s.owner, version=2, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)]); db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "excluded")
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: unflagged", protocol_version=2)
+            self.assertFalse(result["requires_adjudication"])
+            with self.assertRaises(HTTPException) as backdated:
+                research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 1, "included")
+            self.assertEqual(backdated.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_a).count(), 0)
+            v2 = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((v2["screened"], v2["title_abstract_excluded"], v2["pending_adjudication"]), (1, 1, 0))
+
+    async def test_merge_conflict_scan_includes_decision_versions(self):
+        # R50 finding 3: with only protocol v1, opposing A/B decisions at v2 (via _protocol_for's
+        # fallback) must still force adjudication. A backdated v1 merge scans later snapshots; the
+        # boundary set must include decision versions, not just protocol rows, or the v2 disagreement
+        # is missed and the merge succeeds unflagged. Reverting to protocol-only lets the v1 merge commit.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)]); db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 2, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 2, "excluded")
+            with self.assertRaises(HTTPException) as backdated:
+                research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: backdated", protocol_version=1)
+            self.assertEqual(backdated.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "report_merge").count(), 0)
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: at v2", protocol_version=2)
+            self.assertTrue(result["requires_adjudication"])
+
+    async def test_split_refreshes_cached_report_state(self):
+        # R50 finding 4 (minor): a retained session caches A as unmerged; another session merges it.
+        # Splitting through the SAME retained session must lock and refresh the committed identity
+        # state rather than trust the stale cached instance. Removing db.refresh raises a spurious 409.
+        s = self.seed()
+        db = self.Session()
+        try:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            db.add_all([ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report_b.id)]); db.commit()
+            cached = db.get(ReviewReport, report_a.id)  # strong reference keeps the stale instance in the identity map
+            self.assertEqual(cached.identity_state, "unreviewed")
+            report_a_id, report_b_id = report_a.id, report_b.id
+            with self.Session() as other:
+                research_review.merge_reports(other, s.project, s.owner, report_a_id, report_b_id, "Fixture: merge elsewhere", protocol_version=1)
+            # db still holds the pre-merge cached instance; the split must re-read committed state.
+            research_review.split_report(db, s.project, s.owner, report_a_id, "Fixture: split through retained session", protocol_version=1)
+            self.assertEqual(db.get(ReviewReport, report_a_id).identity_state, "unreviewed")
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "report_split").count(), 1)
+        finally:
+            db.close()
+
     async def test_merge_with_conflicting_decisions_requires_adjudication(self):
         s = self.seed()
         with self.Session() as db:
