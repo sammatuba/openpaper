@@ -1143,6 +1143,24 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             outcomes = list(pool.map(race, range(3)))
         self.assertEqual(sorted(outcomes), [200, 429, 429])  # exactly one admission wins
 
+    async def test_conversion_fresh_root_persists_manifest(self):
+        # R31: converting a project with NO research root takes the INSERT branch; the
+        # durable manifest must be readable from a fresh session afterwards.
+        s = self.seed()
+        with self.Session() as db:
+            self.assertIsNone(db.get(ResearchProject, s.project))
+            self._write_v1_row(s.project, {"format": "openpaper/investigation", "version": 1, "case": {},
+                                           "claims": [], "findings": [], "relations": [],
+                                           "manuscript": {"title": "", "sections": []}})
+        with self.Session() as db:
+            manifest = research_convert.convert_project(db, s.project, s.owner)
+        with self.Session() as db:  # fresh session: readback of persisted durability
+            root = db.get(ResearchProject, s.project)
+            self.assertIsNotNone(root.conversion_manifest)
+            self.assertEqual(root.conversion_manifest["converter_version"], manifest["converter_version"])
+            self.assertEqual(root.conversion_manifest["counts"]["claims"], 0)
+            self.assertEqual(root.storage_generation, "v2")
+
     async def test_review_mutations_advance_change_sequence(self):
         # R27/R28: every committed review mutation advances the project change sequence
         # atomically (UPDATE ... RETURNING); failures roll the sequence back with the
@@ -1229,6 +1247,38 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(receipt["change_sequence"], 4)
                 root = db.get(ResearchProject, fresh_project)
                 self.assertEqual(root.change_sequence, 4)
+            # Proposal and metered mutations advance the sequence too (R31): creation,
+            # approval, replay (no advance), and refusal (rollback).
+            with self.Session() as db:
+                claim_id = uuid4()
+                db.add(ResearchEntity(id=claim_id, project_id=s.project, type="claim", revision=1,
+                                      payload={"statement": "Sequence claim."}, created_by=s.owner))
+                db.add(ResearchEntityRevision(id=uuid4(), entity_id=claim_id, revision=1,
+                                              payload={"statement": "Sequence claim."}, origin="human",
+                                              provenance={}, actor_id=s.owner))
+                db.commit()
+                before = db.get(ResearchProject, s.project).change_sequence
+                proposal_payload = {"edits": [{"entity_id": str(claim_id), "payload": {"statement": "Seq proposal."}}]}
+                proposal, receipt = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                                       proposal_payload, {str(claim_id): 1},
+                                                                       idempotency_key="seq-1")
+                self.assertEqual(receipt["change_sequence"], before + 1)
+                research_proposals.approve_proposal(db, s.project, s.owner, proposal.id)
+                self.assertEqual(db.get(ResearchProposal, proposal.id).change_sequence, before + 2)
+                # Replay returns the original receipt without a new mutation.
+                replay, replay_receipt = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                                            proposal_payload, {str(claim_id): 1},
+                                                                            idempotency_key="seq-1")
+                self.assertTrue(replay_receipt["replayed"])
+                self.assertEqual(db.get(ResearchProject, s.project).change_sequence, before + 2)
+                # Metered reservations carry the sequence in their receipt.
+                metered.register_price_table(db, {"bounded_task": {"unit_prices": {"calls": 1.0}, "max_cost": 10.0}},
+                                             version=900)
+                metered_operation, metered_receipt = metered.reserve(db, s.project, s.owner, "bounded_task",
+                                                                     {"units": {"calls": 1}}, {}, idempotency_key="seq-1",
+                                                                     limits={"max_inflight": 5})
+                self.assertIn("change_sequence", metered_receipt)
+                self.assertGreater(metered_receipt["change_sequence"], before + 2)
 
     # ---------- migration discipline ----------
 

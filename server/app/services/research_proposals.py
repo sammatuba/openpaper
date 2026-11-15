@@ -51,8 +51,9 @@ def create_proposal(db: Session, project_id, actor_id, origin: str, payload: dic
                                 payload=payload, payload_sha256=digest, targets=targets, state="pending",
                                 idempotency_key=idempotency_key, created_by=actor_id)
     db.add(proposal)
+    receipt = {"replayed": False, "change_sequence": research_access.advance_change_sequence(db, project_id)}
     if commit: db.commit()
-    return proposal, {"replayed": False}
+    return proposal, receipt
 
 
 def approve_proposal(db: Session, project_id, actor_id, proposal_id, *, expires_in_seconds=3600, commit=True):
@@ -66,6 +67,7 @@ def approve_proposal(db: Session, project_id, actor_id, proposal_id, *, expires_
     proposal.approval = {"approver_id": str(actor_id), "approved_at": now.isoformat(),
                          "expires_at": (now + timedelta(seconds=expires_in_seconds)).isoformat(),
                          "bound_payload_sha256": proposal.payload_sha256, "bound_targets": proposal.targets}
+    proposal.change_sequence = research_access.advance_change_sequence(db, project_id)
     if commit: db.commit()
     return proposal
 
@@ -91,6 +93,7 @@ def apply_proposal(db: Session, project_id, actor_id, proposal_id, *, commit=Tru
         raise HTTPException(422, "Proposal edit set does not match its bound targets")
     if datetime.now(timezone.utc) > datetime.fromisoformat(approval["expires_at"]):
         proposal.state = "expired"
+        proposal.change_sequence = research_access.advance_change_sequence(db, project_id)
         if commit: db.commit()
         raise HTTPException(410, "Proposal approval expired")
     # Deterministic lock order: ascending entity id inside the transaction.
@@ -101,6 +104,7 @@ def apply_proposal(db: Session, project_id, actor_id, proposal_id, *, commit=Tru
         entity = entities.get(entity_id)
         if not entity or entity.revision != proposal.targets[str(entity_id)]:
             proposal.state = "stale"
+            proposal.change_sequence = research_access.advance_change_sequence(db, project_id)
             if commit: db.commit()
             raise HTTPException(409, "Proposal target revisions changed; returned to review")
     applied = {}

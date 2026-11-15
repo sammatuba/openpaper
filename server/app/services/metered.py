@@ -111,8 +111,10 @@ def reserve(db: Session, project_id, actor_id, operation_type: str, estimate: di
                            payload_sha256=digest, estimate=estimate, reservation=reservation,
                            state="reserved", idempotency_key=idempotency_key)
     db.add(row)
+    receipt = {"replayed": False, "estimated_cost": cost,
+               "change_sequence": research_access.advance_change_sequence(db, project_id)}
     if commit: db.commit()
-    return row, {"replayed": False, "estimated_cost": cost}
+    return row, receipt
 
 
 def _transition(db: Session, operation_id, actor_id, current, target, project_id, *, usage=None, error_code=None):
@@ -125,6 +127,7 @@ def _transition(db: Session, operation_id, actor_id, current, target, project_id
     row.state = target
     if usage is not None: row.usage = usage
     if error_code: row.error_code = error_code
+    row.change_sequence = research_access.advance_change_sequence(db, project_id)
     db.commit()
     return row
 
