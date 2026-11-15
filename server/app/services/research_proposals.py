@@ -85,8 +85,8 @@ def apply_proposal(db: Session, project_id, actor_id, proposal_id, *, commit=Tru
     proposal = db.query(ResearchProposal).filter(ResearchProposal.id == UUID(str(proposal_id)),
                                                  ResearchProposal.project_id == project_id).with_for_update().first()
     if not proposal: raise HTTPException(404, "Proposal not found")
-    if proposal.state == "applied" and proposal.receipt:
-        return {"receipt": proposal.receipt, "replayed": True}
+    if proposal.state == "applied" and proposal.applied_receipt:
+        return {"receipt": proposal.applied_receipt, "replayed": True}
     if proposal.state != "approved": raise HTTPException(409, f"Proposal is {proposal.state}")
     approval = proposal.approval or {}
     # Recompute the digest from the actual stored payload: stored-vs-stored comparisons
@@ -129,6 +129,6 @@ def apply_proposal(db: Session, project_id, actor_id, proposal_id, *, commit=Tru
         applied[str(entity_id)] = result
     receipt = {"applied": applied, "proposal_sha256": proposal.payload_sha256,
                "approver_id": approval["approver_id"], "applied_at": datetime.now(timezone.utc).isoformat()}
-    proposal.state = "applied"; proposal.receipt = receipt
+    proposal.state = "applied"; proposal.applied_receipt = receipt
     if commit: db.commit()
     return {"receipt": receipt, "replayed": False}

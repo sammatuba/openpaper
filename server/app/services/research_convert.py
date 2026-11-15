@@ -153,25 +153,35 @@ def convert_project(db: Session, project_id, actor_id):
                     for section in sections for block in section.get("blocks", [])]}
     created = len(claims) + len(findings) + len(relations) + len(source_versions)
     # The generation flip is itself a committed mutation: it always advances the
-    # sequence, including empty conversions (R32); created records draw as well.
+    # sequence, including empty conversions (R32); created records draw as well. The
+    # sequence is captured with RETURNING inside this transaction — reading after the
+    # commit could report another mutation's draw (R33) — and persisted in the manifest.
     advanced = created + 1
+    manifest["change_sequence"] = None
+    manifest_json = json.dumps(manifest, ensure_ascii=False)
     if root is None:
-        db.execute(sa_text("INSERT INTO research_projects (project_id, storage_generation, change_sequence, "
-                           "conversion_manifest) VALUES (:p, 'v2', :seq, CAST(:manifest AS JSONB))"),
-                   {"p": str(project_id), "seq": advanced,
-                    "manifest": json.dumps(manifest, ensure_ascii=False)})
+        flip_sequence = db.execute(sa_text("INSERT INTO research_projects (project_id, storage_generation, "
+                                           "change_sequence, conversion_manifest) "
+                                           "VALUES (:p, 'v2', :seq, CAST(:placeholder AS JSONB)) RETURNING change_sequence"),
+                                   {"p": str(project_id), "seq": advanced,
+                                    "placeholder": json.dumps({"change_sequence": None}, ensure_ascii=False)}).scalar_one()
     else:
         # Monotonic atomic flip (R29): the increment happens in SQL, so a cached ORM root
         # cannot compute from a stale value — review mutations may have advanced the
         # sequence in this session before conversion.
-        db.execute(sa_text("UPDATE research_projects SET storage_generation = 'v2', "
-                           "change_sequence = change_sequence + :advanced, conversion_manifest = CAST(:manifest AS JSONB) "
-                           "WHERE project_id = :p"),
-                   {"advanced": advanced, "manifest": json.dumps(manifest, ensure_ascii=False), "p": str(project_id)})
+        flip_sequence = db.execute(sa_text("UPDATE research_projects SET storage_generation = 'v2', "
+                                           "change_sequence = change_sequence + :advanced, "
+                                           "conversion_manifest = CAST(:placeholder AS JSONB) "
+                                           "WHERE project_id = :p RETURNING change_sequence"),
+                                   {"advanced": advanced,
+                                    "placeholder": json.dumps({"change_sequence": None}, ensure_ascii=False),
+                                    "p": str(project_id)}).scalar_one()
+    manifest["change_sequence"] = int(flip_sequence)
+    # Persist the manifest with its own sequence inside the same transaction.
+    db.execute(sa_text("UPDATE research_projects SET conversion_manifest = CAST(:manifest AS JSONB) "
+                       "WHERE project_id = :p"),
+               {"manifest": json.dumps(manifest, ensure_ascii=False), "p": str(project_id)})
     if row is not None and row.revision != revision_at_read:
         raise HTTPException(409, "v1 revision changed during conversion; aborted")
     db.commit()
-    manifest["change_sequence"] = db.execute(
-        sa_text("SELECT change_sequence FROM research_projects WHERE project_id = :p"),
-        {"p": str(project_id)}).scalar_one()
     return manifest

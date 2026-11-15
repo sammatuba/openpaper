@@ -159,7 +159,7 @@ def upgrade():
         sa.Column("payload_sha256",sa.String(64),nullable=False),
         sa.Column("targets",JSONB(),nullable=False),
         sa.Column("state",sa.String(16),nullable=False,server_default="pending"),
-        sa.Column("approval",JSONB()),sa.Column("receipt",JSONB()),
+        sa.Column("approval",JSONB()),sa.Column("receipt",JSONB()),sa.Column("applied_receipt",JSONB()),
         sa.Column("change_sequence",sa.BigInteger(),nullable=False,server_default="0"),
         sa.Column("idempotency_key",sa.String(100)),
         sa.Column("created_by",sa.UUID(),sa.ForeignKey("users.id",ondelete="SET NULL")),

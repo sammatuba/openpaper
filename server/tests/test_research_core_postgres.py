@@ -1200,6 +1200,14 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             drawn = research_access.advance_change_sequence(db, s.project)
             self.assertEqual(drawn, 4)
             db.commit()
+            # Conversion extends the sequence monotonically (4 + flip = 5) and enables
+            # typed writes for the proposal section below.
+            self._write_v1_row(s.project, {"format": "openpaper/investigation", "version": 1, "case": {},
+                                           "claims": [], "findings": [], "relations": [],
+                                           "manuscript": {"title": "", "sections": []}})
+            with self.Session() as db:
+                s_manifest = research_convert.convert_project(db, s.project, s.owner)
+                self.assertEqual(s_manifest["change_sequence"], 5)
             # Concurrent mutations serialize without lost updates, including concurrent
             # initialization on a fresh project.
             from concurrent.futures import ThreadPoolExecutor
@@ -1293,6 +1301,32 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(root_sequence(), before + 2)
                 self.assertEqual(db.query(ResearchProposal).filter(
                     ResearchProposal.idempotency_key == "seq-rollback").count(), 0)
+                # Fresh-session create→approve→apply→creation-replay (R33): the creation
+                # receipt survives application and replays with its original value.
+                creation_sequence = before + 3  # seq-1 create (+1) and approve (+1) preceded this
+                proposal2, receipt2 = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                                         proposal_payload, {str(claim_id): 1},
+                                                                         idempotency_key="seq-2")
+                self.assertEqual(receipt2["change_sequence"], creation_sequence)
+                research_proposals.approve_proposal(db, s.project, s.owner, proposal2.id)
+                proposal2_id = str(proposal2.id)  # capture inside the owning session
+                research_proposals.apply_proposal(db, s.project, s.owner, proposal2.id)
+            with self.Session() as db:
+                row = db.get(ResearchProposal, UUID(proposal2_id))
+                self.assertEqual(row.state, "applied")
+                self.assertIsNotNone(row.applied_receipt)
+                self.assertEqual(row.receipt["change_sequence"], creation_sequence)  # creation receipt preserved
+                self.assertEqual(row.applied_receipt["applied"][str(claim_id)]["revision"], 2)
+                replay2, replay2_receipt = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                                              proposal_payload, {str(claim_id): 1},
+                                                                              idempotency_key="seq-2")
+                self.assertTrue(replay2_receipt["replayed"])
+                self.assertEqual(replay2_receipt["change_sequence"], creation_sequence)  # original value
+            with self.Session() as db:
+                root_sequence_check = db.execute(raw_text(
+                    "SELECT change_sequence FROM research_projects WHERE project_id = :p"),
+                    {"p": str(s.project)}).scalar_one()
+                self.assertEqual(root_sequence_check, creation_sequence + 2)  # approve (+1) and apply edits (+1)
                 # Metered reservations carry the sequence in their receipt.
                 metered.register_price_table(db, {"bounded_task": {"unit_prices": {"calls": 1.0}, "max_cost": 10.0}},
                                              version=900)
@@ -1313,9 +1347,10 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                                 {"n": "rollback"}, idempotency_key="metered-rollback",
                                 limits={"max_inflight": 5}, commit=False)
                 db.rollback()
-            self.assertEqual(root_sequence(), before + 3)  # reservation + refusal-free replay
-
-    # ---------- migration discipline ----------
+            # Draws after the before-read: seq-1 create+approve, proposal2 create+approve,
+            # the apply edit, and the metered reservation (+6); the two rollbacks discarded
+            # their draws. Also duplicate migration-discipline headers removed below.
+            self.assertEqual(root_sequence(), before + 6)
 
     # ---------- migration discipline ----------
 
