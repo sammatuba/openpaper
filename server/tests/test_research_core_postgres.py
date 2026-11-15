@@ -1234,26 +1234,34 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 # compute the increment (R29).
                 cached = db.get(ResearchProject, fresh_project)
                 self.assertEqual(cached.change_sequence, 3)
-                manifest = research_convert.convert_project(db, fresh_project, s.owner)
+                # R35: the commit-to-return window is exercised — an intervening writer
+                # draws immediately after the conversion's internal commit, before
+                # convert_project returns. The RETURNING capture must keep the
+                # conversion-time sequence (a post-commit read would report the newer one).
+                real_commit = db.commit
+                def commit_then_intervene():
+                    real_commit()
+                    with self.Session() as other:
+                        research_access.advance_change_sequence(other, fresh_project)
+                        other.commit()
+                from unittest.mock import patch
+                with patch.object(db, "commit", side_effect=commit_then_intervene):
+                    manifest = research_convert.convert_project(db, fresh_project, s.owner)
                 self.assertEqual(manifest["counts"]["claims"], 0)
                 # The generation flip is itself a mutation: an empty conversion still
                 # advances the sequence (R32): 3 prior advances + the flip = 4.
                 self.assertEqual(manifest["change_sequence"], 4)
+                # The intervening writer drew 5 during the commit-to-return window: the
+                # root moved, but the manifest keeps the conversion-time value (R35).
                 db.expire_all()
                 root = db.get(ResearchProject, fresh_project)
-                self.assertEqual((root.storage_generation, root.change_sequence), ("v2", 4))
+                self.assertEqual((root.storage_generation, root.change_sequence), ("v2", 5))
                 # The durable manifest is persisted on the fresh-root path and readable
                 # from a fresh session (R30); its sequence is the in-transaction capture.
                 self.assertEqual(root.conversion_manifest["converter_version"], manifest["converter_version"])
                 self.assertEqual(root.conversion_manifest["counts"], manifest["counts"])
                 self.assertEqual(root.conversion_manifest["change_sequence"], manifest["change_sequence"])
-                self.assertEqual(root.change_sequence, manifest["change_sequence"])
-            # R34: the manifest sequence is captured inside the conversion transaction —
-            # an intervening mutation advances the root but neither the returned manifest
-            # nor the persisted manifest value follows it.
-            with self.Session() as db:
-                research_access.advance_change_sequence(db, fresh_project)
-                db.commit()
+                self.assertEqual(root.conversion_manifest["change_sequence"], 4)
             with self.Session() as db:
                 root = db.get(ResearchProject, fresh_project)
                 self.assertGreater(root.change_sequence, manifest["change_sequence"])
