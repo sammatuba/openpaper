@@ -514,6 +514,36 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("source_version_id", finding.payload["anchor"])
             self.assertIn("requires review", finding.payload["anchor"]["notes"])
 
+    async def test_conversion_refreshes_cached_paper_across_replacement(self):
+        # R45: conversion must refresh a cached Paper before hashing. Session A caches the
+        # original bytes and stays open while session B commits a replacement; converting
+        # through A must leave the original capture unresolved, never certify stale bytes.
+        # Removing research_convert's Paper refresh makes A bind a version against the old
+        # bytes, so the unresolved assertions below fail.
+        from app.database.models import Paper
+        s = self.seed()
+        original = "Title\nExact fixture result.\nLimitations."
+        paper = self.seed_paper(s.project, s.owner, "Fixture C", original)
+        document, ids = self._v1_document(paper)  # source_sha256 binds the ORIGINAL bytes
+        self._write_v1_row(s.project, document)
+        db_a = self.Session()
+        try:
+            cached = db_a.get(Paper, paper)
+            self.assertEqual(cached.raw_content, original)
+            with self.engine.begin() as conn:
+                conn.execute(self.text("UPDATE papers SET raw_content = :raw WHERE id = :p"),
+                             {"raw": "Title\nReplacement wording.\nLimitations.", "p": paper})
+            manifest = research_convert.convert_project(db_a, s.project, s.owner)
+            self.assertEqual(manifest["counts"]["source_versions"], 0)
+            self.assertEqual(len(manifest["unresolved_sources"]), 1)
+            self.assertEqual(manifest["unresolved_sources"][0]["reason"], "source_hash_mismatch")
+            self.assertEqual(db_a.query(ResearchSourceVersion).filter_by(project_id=s.project).count(), 0)
+            finding = db_a.get(ResearchEntity, UUID(ids["finding_id"]))
+            self.assertNotIn("source_version_id", finding.payload["anchor"])
+            self.assertIn("requires review", finding.payload["anchor"]["notes"])
+        finally:
+            db_a.close()
+
     async def test_same_transaction_adjudication_and_reference_validation(self):
         # R18: an adjudication recorded in the SAME transaction as the conflicting merge
         # still resolves it (durable shared-sequence ordering), and the contract payload
@@ -667,6 +697,45 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
         finally:
             db_a.close()
 
+    async def test_anchor_requires_current_project_source_access(self):
+        # R45: a new or changed anchor must require the current ProjectPaper association.
+        # Revoking project-source access refuses the anchor even though the global Paper
+        # row and its bytes still exist. Removing _verify_anchor's association check lets
+        # both writes below succeed against the still-present Paper, failing the assertions.
+        from app.database.models import Paper, ResearchSourceVersion
+        from app.services.investigation import text_hash
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture R", "Title\nExact fixture result.\nLimitations.")
+        document, ids = self._v1_document(paper)
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            version = db.query(ResearchSourceVersion).filter_by(project_id=s.project).one()
+            anchor = {"source_version_id": str(version.id), "start_line": 2, "end_line": 2,
+                      "quote": "Exact fixture result.", "quote_sha256": text_hash("Exact fixture result.")}
+            created = research_entities.create_entity(db, s.project, s.owner, "finding",
+                                                      {"label": "Before revocation", "anchor": anchor})
+            self.assertEqual(created["revision"], 1)
+            entity_id = created["entity_id"]
+        with self.engine.begin() as conn:
+            conn.execute(self.text("DELETE FROM project_paper WHERE project_id = :p AND paper_id = :paper"),
+                         {"p": s.project, "paper": paper})
+        with self.Session() as db:
+            version = db.query(ResearchSourceVersion).filter_by(project_id=s.project).one()
+            anchor = {"source_version_id": str(version.id), "start_line": 2, "end_line": 2,
+                      "quote": "Exact fixture result.", "quote_sha256": text_hash("Exact fixture result.")}
+            with self.assertRaises(HTTPException) as new_anchor:
+                research_entities.create_entity(db, s.project, s.owner, "finding",
+                                                {"label": "After revocation", "anchor": anchor})
+            self.assertEqual(new_anchor.exception.status_code, 409)
+            changed = {"source_version_id": str(version.id), "start_line": 1, "end_line": 1,
+                       "quote": "Title", "quote_sha256": text_hash("Title")}
+            with self.assertRaises(HTTPException) as changed_anchor:
+                research_entities.revise_entity(db, s.project, s.owner, UUID(entity_id), 1,
+                                                {"label": "Changed after revocation", "anchor": changed})
+            self.assertEqual(changed_anchor.exception.status_code, 409)
+            self.assertIsNotNone(db.get(Paper, paper))  # only the association is gone, not the Paper
+
     async def test_metered_rejects_malformed_quantities(self):
         s = self.seed()
         with self.Session() as db:
@@ -733,7 +802,7 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             result = research_entities.revise_entity(db, s.project, s.owner, UUID(ids["claim_id"]), 1,
                                                      {"statement": "Edited after conversion."})
             self.assertEqual(result["revision"], 2)
-            history = db.query(ResearchEntityRevision).filter(ResearchEntityRevision.entity_id == UUID(ids["claim_id"])).all()
+            history = db.query(ResearchEntityRevision).filter(ResearchEntityRevision.entity_id == UUID(ids["claim_id"])).order_by(ResearchEntityRevision.revision).all()
             latest = history[-1]
             self.assertEqual(latest.origin, "imported")  # never promoted to human-authored
             self.assertTrue(latest.provenance.get("edited"))

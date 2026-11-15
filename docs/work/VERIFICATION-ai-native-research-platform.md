@@ -17,8 +17,8 @@ Independent review rounds: R1 (`.meos/reviews/20261113T003601Z.md`, rework — 4
 
 | Check | Command (root) | Result |
 | --- | --- | --- |
-| Required isolated PG lane **with new suites** | `server/.venv/bin/python scripts/ci/run_isolated_postgres.py --run-existing` (cluster verified: owner/mode 700, `SHOW data_directory`, `SHOW listen_addresses` empty) | **Ran 148 tests, 0 skips, OK** (was 100 pre-change; +48 research-core incl. all review regressions; latest battery executed 2026-11-15) |
-| Full server suite | runner env + `unittest discover` from `/tmp` | **532 tests, OK, 0 skips** |
+| Required isolated PG lane **with new suites** | `server/.venv/bin/python scripts/ci/run_isolated_postgres.py --run-existing` (cluster verified: owner/mode 700, `SHOW data_directory`, `SHOW listen_addresses` empty) | **Ran 150 tests, 0 skips, OK** (was 100 pre-change; +50 research-core incl. all review regressions; latest battery executed 2026-11-15) |
+| Full server suite | runner env + `unittest discover` from `/tmp` | **534 tests, OK, 0 skips** |
 | Jobs | `cd jobs && TASK_BACKEND=cloudtasks uv run python -m unittest discover -s tests` | 21 tests OK |
 | Worker | `node --test deploy/cloudflare/worker.test.mjs` | 2 pass, 0 fail |
 | Research tools | `python3 -m unittest discover -s scripts/research -p 'test_*.py'` | 36 tests OK |
@@ -37,7 +37,7 @@ Independent review rounds: R1 (`.meos/reviews/20261113T003601Z.md`, rework — 4
 | C17 | pass | Exact §17.1 counts reproduced twice: pure arithmetic over fixture (10 unit tests) and end-to-end service journey on real PostgreSQL (occurrence-map events, dual review, adjudication, v2 amendment reopening only D; v1 snapshot unchanged; merge with conflicting decisions requires adjudication) |
 | C26/C27 | pass (new code) | Proposal: replay returns original receipt; key reuse with different payload → 409; forged approval binding → 409; expired → 410; stale target → state `stale`; external-AI revision keeps `external_ai` origin + client identity + derivation; impersonation guards (external with native ids → 422; native without durable request → 422) |
 | C29 | pass (new code) | No price table → every metered path 409 `operation_not_priceable`; replay semantics (same/different payload); cap → 429; in-flight cap → 429; uncertain completion retains reservation and replays as uncertain (no silent re-dispatch); estimate vs settled stored separately |
-| C35 | pass | 148 required zero-skip; full server 532 OK; jobs/worker/research/runner suites OK; skips: none anywhere this session |
+| C35 | pass | 150 required zero-skip; full server 534 OK; jobs/worker/research/runner suites OK; skips: none anywhere this session |
 
 Pending by design (not failures): C02–C04, C06, C09, C11–C16, C18–C25, C28, C30–C34, C36 attach to P03–P12. The pre-existing open gates (A25 authenticated production acceptance, live-AI acceptance) remain open and untouched. The first-value usability exercise (C03) needs an unfamiliar human user; the prototype exists for it.
 
@@ -47,3 +47,4 @@ Pending by design (not failures): C02–C04, C06, C09, C11–C16, C18–C25, C28
 - SQLAlchemy note: without `relationship()`, unit-of-work insert order is alphabetical, so services flush parent rows before children explicitly; tests commit parents before children.
 - Review identity rule encoded: included full-text decision requires a retrieved selected version; "unclear" is a real state (fixture E).
 - No new API routes yet — P03 wires the shell; services are exercised directly by the required lane.
+- R45 (`.meos/reviews/20261115T153038Z.md`, rework — 2 important) fixed: a new/changed anchor now requires the current `ProjectPaper` project-source association, so a revoked association can no longer certify a source even though the global `Paper` row and bytes persist (`test_anchor_requires_current_project_source_access`, mutation-verified). The R44 conversion `Paper` refresh now has its genuine retained-session regression (`test_conversion_refreshes_cached_paper_across_replacement`: cached original bytes across another session's committed replacement, convert through the cached session, the capture stays unresolved) — mutation-verified to fail when the refresh is removed, reconciling the earlier coverage claim. The imported-provenance test's revision history is ordered by revision so suite row-order cannot flip `history[-1]` (non-determinism exposed by the added tests). Totals reconciled to the executed 150/534 evidence.

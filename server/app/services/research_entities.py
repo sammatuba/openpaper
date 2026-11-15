@@ -71,6 +71,12 @@ def _verify_anchor(db: Session, project_id, payload, latest):
     if unchanged: return
     paper = db.query(Paper).filter(Paper.id == version.paper_id).first() if version.paper_id else None
     if paper is not None: db.refresh(paper)  # committed raw_content, even when cached (R43)
+    # A new/changed anchor requires current project-source access: a revoked ProjectPaper
+    # association cannot certify a source even though the global Paper row still exists (R45).
+    associated = paper is not None and db.query(ProjectPaper).filter(
+        ProjectPaper.project_id == project_id, ProjectPaper.paper_id == paper.id).first() is not None
+    if not associated:
+        raise HTTPException(409, "Source is no longer available to this project; anchor requires review")
     current = text_hash(paper.raw_content) if paper and paper.raw_content else None
     if current != version.text_sha256:
         raise HTTPException(409, "Source text is unavailable or changed; anchor requires review")
