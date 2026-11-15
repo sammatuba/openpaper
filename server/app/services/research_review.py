@@ -69,7 +69,10 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
     if not candidate.retained: raise HTTPException(422, "Cannot map occurrences onto a non-retained candidate")
     mapped = [str(retained_occurrence_id), *[str(i) for i in removed_occurrence_ids]]
     if len(set(mapped)) != len(mapped): raise HTTPException(422, "Mapping sets must be disjoint")
-    rows = db.query(ReviewOccurrence).filter(ReviewOccurrence.id.in_(mapped), ReviewOccurrence.project_id == project_id).all()
+    # Lock the mapped occurrence rows in id order before reading ownership: competing claims
+    # on the same occurrence serialize, so the loser re-reads the winner's committed mapping
+    # instead of both inserting (R47). Ascending id avoids deadlock between overlapping sets.
+    rows = db.query(ReviewOccurrence).filter(ReviewOccurrence.id.in_(mapped), ReviewOccurrence.project_id == project_id).order_by(ReviewOccurrence.id).with_for_update().all()
     if {str(r.id) for r in rows} != set(mapped): raise HTTPException(422, "Occurrences must belong to this project")
     # A mapping cannot place an occurrence or candidate into an earlier snapshot than the
     # acquisition set that introduced it (R13/R14).
@@ -77,31 +80,22 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
     if premature: raise HTTPException(422, "Mapping protocol version predates the occurrence acquisition")
     if candidate.protocol_version > protocol_version:
         raise HTTPException(422, "Mapping protocol version predates the candidate acquisition")
-    # An occurrence belongs to exactly one candidate identity. Re-claiming an occurrence that
-    # another candidate already retains or removes would let one retained occurrence represent
-    # two active candidates — duplicate screening and counting (R46). Ownership resolves through
-    # the current merge chain (a merged source's occurrences already belong to its representative),
-    # consistent with count derivation; consolidating two live candidates is merge_reports, not a remap.
-    merges, _conflicts, _incoming = _current_merges(db, project_id, protocol_version)
-    report_of = {str(c.id): str(c.report_id) for c in
-                 db.query(ReviewCandidate).filter(ReviewCandidate.project_id == project_id).all()}
-
-    def identity(candidate_id):
-        report = report_of.get(str(candidate_id))
-        return _resolve_representative(merges, report) if report else str(candidate_id)
-
+    # An occurrence belongs to exactly one candidate. Ownership is global — every recorded
+    # mapping at any protocol version — and keyed by raw candidate id, not the merge-resolved
+    # representative: a backdated mapping cannot slip past a later claim, and a merge never
+    # transfers ownership, so splitting a merge can never restore two candidates sharing one
+    # occurrence (R47). Consolidating two live candidates is merge_reports, not a remap.
     owner = {}
     prior = db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project_id,
                                                 ReviewMappingEvent.kind == "occurrence_map").all()
     for event in sorted(prior, key=_event_order):
         payload = event.payload or {}
-        if int(payload.get("protocol_version", 1)) > protocol_version: continue
-        event_identity = identity(payload.get("candidate"))
+        event_candidate = str(payload.get("candidate"))
         for occurrence_id in [payload.get("retained"), *payload.get("removed", [])]:
-            if occurrence_id: owner[str(occurrence_id)] = event_identity
-    target_identity = identity(candidate_id)
+            if occurrence_id: owner[str(occurrence_id)] = event_candidate
+    target = str(candidate_id)
     for occurrence_id in mapped:
-        if occurrence_id in owner and owner[occurrence_id] != target_identity:
+        if occurrence_id in owner and owner[occurrence_id] != target:
             raise HTTPException(409, "Occurrence already belongs to another candidate; merge reports instead of remapping")
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="occurrence_map",
                               payload={"candidate": str(candidate_id), "retained": str(retained_occurrence_id),

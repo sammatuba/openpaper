@@ -264,12 +264,133 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             remapped = research_review.flow_counts(db, s.project, s.owner, 1)
             self.assertEqual((remapped["identified_occurrences"], remapped["duplicate_removals"], remapped["retained_occurrences"]), (3, 1, 2))
             self.assertEqual(remapped["identified_occurrences"], remapped["duplicate_removals"] + remapped["retained_occurrences"])
-            # Ownership resolves through the merge chain: after A merges into B, A's occurrence
-            # already belongs to B's identity, so B may claim it (the atomic-identity-merge path).
+            # A merge folds A's occurrences into B for counting, but ownership stays with the
+            # raw candidate: B cannot re-claim A's representative O1 via a remap. Allowing it
+            # would let a later split restore two candidates sharing O1 (R47). Consolidation
+            # is the merge itself; the refused remap records no event and conservation holds.
             research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: same report", protocol_version=1)
-            research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_1, [])
+            with self.assertRaises(HTTPException) as post_merge:
+                research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_1, [])
+            self.assertEqual(post_merge.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 3)
             merged = research_review.flow_counts(db, s.project, s.owner, 1)
             self.assertEqual(merged["identified_occurrences"], merged["duplicate_removals"] + merged["retained_occurrences"])
+
+    async def test_backdated_mapping_cannot_bypass_later_ownership(self):
+        # R47 hole 1: ownership is global across every protocol version. A→O1 recorded at v2
+        # must block B→O1 backdated to v1; a per-snapshot ownership scan misses the later claim
+        # and lets two screened candidates share one retained occurrence. Restoring the version
+        # filter lets the backdated remap commit (the 409 assertion and the v2 counts both fail).
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            research_review.create_protocol(db, s.project, s.owner, version=2, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)])
+            db.commit()
+            occurrence_1, occurrence_2 = uuid4(), uuid4()
+            db.add_all([ReviewOccurrence(id=occurrence_1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
+                        ReviewOccurrence(id=occurrence_2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2")])
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, occurrence_1, [], protocol_version=2)
+            research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_2, [], protocol_version=1)
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 2, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "included")
+            # B backdates a claim on A's representative O1 (recorded at v2) into the v1 snapshot.
+            with self.assertRaises(HTTPException) as backdated:
+                research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_1, [occurrence_2], protocol_version=1)
+            self.assertEqual(backdated.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 2)
+            v2 = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((v2["retained_candidates"], v2["retained_occurrences"], v2["screened"]), (2, 2, 2))
+            self.assertEqual(v2["identified_occurrences"], v2["duplicate_removals"] + v2["retained_occurrences"])
+
+    async def test_split_cannot_restore_shared_occurrence_ownership(self):
+        # R47 hole 2: ownership is keyed by raw candidate id, not the merge-resolved
+        # representative. After A→O1, B→O2 and merge A into B, the remap B→O1 must be refused;
+        # under merge-aware ownership it succeeds and a later split leaves A and B both retaining
+        # O1. Restoring merge-aware identity lets the remap commit (409 assertion and counts fail).
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)])
+            db.commit()
+            occurrence_1, occurrence_2 = uuid4(), uuid4()
+            db.add_all([ReviewOccurrence(id=occurrence_1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
+                        ReviewOccurrence(id=occurrence_2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2")])
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, occurrence_1, [])
+            research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_2, [])
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "included")
+            research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: same report", protocol_version=1)
+            # While A is merged into B, B still cannot claim A's raw representative O1.
+            with self.assertRaises(HTTPException) as post_merge:
+                research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_1, [occurrence_2])
+            self.assertEqual(post_merge.exception.status_code, 409)
+            # Splitting A back out restores two independent candidates, each with its own occurrence.
+            research_review.split_report(db, s.project, s.owner, report_a.id, "Fixture: identity review failed", protocol_version=1)
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["retained_candidates"], counts["retained_occurrences"], counts["screened"]), (2, 2, 2))
+            self.assertEqual(counts["identified_occurrences"], counts["duplicate_removals"] + counts["retained_occurrences"])
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 2)
+
+    async def test_concurrent_occurrence_claims_single_winner(self):
+        # R47 hole 3: ownership validation and insertion must serialize. The winner claims a
+        # fresh occurrence and holds its transaction (and the occurrence-row lock) open; the
+        # loser blocks on that lock, then re-reads the committed claim and is refused (409).
+        # Removing with_for_update lets both candidates retain the occurrence (the loser returns
+        # 200 and two events commit), so the outcome assertions fail.
+        import time
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)])
+            db.commit()
+            occurrence = uuid4()
+            db.add(ReviewOccurrence(id=occurrence, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"))
+            db.commit()
+        winner = self.Session()
+        try:
+            research_review.map_occurrences(winner, s.project, s.owner, candidate_a, occurrence, [], commit=False)
+            def loser_claim():
+                with self.Session() as db:
+                    try:
+                        research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence, [])
+                        return 200
+                    except HTTPException as error:
+                        return error.status_code
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(loser_claim)
+                time.sleep(0.5)
+                self.assertFalse(future.done())  # blocked on the occurrence-row lock the winner holds
+                winner.commit()  # release the lock with A's claim committed
+                self.assertEqual(future.result(timeout=10), 409)
+        finally:
+            winner.close()
+        with self.Session() as db:
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 1)
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual(counts["retained_occurrences"], 1)
+            self.assertEqual(counts["identified_occurrences"], counts["duplicate_removals"] + counts["retained_occurrences"])
 
     async def test_merge_with_conflicting_decisions_requires_adjudication(self):
         s = self.seed()
