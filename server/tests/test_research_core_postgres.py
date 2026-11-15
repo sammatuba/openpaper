@@ -1243,9 +1243,21 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 root = db.get(ResearchProject, fresh_project)
                 self.assertEqual((root.storage_generation, root.change_sequence), ("v2", 4))
                 # The durable manifest is persisted on the fresh-root path and readable
-                # from a fresh session (R30).
+                # from a fresh session (R30); its sequence is the in-transaction capture.
                 self.assertEqual(root.conversion_manifest["converter_version"], manifest["converter_version"])
                 self.assertEqual(root.conversion_manifest["counts"], manifest["counts"])
+                self.assertEqual(root.conversion_manifest["change_sequence"], manifest["change_sequence"])
+                self.assertEqual(root.change_sequence, manifest["change_sequence"])
+            # R34: the manifest sequence is captured inside the conversion transaction —
+            # an intervening mutation advances the root but neither the returned manifest
+            # nor the persisted manifest value follows it.
+            with self.Session() as db:
+                research_access.advance_change_sequence(db, fresh_project)
+                db.commit()
+            with self.Session() as db:
+                root = db.get(ResearchProject, fresh_project)
+                self.assertGreater(root.change_sequence, manifest["change_sequence"])
+                self.assertEqual(root.conversion_manifest["change_sequence"], manifest["change_sequence"])
             # Link receipts carry the committed sequence.
             with self.Session() as db:
                 link_report = ReviewReport(id=uuid4(), project_id=fresh_project)
@@ -1254,9 +1266,9 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 receipt = research_review.link_study(db, fresh_project, s.owner, link_report.id,
                                                      link_study_row.id, "Fixture linkage")
             with self.Session() as db:
-                self.assertEqual(receipt["change_sequence"], 5)  # after the conversion flip
+                self.assertEqual(receipt["change_sequence"], 6)  # conversion flip + intervening advance
                 root = db.get(ResearchProject, fresh_project)
-                self.assertEqual(root.change_sequence, 5)
+                self.assertEqual(root.change_sequence, 6)
             # Proposal and metered mutations advance the sequence and persist receipts
             # (R31/R32): creation, approval, replay recovery, and rollback. Root reads use
             # raw SQL: the identity map caches stale values after raw-SQL advances.
