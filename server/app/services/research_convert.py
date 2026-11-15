@@ -52,6 +52,7 @@ def convert_project(db: Session, project_id, actor_id):
     # otherwise conversion would make empty v2 authoritative over the saved data (R25).
     research_access.authorize(db, project_id, actor_id, write=True, lock=True)
     root = db.query(ResearchProject).filter(ResearchProject.project_id == project_id).with_for_update().first()
+    if root is not None: db.refresh(root)  # committed generation, even when cached (R38)
     if root and root.storage_generation == "v2":
         raise HTTPException(409, "Project research storage is already converted")
     row = db.query(ProjectInvestigation).filter(ProjectInvestigation.project_id == project_id).with_for_update().first()

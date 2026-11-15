@@ -939,6 +939,59 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
         finally:
             db_a.close()
 
+    async def test_cached_role_demotion_and_cached_investigation_across_save(self):
+        # R38: cached authorization and generation state must not bypass demotion or
+        # cutover — both regressions retain cached rows across intervening commits.
+        from unittest.mock import patch
+        from fastapi import HTTPException
+        s = self.seed()
+        editor = uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": editor, "e": str(editor) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": editor})
+        db_a = self.Session()
+        try:
+            # Session A caches the editor role.
+            research_access.authorize(db_a, s.project, editor, write=True)
+            # Session B demotes the editor to viewer.
+            with self.engine.begin() as conn:
+                conn.execute(self.text("UPDATE project_role SET role = 'viewer' WHERE project_id = :p AND user_id = :u"),
+                             {"p": s.project, "u": editor})
+            # Session A: the demotion is observed (403), never bypassed.
+            with self.assertRaises(HTTPException) as demoted:
+                research_access.authorize(db_a, s.project, editor, write=True)
+            self.assertEqual(demoted.exception.status_code, 403)
+        finally:
+            db_a.close()
+        # Cached investigation across an intervening save: conversion must convert the
+        # SAVED document, not a stale cached one.
+        paper = self.seed_paper(s.project, s.owner, "Fixture G", "Title\nOriginal wording.\nLimitations.")
+        document_a, ids = self._v1_document(paper, quote="Original wording.")
+        db_b = self.Session()
+        try:
+            db_b.add(ProjectInvestigation(project_id=s.project, schema_version=1, revision=1,
+                                          document=document_a))
+            db_b.commit()  # first save: revision 1 — session B caches it
+            row_b = db_b.query(ProjectInvestigation).filter(ProjectInvestigation.project_id == s.project).first()
+            self.assertEqual(row_b.revision, 1)
+            # Session C (a third session) saves revision 2 while B retains its cache.
+            document_c, _ = self._v1_document(paper, quote="Revised wording.")
+            document_c["claims"] = [{"id": str(uuid4()), "statement": "Revised claim.", "reasoning": "", "caveats": ""}]
+            document_c["findings"] = []
+            document_c["relations"] = []
+            with self.engine.begin() as conn:
+                conn.execute(self.text("UPDATE project_investigations SET revision = 2, document = :doc WHERE project_id = :p"),
+                             {"doc": json.dumps(document_c), "p": s.project})
+            # Session B converts with its cached row: the refresh must observe revision 2
+            # (without it, the stale revision-1 document would be converted).
+            manifest = research_convert.convert_project(db_b, s.project, s.owner)
+            self.assertEqual(manifest["v1_revision"], 2)
+            self.assertEqual(manifest["counts"]["claims"], 1)
+            entity = db_b.get(ResearchEntity, UUID(document_c["claims"][0]["id"]))
+            self.assertEqual(entity.payload["statement"], "Revised claim.")
+        finally:
+            db_b.close()
+
     # ---------- C26/C27: proposals ----------
 
     async def test_proposal_apply_replay_and_forgery(self):

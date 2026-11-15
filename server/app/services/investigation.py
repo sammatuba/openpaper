@@ -124,6 +124,7 @@ def save(db:Session, project_id, actor_id, request, if_match):
         # One authoritative write path: after research-core conversion the v1 document is
         # retained read-only history and legacy writes are refused (strategy 10.6).
         root=db.query(ResearchProject).filter(ResearchProject.project_id==project_id).with_for_update().first()
+        if root is not None: db.refresh(root)  # committed generation, even when cached (R38)
         if root and root.storage_generation=='v2':
             raise HTTPException(409,'Research storage is converted; legacy investigation writes are refused')
         row,old=read_document(db,project_id)
