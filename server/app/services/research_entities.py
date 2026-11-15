@@ -217,6 +217,7 @@ def load_entity(db: Session, project_id, actor_id, entity_id):
     research_access.authorize(db, project_id, actor_id)
     entity = db.query(ResearchEntity).filter(ResearchEntity.id == entity_id, ResearchEntity.project_id == project_id).first()
     if not entity: raise HTTPException(404, "Research entity not found")
+    db.refresh(entity)  # committed head, even when this session cached an older revision (R46)
     history = db.query(ResearchEntityRevision).filter(ResearchEntityRevision.entity_id == entity.id).order_by(ResearchEntityRevision.revision).all()
 
     def redact(payload):

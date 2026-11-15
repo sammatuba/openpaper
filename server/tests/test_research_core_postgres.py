@@ -220,6 +220,57 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 research_review.flow_counts(db, outsider, outsider, 1)
             self.assertEqual(hidden.exception.status_code, 404)
 
+    async def test_cross_candidate_occurrence_remap_is_refused(self):
+        # R46: one retained occurrence must not represent two active candidates. A remap that
+        # claims another candidate's representative would let both candidates screen/count the
+        # same occurrence (retained_occurrences < retained_candidates). map_occurrences refuses
+        # it; consolidating two live candidates is an identity merge. Removing the ownership
+        # guard lets the cross-candidate remap commit and breaks conservation.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)])
+            db.commit()
+            occurrence_1, occurrence_2 = uuid4(), uuid4()
+            db.add_all([ReviewOccurrence(id=occurrence_1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
+                        ReviewOccurrence(id=occurrence_2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2")])
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, occurrence_1, [])
+            research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_2, [])
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "included")
+            before = research_review.flow_counts(db, s.project, s.owner, 1)
+            # Two live candidates, each with its own distinct retained representative.
+            self.assertEqual((before["retained_candidates"], before["retained_occurrences"], before["screened"]), (2, 2, 2))
+            # B tries to retain A's representative O1 and remove its own O2: cross-candidate claim.
+            with self.assertRaises(HTTPException) as conflict:
+                research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_1, [occurrence_2])
+            self.assertEqual(conflict.exception.status_code, 409)
+            # The refused remap recorded no event; counts and conservation are unchanged.
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 2)
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), before)
+            # A within-candidate remap (B swaps its own representative for a fresh occurrence)
+            # is still allowed — the guard rejects cross-candidate claims, not remapping itself.
+            occurrence_3 = uuid4()
+            db.add(ReviewOccurrence(id=occurrence_3, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-3"))
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_3, [occurrence_2])
+            remapped = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((remapped["identified_occurrences"], remapped["duplicate_removals"], remapped["retained_occurrences"]), (3, 1, 2))
+            self.assertEqual(remapped["identified_occurrences"], remapped["duplicate_removals"] + remapped["retained_occurrences"])
+            # Ownership resolves through the merge chain: after A merges into B, A's occurrence
+            # already belongs to B's identity, so B may claim it (the atomic-identity-merge path).
+            research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: same report", protocol_version=1)
+            research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_1, [])
+            merged = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual(merged["identified_occurrences"], merged["duplicate_removals"] + merged["retained_occurrences"])
+
     async def test_merge_with_conflicting_decisions_requires_adjudication(self):
         s = self.seed()
         with self.Session() as db:
@@ -788,6 +839,34 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             loaded = research_entities.load_entity(db_a, s.project, s.owner, UUID(ids["finding_id"]))
             self.assertNotIn("quote", loaded["entity"]["payload"]["anchor"])
             self.assertNotIn("Exact fixture result.", json.dumps(loaded))
+        finally:
+            db_a.close()
+
+    async def test_load_entity_refreshes_cached_head(self):
+        # R46: load_entity must refresh a cached entity head. Session A retains a strong
+        # reference to the revision-1 head (the identity map is weak, so without a retained
+        # reference the row would be re-fetched) while another session commits revision 2;
+        # reading through A must return the committed head consistent with history [1, 2],
+        # not a stale revision-1 head alongside newer history. Removing the head refresh
+        # returns revision 1 with history [1, 2].
+        s = self.seed()
+        document, ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        claim_id = UUID(ids["claim_id"])
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+        db_a = self.Session()
+        try:
+            cached_head = db_a.get(ResearchEntity, claim_id)  # strong reference keeps revision 1 cached
+            self.assertEqual(cached_head.revision, 1)
+            with self.Session() as db:
+                research_entities.revise_entity(db, s.project, s.owner, claim_id, 1,
+                                                {"statement": "Edited in another session."})
+            self.assertEqual(cached_head.revision, 1)  # still the stale cached head in session A
+            loaded = research_entities.load_entity(db_a, s.project, s.owner, claim_id)
+            self.assertEqual(loaded["entity"]["revision"], 2)
+            self.assertEqual(loaded["entity"]["payload"]["statement"], "Edited in another session.")
+            self.assertEqual([h["revision"] for h in loaded["history"]], [1, 2])
         finally:
             db_a.close()
 

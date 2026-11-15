@@ -77,6 +77,32 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
     if premature: raise HTTPException(422, "Mapping protocol version predates the occurrence acquisition")
     if candidate.protocol_version > protocol_version:
         raise HTTPException(422, "Mapping protocol version predates the candidate acquisition")
+    # An occurrence belongs to exactly one candidate identity. Re-claiming an occurrence that
+    # another candidate already retains or removes would let one retained occurrence represent
+    # two active candidates — duplicate screening and counting (R46). Ownership resolves through
+    # the current merge chain (a merged source's occurrences already belong to its representative),
+    # consistent with count derivation; consolidating two live candidates is merge_reports, not a remap.
+    merges, _conflicts, _incoming = _current_merges(db, project_id, protocol_version)
+    report_of = {str(c.id): str(c.report_id) for c in
+                 db.query(ReviewCandidate).filter(ReviewCandidate.project_id == project_id).all()}
+
+    def identity(candidate_id):
+        report = report_of.get(str(candidate_id))
+        return _resolve_representative(merges, report) if report else str(candidate_id)
+
+    owner = {}
+    prior = db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project_id,
+                                                ReviewMappingEvent.kind == "occurrence_map").all()
+    for event in sorted(prior, key=_event_order):
+        payload = event.payload or {}
+        if int(payload.get("protocol_version", 1)) > protocol_version: continue
+        event_identity = identity(payload.get("candidate"))
+        for occurrence_id in [payload.get("retained"), *payload.get("removed", [])]:
+            if occurrence_id: owner[str(occurrence_id)] = event_identity
+    target_identity = identity(candidate_id)
+    for occurrence_id in mapped:
+        if occurrence_id in owner and owner[occurrence_id] != target_identity:
+            raise HTTPException(409, "Occurrence already belongs to another candidate; merge reports instead of remapping")
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="occurrence_map",
                               payload={"candidate": str(candidate_id), "retained": str(retained_occurrence_id),
                                        "removed": [str(i) for i in removed_occurrence_ids],
