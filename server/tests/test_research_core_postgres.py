@@ -634,6 +634,39 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(manifest["counts"]["claims"], 1)
         conn1.close()
 
+    async def test_anchor_verification_refreshes_cached_paper(self):
+        # R44: _verify_anchor refreshes the cached Paper — a retained session cannot
+        # anchor a new quotation against old bytes after a committed replacement.
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture I", "Title\nExact fixture result.\nLimitations.")
+        document, ids = self._v1_document(paper)
+        self._write_v1_row(s.project, document)
+        db_a = self.Session()
+        try:
+            research_convert.convert_project(db_a, s.project, s.owner)
+            # Session A caches the paper (old bytes) and stays open.
+            cached_paper = db_a.get(__import__("app.database.models", fromlist=["Paper"]).Paper, paper)
+            self.assertIn("Exact fixture result.", cached_paper.raw_content)
+            with self.engine.begin() as conn:
+                conn.execute(self.text("UPDATE papers SET raw_content = :raw WHERE id = :p"),
+                             {"raw": "Title\nReplacement wording.\nLimitations.", "p": paper})
+            # Session A anchors a NEW quotation against the replacement source through
+            # its cached paper: the refresh must see the new bytes and reject the old
+            # quotation with 409 (not accept it against stale bytes).
+            from app.services.investigation import text_hash
+            with self.assertRaises(HTTPException) as stale_bytes:
+                research_entities.create_entity(db_a, s.project, s.owner, "finding",
+                                                {"label": "Anchored after replacement",
+                                                 "anchor": {"source_version_id": db_a.query(
+                                                     __import__("app.database.models", fromlist=["ResearchSourceVersion"]).ResearchSourceVersion).filter_by(
+                                                     project_id=s.project).first().id,
+                                                     "start_line": 2, "end_line": 2,
+                                                     "quote": "Exact fixture result.",
+                                                     "quote_sha256": text_hash("Exact fixture result.")}})
+            self.assertEqual(stale_bytes.exception.status_code, 409)
+        finally:
+            db_a.close()
+
     async def test_metered_rejects_malformed_quantities(self):
         s = self.seed()
         with self.Session() as db:
@@ -1092,10 +1125,17 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             db_save.commit()
             research_access.advance_change_sequence(db_convert, s.project)
             db_convert.commit()
-            self.assertEqual(db_save.get(ResearchProject, s.project).storage_generation, "v1")
-            self.assertEqual(db_convert.get(ResearchProject, s.project).storage_generation, "v1")
+            # Strong references retained across the flip: both sessions hold the cached
+            # v1 view while session db converts (R44).
+            root_save = db_save.get(ResearchProject, s.project)
+            root_convert = db_convert.get(ResearchProject, s.project)
+            self.assertEqual((root_save.storage_generation, root_convert.storage_generation), ("v1", "v1"))
             with self.Session() as db_b:
                 research_convert.convert_project(db_b, s.project, s.owner)
+            # The cached views still show v1 (stale), while a fresh read shows v2.
+            self.assertEqual((root_save.storage_generation, root_convert.storage_generation), ("v1", "v1"))
+            with self.Session() as db:
+                self.assertEqual(db.get(ResearchProject, s.project).storage_generation, "v2")
             with self.assertRaises(HTTPException) as cutover:
                 __import__("app.services.investigation", fromlist=["save"]).save(
                     db_save, s.project, s.owner, SaveInvestigation(document=InvestigationDocument()),

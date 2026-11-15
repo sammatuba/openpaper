@@ -72,6 +72,7 @@ def convert_project(db: Session, project_id, actor_id):
     if anchored_papers:
         from .investigation import text_hash
         papers = {str(p.id): p for p in db.query(Paper).filter(Paper.id.in_([UUID(pid) for pid in anchored_papers])).all()}
+        for paper in papers.values(): db.refresh(paper)  # committed bytes, even when cached (R44)
         for finding in findings:
             source = finding["source"]
             if source["kind"] != "anchored": continue
