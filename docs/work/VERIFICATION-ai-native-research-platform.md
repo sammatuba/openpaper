@@ -17,8 +17,8 @@ Independent review rounds: R1 (`.meos/reviews/20261113T003601Z.md`, rework — 4
 
 | Check | Command (root) | Result |
 | --- | --- | --- |
-| Required isolated PG lane **with new suites** | `server/.venv/bin/python scripts/ci/run_isolated_postgres.py --run-existing` (cluster verified: owner/mode 700, `SHOW data_directory`, `SHOW listen_addresses` empty) | **Ran 144 tests, 0 skips, OK** (was 100 pre-change; +44 research-core incl. all review regressions) |
-| Full server suite | runner env + `unittest discover` from `/tmp` | **528 tests, OK, 0 skips** |
+| Required isolated PG lane **with new suites** | `server/.venv/bin/python scripts/ci/run_isolated_postgres.py --run-existing` (cluster verified: owner/mode 700, `SHOW data_directory`, `SHOW listen_addresses` empty) | **Ran 147 tests, 0 skips, OK** (was 100 pre-change; +47 research-core incl. all review regressions) |
+| Full server suite | runner env + `unittest discover` from `/tmp` | **531 tests, OK, 0 skips** |
 | Jobs | `cd jobs && TASK_BACKEND=cloudtasks uv run python -m unittest discover -s tests` | 21 tests OK |
 | Worker | `node --test deploy/cloudflare/worker.test.mjs` | 2 pass, 0 fail |
 | Research tools | `python3 -m unittest discover -s scripts/research -p 'test_*.py'` | 36 tests OK |
@@ -37,7 +37,7 @@ Independent review rounds: R1 (`.meos/reviews/20261113T003601Z.md`, rework — 4
 | C17 | pass | Exact §17.1 counts reproduced twice: pure arithmetic over fixture (10 unit tests) and end-to-end service journey on real PostgreSQL (occurrence-map events, dual review, adjudication, v2 amendment reopening only D; v1 snapshot unchanged; merge with conflicting decisions requires adjudication) |
 | C26/C27 | pass (new code) | Proposal: replay returns original receipt; key reuse with different payload → 409; forged approval binding → 409; expired → 410; stale target → state `stale`; external-AI revision keeps `external_ai` origin + client identity + derivation; impersonation guards (external with native ids → 422; native without durable request → 422) |
 | C29 | pass (new code) | No price table → every metered path 409 `operation_not_priceable`; replay semantics (same/different payload); cap → 429; in-flight cap → 429; uncertain completion retains reservation and replays as uncertain (no silent re-dispatch); estimate vs settled stored separately |
-| C35 | pass | 144 required zero-skip; full server 528 OK; jobs/worker/research/runner suites OK; skips: none anywhere this session |
+| C35 | pass | 147 required zero-skip; full server 531 OK; jobs/worker/research/runner suites OK; skips: none anywhere this session |
 
 Pending by design (not failures): C02–C04, C06, C09, C11–C16, C18–C25, C28, C30–C34, C36 attach to P03–P12. The pre-existing open gates (A25 authenticated production acceptance, live-AI acceptance) remain open and untouched. The first-value usability exercise (C03) needs an unfamiliar human user; the prototype exists for it.
 

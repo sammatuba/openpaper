@@ -1079,30 +1079,33 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(demoted.exception.status_code, 403)
         finally:
             db_a.close()
-        # (3) Cached v1 root across a conversion: session A draws the first sequence
-        # (creating the v1 root) and caches it; session B converts; session A's legacy
-        # save and repeat conversion both observe the v2 cutover (409s).
+        # (3) Cached v1 root across a conversion (R43): TWO sessions each draw the v1
+        # root and retain it across the flip; the legacy-save rejection and the
+        # repeat-conversion rejection are exercised through separate cached sessions, so
+        # neither refresh borrows freshness from the other.
         self._write_v1_row(s.project, {"format": "openpaper/investigation", "version": 1, "case": {},
                                        "claims": [], "findings": [], "relations": [],
                                        "manuscript": {"title": "", "sections": []}})
-        db_a = self.Session()
+        db_save, db_convert = self.Session(), self.Session()
         try:
-            research_access.advance_change_sequence(db_a, s.project)
-            db_a.commit()
-            cached_root = db_a.get(ResearchProject, s.project)
-            self.assertEqual(cached_root.storage_generation, "v1")  # a v1 root exists (merge advance) and is cached
+            research_access.advance_change_sequence(db_save, s.project)
+            db_save.commit()
+            research_access.advance_change_sequence(db_convert, s.project)
+            db_convert.commit()
+            self.assertEqual(db_save.get(ResearchProject, s.project).storage_generation, "v1")
+            self.assertEqual(db_convert.get(ResearchProject, s.project).storage_generation, "v1")
             with self.Session() as db_b:
                 research_convert.convert_project(db_b, s.project, s.owner)
             with self.assertRaises(HTTPException) as cutover:
                 __import__("app.services.investigation", fromlist=["save"]).save(
-                    db_a, s.project, s.owner, SaveInvestigation(document=InvestigationDocument()),
+                    db_save, s.project, s.owner, SaveInvestigation(document=InvestigationDocument()),
                     f'"investigation:{s.project}:1"')
             self.assertEqual(cutover.exception.status_code, 409)
             with self.assertRaises(HTTPException) as repeat:
-                research_convert.convert_project(db_a, s.project, s.owner)
+                research_convert.convert_project(db_convert, s.project, s.owner)
             self.assertEqual(repeat.exception.status_code, 409)
         finally:
-            db_a.close()
+            db_save.close(); db_convert.close()
         with self.Session() as db:
             root = db.get(ResearchProject, s.project)
             self.assertEqual(root.storage_generation, "v2")

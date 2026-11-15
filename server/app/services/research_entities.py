@@ -70,6 +70,7 @@ def _verify_anchor(db: Session, project_id, payload, latest):
                     for key in ("source_version_id", "start_line", "end_line", "quote", "quote_sha256"))
     if unchanged: return
     paper = db.query(Paper).filter(Paper.id == version.paper_id).first() if version.paper_id else None
+    if paper is not None: db.refresh(paper)  # committed raw_content, even when cached (R43)
     current = text_hash(paper.raw_content) if paper and paper.raw_content else None
     if current != version.text_sha256:
         raise HTTPException(409, "Source text is unavailable or changed; anchor requires review")
