@@ -149,38 +149,55 @@ def _protocol_for(db: Session, project_id, protocol_version):
 
 
 def _reject_backdated_decision_conflicts(db: Session, project_id, candidate, stage, protocol_version, decision, role, actor_id):
-    """A backdated decision must not invalidate a later merge's recorded conflict picture (R50).
-    The merged-away guard covers the requested snapshot; a decision recorded BEFORE a later merge
-    still applies at that merge's snapshot, where the report is folded away. Simulate the new
-    decision at each later merge snapshot and reject when it introduces a screening conflict the
-    merge left unflagged — otherwise the decision is silently dropped from counts. Decisions that
-    agree with the representative, and merges that already flagged the stage, are unaffected."""
+    """A decision must not invalidate a merge's recorded conflict picture at any affected snapshot
+    (R50/R51). A merge folds reports into a representative whose own decision governs counts; an
+    unflagged disagreement silently vanishes. Simulate the new decision (an unpersisted `extra` row,
+    no DB mutation) at every affected boundary — protocol, decision and merge/split versions at or
+    after V — and reject when it introduces a screening conflict the merge left unflagged. Two
+    directions are checked: a report merged away must agree with its representative, and a
+    representative must agree with the reports merged into it. Merges that already flagged the stage
+    (pending adjudication) and agreeing decisions are unaffected."""
     report_id = str(candidate.report_id)
-    later_merge_versions = sorted({int((e.payload or {}).get("protocol_version", 1))
-                                   for e in db.query(ReviewMappingEvent).filter(
-                                       ReviewMappingEvent.project_id == project_id,
-                                       ReviewMappingEvent.kind == "report_merge").all()
-                                   if int((e.payload or {}).get("protocol_version", 1)) > protocol_version})
-    if not later_merge_versions:
-        return
+    boundaries = {protocol_version}
+    boundaries.update(p.version for p in db.query(ReviewProtocol).filter(
+        ReviewProtocol.project_id == project_id, ReviewProtocol.version >= protocol_version).all())
+    boundaries.update(d.protocol_version for d in db.query(ReviewDecision).join(
+        ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(
+        ReviewCandidate.project_id == project_id, ReviewDecision.protocol_version >= protocol_version).all())
+    boundaries.update(int((e.payload or {}).get("protocol_version", 1))
+                      for e in db.query(ReviewMappingEvent).filter(
+                          ReviewMappingEvent.project_id == project_id,
+                          ReviewMappingEvent.kind.in_(("report_merge", "report_split"))).all()
+                      if int((e.payload or {}).get("protocol_version", 1)) >= protocol_version)
     max_seq = db.query(func.max(ReviewDecision.event_sequence)).scalar() or 0
     simulated = SimpleNamespace(stage=stage, protocol_version=protocol_version, decision=decision,
                                 role=role, actor_id=actor_id, event_sequence=max_seq + 1)
-    for version in later_merge_versions:
-        merges, conflict_stages, _incoming = _current_merges(db, project_id, version)
+    for version in sorted(boundaries):
+        merges, conflict_stages, incoming = _current_merges(db, project_id, version)
         representative = _resolve_representative(merges, report_id)
-        if representative == report_id:
-            continue  # the report is not merged away at this snapshot
-        if stage in (conflict_stages.get(representative) or {}):
-            continue  # the merge already flagged this stage; the candidate is pending adjudication
         later_protocol = _protocol_for(db, project_id, version)
-        source_decision = _effective(db, candidate.report_id, stage, version, later_protocol, extra=simulated)
-        target_decision = _effective(db, UUID(representative), stage, version, later_protocol)
-        decided_differ = source_decision[0] and target_decision[0] and source_decision[0] != target_decision[0]
-        unresolved = any(state in ("adjudication", "pending_dual")
-                         for value, state in (source_decision, target_decision) if value is None)
-        if decided_differ or unresolved:
-            raise HTTPException(409, "Backdated decision would introduce a conflict in a later merge snapshot; decide on the current representative or resolve the merge first")
+        if representative != report_id:
+            # The report is merged away at this snapshot: its decision must agree with the
+            # representative unless the merge already flagged the stage.
+            if stage in (conflict_stages.get(representative) or {}):
+                continue
+            source_decision = _effective(db, candidate.report_id, stage, version, later_protocol, extra=simulated)
+            target_decision = _effective(db, UUID(representative), stage, version, later_protocol)
+            if _decisions_conflict(source_decision, target_decision):
+                raise HTTPException(409, "Backdated decision would introduce a conflict in a later merge snapshot; decide on the current representative or resolve the merge first")
+        else:
+            # The report is the representative at this snapshot: reports merged into it must agree
+            # with its (simulated) decision unless the merge already flagged the stage (R51).
+            if stage in (conflict_stages.get(report_id) or {}):
+                continue
+            sources = incoming.get(report_id) or set()
+            if not sources:
+                continue
+            target_decision = _effective(db, candidate.report_id, stage, version, later_protocol, extra=simulated)
+            for source_report in sources:
+                source_decision = _effective(db, UUID(source_report), stage, version, later_protocol)
+                if _decisions_conflict(source_decision, target_decision):
+                    raise HTTPException(409, "Backdated decision would introduce a conflict in a later merge snapshot; decide on the current representative or resolve the merge first")
 
 
 def record_decision(db: Session, project_id, actor_id, candidate_id, stage, protocol_version, decision, *,
@@ -327,6 +344,15 @@ def _resolve_representative(merges, report):
     return report
 
 
+def _decisions_conflict(source_decision, target_decision):
+    """A screening conflict: two decided values differ, or either side carries an unresolved
+    disagreement (adjudication/pending_dual). Used by merge and backdated-decision validation."""
+    decided_differ = source_decision[0] and target_decision[0] and source_decision[0] != target_decision[0]
+    unresolved = any(state in ("adjudication", "pending_dual")
+                     for value, state in (source_decision, target_decision) if value is None)
+    return bool(decided_differ or unresolved)
+
+
 def _candidate_of_report(db: Session, project_id, report_id):
     row = db.query(ReviewCandidate).filter(ReviewCandidate.project_id == project_id,
                                            ReviewCandidate.report_id == report_id).first()
@@ -463,6 +489,9 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
                               ReviewMappingEvent.kind.in_(("report_merge", "report_split"))).all())
     for snapshot in sorted(v for v in cycle_versions if v >= protocol_version):
         merges, _conflicts, _incoming = _current_merges(db, project_id, snapshot)
+        # A cycle exists iff the target already reaches the source: adding source→target then
+        # closes the loop. Same-direction reachability (source already resolves to target) is a
+        # redundant edge, not a cycle, and must be accepted (R51).
         visited = set()
         cursor = str(target.id)
         while cursor in merges and cursor not in visited:
@@ -470,17 +499,18 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
             cursor = merges[cursor]
             if cursor == str(source.id):
                 raise HTTPException(409, "Merge would create a cycle between reports at an affected snapshot")
-        if _resolve_representative(merges, str(source.id)) == str(target.id):
-            raise HTTPException(409, "Merge would create a cycle between reports at an affected snapshot")
     protocol = _protocol_for(db, project_id, protocol_version)
+    # Conflicts are evaluated against the target's representative at each snapshot: the target
+    # may itself be folded into a later representative at some snapshots, so comparing against
+    # the target's own (possibly absent) decision would hide a real disagreement (R51: A→B
+    # backdated below B→C must compare A against C, the component representative).
+    merges_at_merge, _conflicts_at_merge, _incoming = _current_merges(db, project_id, protocol_version)
+    target_rep = _resolve_representative(merges_at_merge, str(target.id))
     conflicts, stages = [], []
     for stage in ("title_abstract", "fulltext"):
         source_decision = _effective(db, source.id, stage, protocol_version, protocol)
-        target_decision = _effective(db, target.id, stage, protocol_version, protocol)
-        decided_differ = source_decision[0] and target_decision[0] and source_decision[0] != target_decision[0]
-        unresolved = any(state in ("adjudication", "pending_dual")
-                         for decision, state in (source_decision, target_decision) if decision is None)
-        if decided_differ or unresolved:
+        target_decision = _effective(db, UUID(target_rep), stage, protocol_version, protocol)
+        if _decisions_conflict(source_decision, target_decision):
             # Decided values differ, or either side carries an unresolved disagreement —
             # both force adjudication on the merged candidate; unresolved reviewer
             # disagreement must not vanish in the merge (R25).
@@ -492,24 +522,29 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
     # silently discarding a later included/excluded conflict. Reject a backdated merge that would
     # drop a conflict visible only in a later affected snapshot; merge at the current version (or
     # resolve first) so the conflict is recorded and forces adjudication (R48). The boundary set
-    # includes decision versions, not just protocol rows: decisions may exist at a version with no
-    # exact protocol row (via _protocol_for's fallback), and a scan over protocol rows alone would
-    # miss that disagreement (R50).
+    # includes decision versions and merge/split event versions, not just protocol rows: decisions
+    # may exist at a version with no exact protocol row (via _protocol_for's fallback), and the
+    # representative can change at a mapping event (R50/R51).
     later_versions = {p.version for p in db.query(ReviewProtocol).filter(
         ReviewProtocol.project_id == project_id, ReviewProtocol.version > protocol_version).all()}
     later_versions.update(d.protocol_version for d in db.query(ReviewDecision).join(
         ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(
         ReviewCandidate.project_id == project_id, ReviewDecision.protocol_version > protocol_version).all())
+    later_versions.update(int((e.payload or {}).get("protocol_version", 1))
+                          for e in db.query(ReviewMappingEvent).filter(
+                              ReviewMappingEvent.project_id == project_id,
+                              ReviewMappingEvent.kind.in_(("report_merge", "report_split"))).all()
+                          if int((e.payload or {}).get("protocol_version", 1)) > protocol_version)
     for version in sorted(later_versions):
         later_protocol = _protocol_for(db, project_id, version)
+        merges_s, conflict_stages_s, _incoming = _current_merges(db, project_id, version)
+        target_rep_s = _resolve_representative(merges_s, str(target.id))
         for stage in ("title_abstract", "fulltext"):
-            if stage in stages: continue
+            if stage in stages: continue  # this merge already flags the stage at every snapshot
+            if stage in (conflict_stages_s.get(target_rep_s) or {}): continue  # component already pending
             source_decision = _effective(db, source.id, stage, version, later_protocol)
-            target_decision = _effective(db, target.id, stage, version, later_protocol)
-            decided_differ = source_decision[0] and target_decision[0] and source_decision[0] != target_decision[0]
-            unresolved = any(state in ("adjudication", "pending_dual")
-                             for decision, state in (source_decision, target_decision) if decision is None)
-            if decided_differ or unresolved:
+            target_decision = _effective(db, UUID(target_rep_s), stage, version, later_protocol)
+            if _decisions_conflict(source_decision, target_decision):
                 raise HTTPException(409, "Backdated merge would discard a conflicting decision in a later protocol snapshot; merge at the current version or resolve the conflict first")
     source.identity_state = "merged"; source.merged_into = target.id
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="report_merge",
