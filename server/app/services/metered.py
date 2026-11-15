@@ -47,6 +47,7 @@ def assert_dispatchable(db: Session, project_id, actor_id, operation_id):
     row = db.query(MeteredOperation).filter(MeteredOperation.id == operation_id,
                                             MeteredOperation.project_id == project_id).with_for_update().first()
     if not row: raise HTTPException(404, "Metered operation not found")
+    db.refresh(row)  # observe the committed row even when this session cached it (R36)
     if str(row.actor_id) != str(actor_id): raise HTTPException(403, "Metered operation belongs to another actor")
     if row.state != "admitted":
         raise HTTPException(409, f"Dispatch requires an admitted reservation; operation is {row.state}")
@@ -130,6 +131,7 @@ def _transition(db: Session, operation_id, actor_id, current, target, project_id
     row = db.query(MeteredOperation).filter(MeteredOperation.id == operation_id,
                                             MeteredOperation.project_id == project_id).with_for_update().first()
     if not row: raise HTTPException(404, "Metered operation not found")
+    db.refresh(row)  # observe the committed row even when this session cached it (R36)
     if str(row.actor_id) != str(actor_id): raise HTTPException(403, "Metered operation belongs to another actor")
     if row.state != current: raise HTTPException(409, f"Metered operation is {row.state}, expected {current}")
     row.state = target

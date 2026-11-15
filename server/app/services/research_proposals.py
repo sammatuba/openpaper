@@ -69,6 +69,7 @@ def approve_proposal(db: Session, project_id, actor_id, proposal_id, *, expires_
     proposal = db.query(ResearchProposal).filter(ResearchProposal.id == UUID(str(proposal_id)),
                                                  ResearchProposal.project_id == project_id).with_for_update().first()
     if not proposal: raise HTTPException(404, "Proposal not found")
+    db.refresh(proposal)  # observe the committed row even when this session cached it (R36)
     if proposal.state != "pending": raise HTTPException(409, f"Proposal is {proposal.state}, not approvable")
     now = datetime.now(timezone.utc)
     proposal.state = "approved"
@@ -85,6 +86,7 @@ def apply_proposal(db: Session, project_id, actor_id, proposal_id, *, commit=Tru
     proposal = db.query(ResearchProposal).filter(ResearchProposal.id == UUID(str(proposal_id)),
                                                  ResearchProposal.project_id == project_id).with_for_update().first()
     if not proposal: raise HTTPException(404, "Proposal not found")
+    db.refresh(proposal)  # observe the committed row even when this session cached it (R36)
     if proposal.state == "applied" and proposal.applied_receipt:
         return {"receipt": proposal.applied_receipt, "replayed": True}
     if proposal.state != "approved": raise HTTPException(409, f"Proposal is {proposal.state}")
@@ -108,6 +110,7 @@ def apply_proposal(db: Session, project_id, actor_id, proposal_id, *, commit=Tru
     entity_ids = sorted(UUID(k) for k in proposal.targets)
     entities = {e.id: e for e in db.query(ResearchEntity).filter(ResearchEntity.id.in_(entity_ids),
                                                                 ResearchEntity.project_id == project_id).with_for_update().all()}
+    for entity in entities.values(): db.refresh(entity)  # committed state, even when cached (R36)
     for entity_id in entity_ids:
         entity = entities.get(entity_id)
         if not entity or entity.revision != proposal.targets[str(entity_id)]:

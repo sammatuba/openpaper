@@ -125,6 +125,10 @@ def revise_entity(db: Session, project_id, actor_id, entity_id, expected_revisio
     _check_storage_generation(db, project_id)
     entity = db.query(ResearchEntity).filter(ResearchEntity.id == entity_id, ResearchEntity.project_id == project_id).with_for_update().first()
     if not entity: raise HTTPException(404, "Research entity not found")
+    # The locking read must observe the committed row even when this session already
+    # holds a cached instance: expire and re-read so the revision guard cannot accept
+    # stale state (R36 — a stale guard surfaces as IntegrityError instead of 412).
+    db.refresh(entity)
     if entity.revision != expected_revision:
         raise HTTPException(412, "Research entity changed", headers={"X-Current-Revision": str(entity.revision)})
     try: typed = validate_payload(entity.type, payload)

@@ -905,6 +905,36 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((entity.revision, entity.payload["statement"]), before)
             self.assertEqual(db.get(ResearchProject, s.project).change_sequence, sequence_before)
 
+    async def test_stale_cached_entity_raises_412_not_integrity_error(self):
+        # R36: the locking read must observe the committed row even when this session
+        # already holds a cached instance — a stale revision guard surfaces as 412,
+        # never as an IntegrityError from the revision write.
+        from unittest.mock import patch
+        from fastapi import HTTPException
+        s = self.seed()
+        document, ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            claim_id = UUID(ids["claim_id"])
+            # This session caches the entity at revision 1.
+            cached = db.get(ResearchEntity, claim_id)
+            self.assertEqual(cached.revision, 1)
+        with self.Session() as db:
+            # An intervening session commits revision 2.
+            research_entities.revise_entity(db, s.project, s.owner, claim_id, 1, {"statement": "Intervening edit."})
+        with self.Session() as db:
+            # The stale session retains its cached instance across the intervening commit
+            # and now revises with an expected revision of 1.
+            with patch.object(db, "commit", side_effect=RuntimeError("Rollback after 412")):
+                with self.assertRaises(HTTPException) as stale:
+                    research_entities.revise_entity(db, s.project, s.owner, claim_id, 1,
+                                                    {"statement": "Stale-guard edit."})
+            self.assertEqual(stale.exception.status_code, 412)
+            db.rollback()  # discard the failed transaction from the cached session
+            entity = db.get(ResearchEntity, claim_id)
+            self.assertEqual((entity.revision, entity.payload["statement"]), (2, "Intervening edit."))
+
     # ---------- C26/C27: proposals ----------
 
     async def test_proposal_apply_replay_and_forgery(self):
