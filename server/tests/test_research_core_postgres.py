@@ -663,6 +663,31 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             metered.settle(db, s.project, s.owner, operation.id, {"units": {"input_tokens": 10432, "output_tokens": 1717}})
             self.assertEqual(operation.state, "completed")
 
+    async def test_load_entity_redacts_with_cached_paper(self):
+        # R41: the redaction check refreshes the cached Paper — a session retaining the
+        # paper across the revocation still redacts (quotation never leaves the server).
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture H", "Title\nExact fixture result.\nLimitations.")
+        document, ids = self._v1_document(paper)
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+        db_a = self.Session()
+        try:
+            cached_paper = db_a.get(__import__("app.database.models", fromlist=["Paper"]).Paper, paper)
+            self.assertIsNotNone(cached_paper)  # session A caches the paper and stays open
+            with self.Session() as db:
+                loaded = research_entities.load_entity(db, s.project, s.owner, UUID(ids["finding_id"]))
+                self.assertIn("quote", loaded["entity"]["payload"]["anchor"])
+            with self.engine.begin() as conn:
+                conn.execute(self.text("DELETE FROM project_paper WHERE project_id = :p"), {"p": s.project})
+            # Session A redacts through its cached paper.
+            loaded = research_entities.load_entity(db_a, s.project, s.owner, UUID(ids["finding_id"]))
+            self.assertNotIn("quote", loaded["entity"]["payload"]["anchor"])
+            self.assertNotIn("Exact fixture result.", json.dumps(loaded))
+        finally:
+            db_a.close()
+
     async def test_editing_imported_content_preserves_its_provenance(self):
         s = self.seed()
         document, ids = self._v1_document(uuid4())
@@ -992,16 +1017,6 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
         finally:
             db_b.close()
 
-    async def test_cached_report_merge_and_demotion_and_cutover(self):
-        # R39: cached reports cannot bypass merge guards; cached roles cannot bypass
-        # demotion; cached v1 roots cannot bypass cutover. Each assertion is sensitive
-        # to its corresponding refresh.
-        from fastapi import HTTPException
-        s = self.seed()
-        editor = uuid4()
-        with self.engine.begin() as conn:
-            conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": editor, "e": str(editor) + "@test.invalid"})
-            conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": editor})
     async def test_cached_state_cannot_bypass_guards(self):
         # R39: cached reports cannot bypass merge guards; cached roles cannot bypass
         # demotion; cached v1 roots cannot bypass cutover.
