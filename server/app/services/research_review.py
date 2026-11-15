@@ -62,7 +62,11 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
     """Record one occurrence→candidate mapping: exactly one retained representative,
     every other mapped occurrence an inspectable removal. Sets must be disjoint."""
     research_access.authorize(db, project_id, actor_id, write=True)
-    candidate = db.query(ReviewCandidate).filter(ReviewCandidate.id == candidate_id, ReviewCandidate.project_id == project_id).first()
+    # Lock the candidate row before reading its mappings: two concurrent FIRST mappings onto the
+    # same candidate lock disjoint occurrence rows and would otherwise both read an empty history
+    # and both pass the single-representative guard. The candidate lock serializes them so the loser
+    # re-reads the winner's committed representative (R49). Occurrence ownership locks still apply.
+    candidate = db.query(ReviewCandidate).filter(ReviewCandidate.id == candidate_id, ReviewCandidate.project_id == project_id).with_for_update().first()
     if not candidate: raise HTTPException(404, "Review candidate not found")
     # Mapped occurrences are accounted under their candidate: a non-retained candidate
     # would remove them from flow accounting (R26).
@@ -87,7 +91,7 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
     # occurrence (R47). Consolidating two live candidates is merge_reports, not a remap.
     owner = {}
     target = str(candidate_id)
-    retained_by_target = set()
+    target_events = []
     prior = db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project_id,
                                                 ReviewMappingEvent.kind == "occurrence_map").all()
     for event in sorted(prior, key=_event_order):
@@ -96,18 +100,35 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
         for occurrence_id in [payload.get("retained"), *payload.get("removed", [])]:
             if occurrence_id: owner[str(occurrence_id)] = event_candidate
         if event_candidate == target:
-            for occurrence_id in payload.get("removed", []): retained_by_target.discard(str(occurrence_id))
-            if payload.get("retained"): retained_by_target.add(str(payload["retained"]))
+            target_events.append((int(payload.get("protocol_version", 1)),
+                                  str(payload["retained"]) if payload.get("retained") else None,
+                                  [str(i) for i in payload.get("removed", [])]))
     for occurrence_id in mapped:
         if occurrence_id in owner and owner[occurrence_id] != target:
             raise HTTPException(409, "Occurrence already belongs to another candidate; merge reports instead of remapping")
-    # A candidate retains exactly one representative occurrence. Replacing it must retire the
-    # previous one (record it as a removal); otherwise one unmerged candidate carries two retained
-    # representatives and inflates retained_occurrences above retained_candidates (R48). The
-    # occurrence rows are locked above, so this validation and the insert are atomic.
-    resulting = (retained_by_target - {str(i) for i in removed_occurrence_ids}) | {str(retained_occurrence_id)}
-    if len(resulting) != 1:
-        raise HTTPException(409, "A candidate retains exactly one representative; record the previous representative as removed when replacing it")
+    # A candidate retains exactly one representative occurrence at EVERY affected snapshot. A
+    # mapping at version V applies to all snapshots S >= V; replaying only the final global state
+    # can hide a historical snapshot where the candidate carries two retained representatives
+    # (R49: v1 retain O1; v3 retain O2/remove O1; v2 retain O3/remove O2 leaves O1 and O3 both
+    # retained at v2). Validate each affected snapshot — the candidate row is locked above, so
+    # this validation and the insert are atomic. The new event draws the next durable sequence,
+    # so it replays last within every snapshot it enters.
+    new_retained = str(retained_occurrence_id)
+    new_removed = {str(i) for i in removed_occurrence_ids}
+    snapshots = {protocol_version}
+    snapshots.update(p.version for p in db.query(ReviewProtocol).filter(
+        ReviewProtocol.project_id == project_id, ReviewProtocol.version >= protocol_version).all())
+    snapshots.update(version for version, _r, _rm in target_events if version >= protocol_version)
+    for snapshot in sorted(snapshots):
+        retained_set = set()
+        for version, retained_id, removed_ids in target_events:
+            if version > snapshot: continue
+            retained_set.difference_update(removed_ids)
+            if retained_id: retained_set.add(retained_id)
+        retained_set.difference_update(new_removed)
+        retained_set.add(new_retained)
+        if len(retained_set) != 1:
+            raise HTTPException(409, "A candidate retains exactly one representative at every affected snapshot; record the previous representative as removed when replacing it")
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="occurrence_map",
                               payload={"candidate": str(candidate_id), "retained": str(retained_occurrence_id),
                                        "removed": [str(i) for i in removed_occurrence_ids],
@@ -130,10 +151,23 @@ def record_decision(db: Session, project_id, actor_id, candidate_id, stage, prot
     research_access.authorize(db, project_id, actor_id, write=True)
     candidate = db.query(ReviewCandidate).filter(ReviewCandidate.id == candidate_id, ReviewCandidate.project_id == project_id).first()
     if not candidate: raise HTTPException(404, "Review candidate not found")
+    # Lock the candidate's report row so a concurrent merge serializes with this decision:
+    # merge_reports locks the same rows, so the loser re-reads the committed merge state instead
+    # of recording a decision on a candidate the merge just folded away (R49).
+    db.query(ReviewReport).filter(ReviewReport.id == candidate.report_id,
+                                  ReviewReport.project_id == project_id).with_for_update().first()
     if decision not in ("included", "excluded", "unclear"): raise HTTPException(422, "Invalid decision value")
     protocol = _protocol_for(db, project_id, protocol_version)
     if candidate.protocol_version > protocol_version:
         raise HTTPException(422, "Decision protocol version predates the candidate acquisition")
+    # A decision belongs to a live candidate at the requested snapshot. Once a report is merged
+    # away its candidate leaves the retained set, so a later decision on it would be silently
+    # omitted from counts (R49: include the merged source, exclude the representative, and the
+    # inclusion vanishes). Decide on the current representative instead; pre-merge decisions and
+    # adjudications on the representative are unaffected.
+    merges, _conflicts, _incoming = _current_merges(db, project_id, protocol_version)
+    if _resolve_representative(merges, str(candidate.report_id)) != str(candidate.report_id):
+        raise HTTPException(409, "Candidate is merged away at this protocol snapshot; record the decision on the current representative")
     prior = db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_id,
                                             ReviewDecision.stage == stage).all()
     if role == "adjudication":
