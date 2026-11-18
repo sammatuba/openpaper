@@ -54,7 +54,8 @@ class InvestigationSchemaTests(unittest.TestCase):
         from alembic.script import ScriptDirectory
         config=Config();config.set_main_option('script_location',str(Path(__file__).resolve().parents[1]/'migrations'))
         script=ScriptDirectory.from_config(config)
-        self.assertEqual(script.get_heads(),['project_investigation_01'])
+        self.assertEqual(script.get_heads(),['research_core_01'])
+        self.assertEqual(script.get_revision('research_core_01').down_revision,'project_investigation_01')
         self.assertEqual(script.get_revision('project_investigation_01').down_revision,'project_research_brief_01')
 
     def test_all_dependency_edits_change_pins(self):

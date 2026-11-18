@@ -35,8 +35,8 @@ class MCPPostgresTests(unittest.TestCase):
                 PaperUploadJob.__table__.create(conn)
                 Paper.__table__.create(conn)
                 PaperNote.__table__.create(conn)
-                from app.database.models import Project, ProjectRole, ProjectPaper, Highlight, Annotation, PaperPassage, Subscription, MCPPaperImportRequest
-                for model in (Project, ProjectRole, ProjectPaper, Highlight, Annotation, PaperPassage, Subscription, MCPPaperImportRequest):
+                from app.database.models import Project, ProjectRole, ProjectPaper, Highlight, Annotation, PaperPassage, Subscription, MCPPaperImportRequest, ResearchProject
+                for model in (Project, ProjectRole, ProjectPaper, Highlight, Annotation, PaperPassage, Subscription, MCPPaperImportRequest, ResearchProject):
                     model.__table__.create(conn)
                 conn.execute(text("CREATE TABLE mcp_note_requests (user_id uuid NOT NULL, request_id uuid NOT NULL, paper_id uuid NOT NULL, content_hash text NOT NULL, PRIMARY KEY(user_id, request_id))"))
             cls.Session = sessionmaker(bind=cls.engine)

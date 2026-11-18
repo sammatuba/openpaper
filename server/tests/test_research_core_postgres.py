@@ -1,0 +1,2981 @@
+"""Research-core integration on the guarded disposable cluster: count journey (C17),
+conversion atomicity (C10), forgery/isolation (C05/C07), concurrency (C08),
+proposal replay/approval boundaries (C26/C27) and the metered admission core (C29)."""
+import json
+import os
+import unittest
+from fastapi import HTTPException
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import UUID, uuid4
+
+from app.database.models import (Conversation, Message, MeteredOperation, MeteredPriceTable, ProjectDraftRequest,
+                                 ProjectInvestigation, ResearchEntity, ResearchEntityRevision, ResearchProject,
+                                 ResearchRelation, ResearchSourceVersion, ReviewCandidate, ReviewDecision,
+                                 ReviewMappingEvent, ReviewOccurrence, ReviewProtocol, ReviewReport,
+                                 ReviewReportStudy, ReviewReportVersion, ReviewStudy, ResearchProposal)
+from app.services import metered, research_access, research_convert, research_entities, research_proposals, research_review
+
+FIXTURE = json.loads((Path(__file__).resolve().parents[2] / "docs/work/ai-native-research-fixture.json").read_text())
+
+
+@unittest.skipUnless(os.environ.get("OPENPAPER_ISOLATED_PG_TEST") == "1", "requires isolated PostgreSQL")
+class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        from tests.test_mcp_postgres import MCPPostgresTests
+        MCPPostgresTests.setUpClass.__func__(cls)
+        # The application SessionLocal does not autoflush; these tests run on the same setting, so
+        # a service that leaves a write unflushed fails here as it would in a request (R54).
+        from sqlalchemy.orm import sessionmaker
+        cls.Session = sessionmaker(bind=cls.engine, autoflush=False)
+        from sqlalchemy import event
+        @event.listens_for(cls.engine, "connect")
+        def utf8(connection, record): connection.set_client_encoding("UTF8")
+        cls.engine.dialect._json_serializer = lambda value: json.dumps(value, ensure_ascii=False)
+        cls.engine.dispose()
+        order = (Conversation, Message, ProjectInvestigation, ProjectDraftRequest, ResearchSourceVersion, ResearchEntity,
+                 ResearchEntityRevision, ResearchRelation, ReviewProtocol, ReviewReport, ReviewReportVersion,
+                 ReviewOccurrence, ReviewStudy, ReviewReportStudy, ReviewCandidate, ReviewDecision, ReviewMappingEvent,
+                 ResearchProposal, MeteredPriceTable, MeteredOperation)  # research_projects comes from the shared harness
+        with cls.engine.begin() as conn:
+            conn.execute(cls.text("CREATE SEQUENCE IF NOT EXISTS research_event_seq"))
+            for model in order: model.__table__.create(conn)
+
+    @classmethod
+    def tearDownClass(cls):
+        from tests.test_mcp_postgres import MCPPostgresTests
+        MCPPostgresTests.tearDownClass.__func__(cls)
+
+    def seed(self):
+        owner, viewer, outsider, project = [uuid4() for _ in range(4)]
+        with self.engine.begin() as conn:
+            for uid in (owner, viewer, outsider):
+                conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": uid, "e": str(uid) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project (id,admin_id,title,description) VALUES (:p,:u,'Research core','Keep legacy description')"), {"p": project, "u": owner})
+            conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'viewer')"), {"id": uuid4(), "p": project, "u": viewer})
+        return SimpleNamespace(owner=owner, viewer=viewer, outsider=outsider, project=project)
+
+    def seed_paper(self, project, owner, title, raw):
+        from app.database.models import Paper, ProjectPaper
+        paper = uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO papers (id,user_id,file_url,status,title,raw_content) VALUES (:p,:u,'x','reading',:t,:text)"), {"p": paper, "u": owner, "t": title, "text": raw})
+            conn.execute(self.text("INSERT INTO project_paper (id,project_id,paper_id) VALUES (:id,:p,:paper)"), {"id": uuid4(), "p": project, "paper": paper})
+        return paper
+
+    # ---------- C17: full count journey through the services ----------
+
+    async def test_review_count_fixture_journey(self):
+        from fastapi import HTTPException
+        from app.database.models import ReviewMappingEvent, ReviewProtocol
+        review_data = FIXTURE["review"]
+        owner, reviewer_1, reviewer_2 = UUID(FIXTURE["actors"]["owner"]), UUID(FIXTURE["actors"]["reviewer_1"]), UUID(FIXTURE["actors"]["reviewer_2"])
+        viewer, project = uuid4(), UUID(FIXTURE["project"]["id"])  # stable fixture IDs run end to end
+        with self.engine.begin() as conn:
+            for uid in (owner, reviewer_1, reviewer_2, viewer):
+                conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": uid, "e": str(uid) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project (id,admin_id,title,description) VALUES (:p,:u,'Synthetic: monitoring-reliability tension','Keep legacy description')"), {"p": project, "u": owner})
+            conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor'), (:id2,:p,:u2,'editor'), (:id3,:p,:u3,'viewer')"),
+                         {"p": project, "u": reviewer_1, "u2": reviewer_2, "u3": viewer, "id": uuid4(), "id2": uuid4(), "id3": uuid4()})
+        with self.Session() as db:
+            research_review.create_protocol(db, project, owner, version=1,
+                                            count_policy=review_data["protocol_v1"]["count_policy"],
+                                            criteria=review_data["protocol_v1"]["criteria"],
+                                            screening_modes=review_data["protocol_v1"]["screening_modes"],
+                                            status="active", protocol_id=UUID("99000000-0000-4000-8000-000000000001"), commit=False)
+            db.commit()
+            for report in review_data["reports"]:
+                db.add(ReviewReport(id=UUID(report["id"]), project_id=project, identity_state="confirmed"))
+                for version in report["versions"]:
+                    db.add(ReviewReportVersion(id=UUID(version["id"]), report_id=UUID(report["id"]), version_label=version["label"]))
+            for study in review_data["studies"]:
+                db.add(ReviewStudy(id=UUID(study["id"]), project_id=project, description=study["description"]))
+            db.commit()
+            for link in review_data["report_studies"]:
+                if link["study_id"]:
+                    research_review.link_study(db, project, owner, UUID(link["report_id"]), UUID(link["study_id"]),
+                                               link["rationale"], linkage_state=link["linkage_state"], commit=False)
+            db.commit()
+            for occurrence in review_data["occurrences"]:
+                db.add(ReviewOccurrence(id=UUID(occurrence["id"]), project_id=project, provider=occurrence["provider"],
+                                        search_ref=occurrence["search_execution"], external_hit_id=occurrence["external_hit_id"],
+                                        report_id=UUID(occurrence["report"]) if occurrence["report"] else None,
+                                        version_id=UUID(occurrence["version"]) if occurrence["version"] else None))
+            db.commit()
+            # Delivery retries never create occurrences: the same provider/search/hit cannot reinsert.
+            duplicate_hit = db.query(ReviewOccurrence).filter(ReviewOccurrence.external_hit_id == "hit-a-preprint").first()
+            db.add(ReviewOccurrence(id=duplicate_hit.id, project_id=project, provider=duplicate_hit.provider,
+                                    search_ref=duplicate_hit.search_ref, external_hit_id=duplicate_hit.external_hit_id))
+            with self.assertRaises(Exception): db.commit()
+            db.rollback()
+            for candidate in review_data["candidates"]:
+                db.add(ReviewCandidate(id=UUID(candidate["id"]), project_id=project, report_id=UUID(candidate["report_id"]),
+                                       selected_version_id=UUID(candidate["selected_version_id"]) if candidate["selected_version_id"] else None))
+            db.commit()
+            # Mapping events: exactly one retained representative per candidate; removals inspectable.
+            for event in review_data["mapping_events"]:
+                if event["kind"] != "occurrence_map": continue
+                research_review.map_occurrences(db, project, owner, UUID(event["payload"]["candidate"]),
+                                                UUID(event["payload"]["retained"]),
+                                                [UUID(i) for i in event["payload"]["removed"]], commit=False)
+            db.commit()
+            for decision in review_data["decisions"]:
+                research_review.record_decision(db, project, UUID(decision["actor_id"]), UUID(decision["candidate_id"]),
+                                                decision["stage"], decision["protocol_version"], decision["decision"],
+                                                role=decision.get("role", "primary"), reason=decision["reason"], commit=False)
+            db.commit()
+            counts_v1 = research_review.flow_counts(db, project, owner, 1)
+            expected_v1 = {key: value for key, value in review_data["expected_counts"]["v1"].items() if key in counts_v1}
+            self.assertEqual(counts_v1, expected_v1, counts_v1)
+            # Adjudication is only recorded on a genuine disagreement.
+            with self.assertRaises(HTTPException) as unanimous:
+                research_review.record_decision(db, project, owner, UUID("66000000-0000-4000-8000-000000000001"),
+                                                "fulltext", 1, "included", role="adjudication")
+            self.assertEqual(unanimous.exception.status_code, 409)
+            # Protocol amendment reopens D only; upstream sets stay unchanged.
+            research_review.amend_protocol(db, project, owner, new_version=2, commit=False)
+            db.commit()
+            for decision in review_data["protocol_v2_decisions"]:
+                research_review.record_decision(db, project, UUID(decision["actor_id"]), UUID(decision["candidate_id"]),
+                                                decision["stage"], decision["protocol_version"], decision["decision"],
+                                                reason=decision["reason"], commit=False)
+            db.commit()
+            counts_v2 = research_review.flow_counts(db, project, owner, 2)
+            expected_v2 = {key: value for key, value in review_data["expected_counts"]["v2"].items() if key in counts_v2}
+            self.assertEqual(counts_v2, expected_v2, counts_v2)
+            self.assertEqual(research_review.flow_counts(db, project, owner, 1), counts_v1)
+            self.assertEqual(research_review.flow_counts(db, project, viewer, 1), counts_v1)
+            # Later acquisition-set updates (v2): a new occurrence, candidate and a study
+            # linkage update join the v2 snapshot while the frozen v1 set stays untouched.
+            later_occurrence = ReviewOccurrence(id=uuid4(), project_id=project, provider="fixture-scholar",
+                                                search_ref="11000000-0000-4000-8000-000000000002",
+                                                external_hit_id="hit-b-later", protocol_version=2,
+                                                report_id=UUID("33000000-0000-4000-8000-000000000002"),
+                                                version_id=UUID("44000000-0000-4000-8000-000000000003"))
+            db.add(later_occurrence)
+            later_report = ReviewReport(id=uuid4(), project_id=project, identity_state="confirmed")
+            db.add(later_report)
+            db.commit()  # parent before child
+            later_candidate = ReviewCandidate(id=uuid4(), project_id=project, report_id=later_report.id,
+                                              selected_version_id=None, protocol_version=2)
+            db.add(later_candidate); db.commit()
+            research_review.map_occurrences(db, project, owner, later_candidate.id, later_occurrence.id, [],
+                                            protocol_version=2, commit=False)
+            # Mapped occurrences are accounted under retained candidates only (R26).
+            non_retained_report = ReviewReport(id=uuid4(), project_id=project)
+            db.add(non_retained_report); db.commit()
+            non_retained_candidate = ReviewCandidate(id=uuid4(), project_id=project,
+                                                     report_id=non_retained_report.id, retained=False)
+            db.add(non_retained_candidate); db.commit()
+            with self.assertRaises(HTTPException) as non_retained_map:
+                research_review.map_occurrences(db, project, owner, non_retained_candidate.id,
+                                                UUID("22000000-0000-4000-8000-000000000004"), [], protocol_version=2)
+            self.assertEqual(non_retained_map.exception.status_code, 422)
+            # The v1 snapshot closed when the first v2 record was written: a mapping cannot place
+            # an occurrence or a candidate back into it (rule 2, RULES-review-versioning.md). The
+            # acquisition guards (422) are pinned on an open snapshot in
+            # test_acquisition_guards_on_the_open_snapshot.
+            with self.assertRaises(HTTPException) as premature:
+                research_review.map_occurrences(db, project, owner, UUID("66000000-0000-4000-8000-000000000002"),
+                                                later_occurrence.id, [], protocol_version=1)
+            self.assertEqual(premature.exception.status_code, 409)
+            with self.assertRaises(HTTPException) as premature_candidate:
+                research_review.map_occurrences(db, project, owner, later_candidate.id,
+                                                UUID("22000000-0000-4000-8000-000000000004"), [],
+                                                protocol_version=1)
+            self.assertEqual(premature_candidate.exception.status_code, 409)
+            db.commit()
+            research_review.link_study(db, project, owner, UUID("33000000-0000-4000-8000-000000000003"),
+                                       UUID("55000000-0000-4000-8000-000000000002"),
+                                       "Fixture: companion linkage withdrawn", linkage_state="unresolved",
+                                       protocol_version=2, commit=False)
+            db.commit()
+            # A first-time linkage created at v2 links an already-included report to a
+            # previously uncounted study, so only the v2 snapshot grows.
+            study_se = ReviewStudy(id=UUID("55000000-0000-4000-8000-000000000004"), project_id=project,
+                                   description="Fixture study first linked at v2")
+            db.add(study_se); db.commit()
+            research_review.link_study(db, project, owner, UUID("33000000-0000-4000-8000-000000000004"),
+                                       UUID("55000000-0000-4000-8000-000000000004"),
+                                       "Fixture: new linkage at v2", linkage_state="confirmed",
+                                       protocol_version=2, commit=False)
+            db.commit()
+            counts_v2b = research_review.flow_counts(db, project, owner, 2)
+            # The later occurrence is the retained representative of the later candidate:
+            # identified grows to 11 while removals stay 4.
+            self.assertEqual((counts_v2b["identified_occurrences"], counts_v2b["duplicate_removals"]), (11, 4))
+            self.assertEqual(counts_v2b["retained_candidates"], 7)
+            self.assertEqual(counts_v2b["included_studies"], 4)  # SA, SB (B), SD and the new D->SE; C->SB withdrawn
+            # The frozen v1 snapshot keeps its original sets, counts and linkage states.
+            v1_again = research_review.flow_counts(db, project, owner, 1)
+            self.assertEqual(v1_again, counts_v1)
+            self.assertEqual((v1_again["identified_occurrences"], v1_again["retained_candidates"], v1_again["included_studies"]),
+                             (10, 6, 2))
+            with self.assertRaises(HTTPException) as denied:
+                research_review.record_decision(db, project, viewer, UUID("66000000-0000-4000-8000-000000000001"),
+                                                "fulltext", 1, "included")
+            self.assertEqual(denied.exception.status_code, 403)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 7)  # 6 fixture maps + the later acquisition map
+        outsider = uuid4()
+        with self.Session() as db:
+            with self.assertRaises(HTTPException) as hidden:
+                research_review.flow_counts(db, outsider, outsider, 1)
+            self.assertEqual(hidden.exception.status_code, 404)
+
+    async def test_cross_candidate_occurrence_remap_is_refused(self):
+        # R46: one retained occurrence must not represent two active candidates. A remap that
+        # claims another candidate's representative would let both candidates screen/count the
+        # same occurrence (retained_occurrences < retained_candidates). map_occurrences refuses
+        # it; consolidating two live candidates is an identity merge. Removing the ownership
+        # guard lets the cross-candidate remap commit and breaks conservation.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)])
+            db.commit()
+            occurrence_1, occurrence_2 = uuid4(), uuid4()
+            db.add_all([ReviewOccurrence(id=occurrence_1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
+                        ReviewOccurrence(id=occurrence_2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2")])
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, occurrence_1, [])
+            research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_2, [])
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "included")
+            before = research_review.flow_counts(db, s.project, s.owner, 1)
+            # Two live candidates, each with its own distinct retained representative.
+            self.assertEqual((before["retained_candidates"], before["retained_occurrences"], before["screened"]), (2, 2, 2))
+            # B tries to retain A's representative O1 and remove its own O2: cross-candidate claim.
+            with self.assertRaises(HTTPException) as conflict:
+                research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_1, [occurrence_2])
+            self.assertEqual(conflict.exception.status_code, 409)
+            # The refused remap recorded no event; counts and conservation are unchanged.
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 2)
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), before)
+            # A within-candidate remap (B swaps its own representative for a fresh occurrence)
+            # is still allowed — the guard rejects cross-candidate claims, not remapping itself.
+            occurrence_3 = uuid4()
+            db.add(ReviewOccurrence(id=occurrence_3, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-3"))
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_3, [occurrence_2])
+            remapped = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((remapped["identified_occurrences"], remapped["duplicate_removals"], remapped["retained_occurrences"]), (3, 1, 2))
+            self.assertEqual(remapped["identified_occurrences"], remapped["duplicate_removals"] + remapped["retained_occurrences"])
+            # A merge folds A's occurrences into B for counting, but ownership stays with the
+            # raw candidate: B cannot re-claim A's representative O1 via a remap. Allowing it
+            # would let a later split restore two candidates sharing O1 (R47). Consolidation
+            # is the merge itself; the refused remap records no event and conservation holds.
+            research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: same report", protocol_version=1)
+            with self.assertRaises(HTTPException) as post_merge:
+                research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_1, [])
+            self.assertEqual(post_merge.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 3)
+            merged = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual(merged["identified_occurrences"], merged["duplicate_removals"] + merged["retained_occurrences"])
+
+    async def test_backdated_mapping_cannot_bypass_later_ownership(self):
+        # R47 hole 1: ownership is global across every protocol version. A→O1 recorded at v2
+        # must block B→O1 backdated to v1; a per-snapshot ownership scan misses the later claim
+        # and lets two screened candidates share one retained occurrence. Restoring the version
+        # filter lets the backdated remap commit (the 409 assertion and the v2 counts both fail).
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            research_review.create_protocol(db, s.project, s.owner, version=2, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)])
+            db.commit()
+            occurrence_1, occurrence_2 = uuid4(), uuid4()
+            db.add_all([ReviewOccurrence(id=occurrence_1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
+                        ReviewOccurrence(id=occurrence_2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2")])
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_2, [], protocol_version=1)
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "included")
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, occurrence_1, [], protocol_version=2)
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 2, "included")
+            # B claims A's representative O1 on the open snapshot: ownership refuses it.
+            with self.assertRaises(HTTPException) as claimed:
+                research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_1, [occurrence_2], protocol_version=2)
+            self.assertEqual(claimed.exception.status_code, 409)
+            self.assertIn("already belongs", claimed.exception.detail)
+            # The same claim backdated into v1 is refused before ownership is even read.
+            with self.assertRaises(HTTPException) as backdated:
+                research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_1, [occurrence_2], protocol_version=1)
+            self.assertEqual(backdated.exception.status_code, 409)
+            self.assertIn("closed", backdated.exception.detail)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 2)
+            v2 = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((v2["retained_candidates"], v2["retained_occurrences"], v2["screened"]), (2, 2, 2))
+            self.assertEqual(v2["identified_occurrences"], v2["duplicate_removals"] + v2["retained_occurrences"])
+
+    async def test_split_cannot_restore_shared_occurrence_ownership(self):
+        # R47 hole 2: ownership is keyed by raw candidate id, not the merge-resolved
+        # representative. After A→O1, B→O2 and merge A into B, the remap B→O1 must be refused;
+        # under merge-aware ownership it succeeds and a later split leaves A and B both retaining
+        # O1. Restoring merge-aware identity lets the remap commit (409 assertion and counts fail).
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)])
+            db.commit()
+            occurrence_1, occurrence_2 = uuid4(), uuid4()
+            db.add_all([ReviewOccurrence(id=occurrence_1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
+                        ReviewOccurrence(id=occurrence_2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2")])
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, occurrence_1, [])
+            research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_2, [])
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "included")
+            research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: same report", protocol_version=1)
+            # While A is merged into B, B still cannot claim A's raw representative O1.
+            with self.assertRaises(HTTPException) as post_merge:
+                research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_1, [occurrence_2])
+            self.assertEqual(post_merge.exception.status_code, 409)
+            # Splitting A back out restores two independent candidates, each with its own occurrence.
+            research_review.split_report(db, s.project, s.owner, report_a.id, "Fixture: identity review failed", protocol_version=1)
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["retained_candidates"], counts["retained_occurrences"], counts["screened"]), (2, 2, 2))
+            self.assertEqual(counts["identified_occurrences"], counts["duplicate_removals"] + counts["retained_occurrences"])
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 2)
+
+    async def test_concurrent_occurrence_claims_single_winner(self):
+        # R47 hole 3: ownership validation and insertion must serialize. The winner claims a
+        # fresh occurrence and holds its transaction (and the occurrence-row lock) open; the
+        # loser blocks on that lock, then re-reads the committed claim and is refused (409).
+        # Removing with_for_update lets both candidates retain the occurrence (the loser returns
+        # 200 and two events commit), so the outcome assertions fail.
+        import time
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)])
+            db.commit()
+            occurrence = uuid4()
+            db.add(ReviewOccurrence(id=occurrence, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"))
+            db.commit()
+        winner = self.Session()
+        try:
+            research_review.map_occurrences(winner, s.project, s.owner, candidate_a, occurrence, [], commit=False)
+            def loser_claim():
+                with self.Session() as db:
+                    try:
+                        research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence, [])
+                        return 200
+                    except HTTPException as error:
+                        return error.status_code
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(loser_claim)
+                time.sleep(0.5)
+                self.assertFalse(future.done())  # blocked on the occurrence-row lock the winner holds
+                winner.commit()  # release the lock with A's claim committed
+                self.assertEqual(future.result(timeout=10), 409)
+        finally:
+            winner.close()
+        with self.Session() as db:
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 1)
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual(counts["retained_occurrences"], 1)
+            self.assertEqual(counts["identified_occurrences"], counts["duplicate_removals"] + counts["retained_occurrences"])
+
+    async def test_remap_must_retire_previous_representative(self):
+        # R48 finding 1: a candidate retains exactly one representative. A→O1 then A→O2 with no
+        # removal would leave A holding two retained representatives (retained_occurrences >
+        # retained_candidates). Replacing the representative must record the previous one as
+        # removed. Removing the single-representative guard lets the bare replacement commit.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)])
+            db.commit()
+            o1, o2, o3 = uuid4(), uuid4(), uuid4()
+            db.add_all([ReviewOccurrence(id=o1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
+                        ReviewOccurrence(id=o2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2"),
+                        ReviewOccurrence(id=o3, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-3")])
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, o1, [])
+            research_review.map_occurrences(db, s.project, s.owner, candidate_b, o3, [])
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "included")
+            before = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((before["retained_candidates"], before["retained_occurrences"], before["screened"]), (2, 2, 2))
+            # A replaces its representative O1 with O2 but does not remove O1: refused.
+            with self.assertRaises(HTTPException) as bare:
+                research_review.map_occurrences(db, s.project, s.owner, candidate_a, o2, [])
+            self.assertEqual(bare.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 2)
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), before)
+            # The replacement is allowed when it retires the previous representative O1.
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, o2, [o1])
+            after = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((after["identified_occurrences"], after["duplicate_removals"], after["retained_occurrences"], after["retained_candidates"]), (3, 1, 2, 2))
+            self.assertEqual(after["identified_occurrences"], after["duplicate_removals"] + after["retained_occurrences"])
+
+    async def test_concurrent_remaps_single_winner(self):
+        # R48 finding 1 (concurrent): two replacements of A's representative race. The occurrence
+        # row lock serializes them; the loser re-reads A's committed representative and, still
+        # removing only the original O1, would leave two representatives — refused (409). Removing
+        # with_for_update lets both replacements commit (two retained representatives on A).
+        import time
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(report_a); db.commit()
+            candidate_a = uuid4()
+            db.add(ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id)); db.commit()
+            o1, o2, o3 = uuid4(), uuid4(), uuid4()
+            db.add_all([ReviewOccurrence(id=o1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
+                        ReviewOccurrence(id=o2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2"),
+                        ReviewOccurrence(id=o3, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-3")])
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, o1, [])
+        winner = self.Session()
+        try:
+            research_review.map_occurrences(winner, s.project, s.owner, candidate_a, o2, [o1], commit=False)
+            def loser_remap():
+                with self.Session() as db:
+                    try:
+                        research_review.map_occurrences(db, s.project, s.owner, candidate_a, o3, [o1])
+                        return 200
+                    except HTTPException as error:
+                        return error.status_code
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(loser_remap)
+                time.sleep(0.5)
+                self.assertFalse(future.done())  # blocked on the O1 row lock the winner holds
+                winner.commit()
+                self.assertEqual(future.result(timeout=10), 409)
+        finally:
+            winner.close()
+        with self.Session() as db:
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 2)
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            # A keeps exactly one retained representative (O2); O1 is retired. The loser's O3 was
+            # never mapped, so it stays an identified-but-unmapped occurrence (not a removal).
+            self.assertEqual((counts["retained_candidates"], counts["retained_occurrences"], counts["duplicate_removals"]), (1, 1, 1))
+
+    async def test_backdated_merge_cannot_discard_later_conflicts(self):
+        # R48 finding 2: a merge affects every snapshot from its version onward. v2 decisions
+        # include A and exclude B; merging A into B at v1 must not silently discard that later
+        # conflict (requires_adjudication=False would leave v2 with zero pending). The backdated
+        # merge is refused; merging at v2 records the conflict and forces adjudication. Removing
+        # the later-snapshot conflict check lets the v1 merge commit and drops the v2 conflict.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            research_review.create_protocol(db, s.project, s.owner, version=2, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)])
+            db.commit()
+            # Conflicting decisions exist only in the later (v2) snapshot.
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 2, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 2, "excluded")
+            with self.assertRaises(HTTPException) as backdated:
+                research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: backdated", protocol_version=1)
+            self.assertEqual(backdated.exception.status_code, 409)
+            # No merge recorded; the reports keep their independent identities.
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "report_merge").count(), 0)
+            self.assertNotEqual(db.get(ReviewReport, report_a.id).identity_state, "merged")
+            self.assertIsNone(db.get(ReviewReport, report_a.id).merged_into)
+            # Merging at the current version records the conflict and forces adjudication.
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: current", protocol_version=2)
+            self.assertTrue(result["requires_adjudication"])
+            v2 = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((v2["included_reports"], v2["pending_adjudication"]), (0, 1))
+
+    async def test_concurrent_first_mappings_single_winner(self):
+        # R49 finding 1: two FIRST mappings onto one candidate lock disjoint occurrence rows, so
+        # the occurrence lock alone cannot serialize them — both read an empty history and both
+        # pass the single-representative guard. The candidate-row lock serializes them; the loser
+        # re-reads the winner's committed representative and is refused (409). Removing the
+        # candidate lock lets both first mappings commit (two retained representatives on A).
+        import time
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(report_a); db.commit()
+            candidate_a = uuid4()
+            db.add(ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id)); db.commit()
+            o1, o2 = uuid4(), uuid4()
+            db.add_all([ReviewOccurrence(id=o1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
+                        ReviewOccurrence(id=o2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2")])
+            db.commit()
+        winner = self.Session()
+        try:
+            research_review.map_occurrences(winner, s.project, s.owner, candidate_a, o1, [], commit=False)
+            def loser_first_mapping():
+                with self.Session() as db:
+                    try:
+                        research_review.map_occurrences(db, s.project, s.owner, candidate_a, o2, [])
+                        return 200
+                    except HTTPException as error:
+                        return error.status_code
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(loser_first_mapping)
+                time.sleep(0.5)
+                self.assertFalse(future.done())  # blocked on the candidate-row lock the winner holds
+                winner.commit()
+                self.assertEqual(future.result(timeout=10), 409)
+        finally:
+            winner.close()
+        with self.Session() as db:
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 1)
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            # A keeps exactly one retained representative (O1); the loser's O2 was never mapped,
+            # so it stays an identified-but-unmapped occurrence (not a removal).
+            self.assertEqual((counts["retained_candidates"], counts["retained_occurrences"], counts["duplicate_removals"]), (1, 1, 0))
+
+    async def test_backdated_remap_cannot_break_historical_snapshot(self):
+        # R49 finding 2: the single-representative guard must hold at EVERY affected snapshot, not
+        # just the final global replay. v1 retains O1 (removes O2,O3); v3 retains O2 (removes O1);
+        # a backdated v2 retain O3 (remove O2) leaves O1 and O3 both retained at v2 — conservation
+        # holds but the candidate carries two representatives. The v2 remap is refused. Removing
+        # the per-snapshot validation (global-only) lets the v2 remap commit.
+        s = self.seed()
+        with self.Session() as db:
+            for version in (1, 2, 3):
+                research_review.create_protocol(db, s.project, s.owner, version=version, screening_modes={}, commit=False)
+            db.commit()
+            report_a = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(report_a); db.commit()
+            candidate_a = uuid4()
+            db.add(ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id)); db.commit()
+            o1, o2, o3 = uuid4(), uuid4(), uuid4()
+            db.add_all([ReviewOccurrence(id=o1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
+                        ReviewOccurrence(id=o2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2"),
+                        ReviewOccurrence(id=o3, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-3")])
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, o1, [o2, o3], protocol_version=1)
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, o2, [o1], protocol_version=3)
+            v2_before = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((v2_before["identified_occurrences"], v2_before["duplicate_removals"],
+                              v2_before["retained_occurrences"], v2_before["retained_candidates"]), (3, 2, 1, 1))
+            with self.assertRaises(HTTPException) as backdated:
+                research_review.map_occurrences(db, s.project, s.owner, candidate_a, o3, [o2], protocol_version=2)
+            self.assertEqual(backdated.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "occurrence_map").count(), 2)
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 2), v2_before)
+
+    async def test_decision_on_merged_away_candidate_refused(self):
+        # R49 finding 3: after an unflagged A→B merge at v1, a later v2 decision including A and
+        # excluding B would silently drop A's inclusion (A left the retained set). A decision on a
+        # candidate merged away at the requested snapshot is refused; the representative B decides.
+        # Removing the merged-away guard lets the source decision commit and vanish from counts.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            research_review.create_protocol(db, s.project, s.owner, version=2, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)])
+            db.commit()
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: unflagged", protocol_version=1)
+            self.assertFalse(result["requires_adjudication"])  # no decisions yet at merge time
+            with self.assertRaises(HTTPException) as merged_away:
+                research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 2, "included")
+            self.assertEqual(merged_away.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_a).count(), 0)
+            # The representative decides normally; counts reflect B only, with no silent omission.
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 2, "excluded")
+            v2 = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((v2["screened"], v2["title_abstract_excluded"], v2["pending_adjudication"]), (1, 1, 0))
+
+    async def test_concurrent_decision_merge_serialization(self):
+        # R49 finding 3 (concurrent): a decision on A races the A→B merge. The report-row lock
+        # serializes them; the loser re-reads the committed merge and is refused (409) instead of
+        # recording a decision on the just-merged-away candidate. Removing the report lock lets the
+        # decision commit against the merged source.
+        import time
+        s = self.seed()
+        report_a_id, report_b_id = uuid4(), uuid4()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            research_review.create_protocol(db, s.project, s.owner, version=2, screening_modes={}, commit=False)
+            db.commit()
+            db.add_all([ReviewReport(id=report_a_id, project_id=s.project), ReviewReport(id=report_b_id, project_id=s.project)]); db.commit()
+            candidate_a = uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a_id),
+                        ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report_b_id)]); db.commit()
+        winner = self.Session()
+        try:
+            research_review.merge_reports(winner, s.project, s.owner, report_a_id, report_b_id, "Fixture: racing merge", protocol_version=1, commit=False)
+            def loser_decision():
+                with self.Session() as db:
+                    try:
+                        research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 2, "included")
+                        return 200
+                    except HTTPException as error:
+                        return error.status_code
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(loser_decision)
+                time.sleep(0.5)
+                self.assertFalse(future.done())  # blocked on the report-row lock the merge holds
+                winner.commit()
+                self.assertEqual(future.result(timeout=10), 409)
+        finally:
+            winner.close()
+        with self.Session() as db:
+            self.assertEqual(db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_a).count(), 0)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "report_merge").count(), 1)
+
+    async def test_backdated_merge_cannot_create_cycle_at_later_snapshot(self):
+        # R50 finding 1: cycle validation must hold at EVERY affected snapshot. A→B at v3, split A
+        # at v4, then B→A backdated to v1 leaves both edges active at v3 (the split only removes
+        # A→B from v4 onward), collapsing the representative set to zero. The backdated merge is
+        # refused and v3 is preserved. Collapsing the cycle loop to the requested snapshot lets it commit.
+        s = self.seed()
+        with self.Session() as db:
+            for version in (1, 3, 4):
+                research_review.create_protocol(db, s.project, s.owner, version=version, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)]); db.commit()
+            o1, o2 = uuid4(), uuid4()
+            db.add_all([ReviewOccurrence(id=o1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
+                        ReviewOccurrence(id=o2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2")])
+            db.commit()
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, o1, [], protocol_version=1)
+            research_review.map_occurrences(db, s.project, s.owner, candidate_b, o2, [], protocol_version=1)
+            research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: A into B", protocol_version=3)
+            research_review.split_report(db, s.project, s.owner, report_a.id, "Fixture: split A", protocol_version=4)
+            v3_before = research_review.flow_counts(db, s.project, s.owner, 3)
+            self.assertEqual(v3_before["identified_occurrences"],
+                             v3_before["duplicate_removals"] + v3_before["retained_occurrences"])
+            self.assertEqual(v3_before["retained_candidates"], 1)
+            with self.assertRaises(HTTPException) as cycle:
+                research_review.merge_reports(db, s.project, s.owner, report_b.id, report_a.id, "Fixture: backdated B into A", protocol_version=1)
+            self.assertEqual(cycle.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "report_merge").count(), 1)
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 3), v3_before)
+
+    async def test_backdated_decision_cannot_invalidate_later_merge(self):
+        # R50 finding 2: exclude B at v1, merge A→B at v2 unflagged, then include A at v1. The
+        # merged-away guard covers v1 (A is not merged there), but A's backdated inclusion applies
+        # at the v2 merge snapshot and silently drops from counts. The decision is refused; v2 keeps
+        # B's exclusion with no pending adjudication. Removing the backdated-conflict guard lets it commit.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            research_review.create_protocol(db, s.project, s.owner, version=2, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)]); db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "excluded")
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: unflagged", protocol_version=2)
+            self.assertFalse(result["requires_adjudication"])
+            with self.assertRaises(HTTPException) as backdated:
+                research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 1, "included")
+            self.assertEqual(backdated.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_a).count(), 0)
+            v2 = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((v2["screened"], v2["title_abstract_excluded"], v2["pending_adjudication"]), (1, 1, 0))
+
+    async def test_merge_conflict_scan_includes_decision_versions(self):
+        # R50 finding 3: with only protocol v1, opposing A/B decisions at v2 (via _protocol_for's
+        # fallback) must still force adjudication. A backdated v1 merge scans later snapshots; the
+        # boundary set must include decision versions, not just protocol rows, or the v2 disagreement
+        # is missed and the merge succeeds unflagged. Reverting to protocol-only lets the v1 merge commit.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)]); db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 2, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 2, "excluded")
+            with self.assertRaises(HTTPException) as backdated:
+                research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: backdated", protocol_version=1)
+            self.assertEqual(backdated.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "report_merge").count(), 0)
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: at v2", protocol_version=2)
+            self.assertTrue(result["requires_adjudication"])
+
+    async def test_split_refreshes_cached_report_state(self):
+        # R50 finding 4 (minor): a retained session caches A as unmerged; another session merges it.
+        # Splitting through the SAME retained session must lock and refresh the committed identity
+        # state rather than trust the stale cached instance. Removing db.refresh raises a spurious 409.
+        s = self.seed()
+        db = self.Session()
+        try:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            db.add_all([ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report_b.id)]); db.commit()
+            cached = db.get(ReviewReport, report_a.id)  # strong reference keeps the stale instance in the identity map
+            self.assertEqual(cached.identity_state, "unreviewed")
+            report_a_id, report_b_id = report_a.id, report_b.id
+            with self.Session() as other:
+                research_review.merge_reports(other, s.project, s.owner, report_a_id, report_b_id, "Fixture: merge elsewhere", protocol_version=1)
+            # db still holds the pre-merge cached instance; the split must re-read committed state.
+            research_review.split_report(db, s.project, s.owner, report_a_id, "Fixture: split through retained session", protocol_version=1)
+            self.assertEqual(db.get(ReviewReport, report_a_id).identity_state, "unreviewed")
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "report_split").count(), 1)
+        finally:
+            db.close()
+
+    async def test_backdated_decision_on_representative_cannot_drop_incoming_conflict(self):
+        # R51 finding 1: include A at v1, merge A→B at v2 unflagged, then exclude B at v1. B is the
+        # representative, so the merged-away guard does not fire, but B's backdated exclusion
+        # conflicts with incoming A's inclusion at the v2 snapshot and would silently drop it. The
+        # decision is refused; an agreeing inclusion is accepted. Removing the representative-side
+        # check lets the exclusion commit.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            research_review.create_protocol(db, s.project, s.owner, version=2, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)]); db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 1, "included")
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: unflagged", protocol_version=2)
+            self.assertFalse(result["requires_adjudication"])
+            v1_before = research_review.flow_counts(db, s.project, s.owner, 1)
+            # Backdated into v1, either value is refused: the snapshot closed at the v2 merge.
+            for value in ("excluded", "included"):
+                with self.assertRaises(HTTPException) as backdated:
+                    research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, value)
+                self.assertEqual(backdated.exception.status_code, 409)
+                self.assertIn("closed", backdated.exception.detail)
+            self.assertEqual(db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_b).count(), 0)
+            # On the open snapshot the representative's decision is a decision about the merged
+            # candidate and governs from v2 on (rule 6); the v1 snapshot is untouched.
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 2, "excluded")
+            v2 = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((v2["screened"], v2["title_abstract_excluded"], v2["pending_adjudication"]), (1, 1, 0))
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), v1_before)
+
+    async def test_backdated_decision_guard_covers_later_decision_boundaries(self):
+        # R51 finding 2: exclude B at v3, merge A→B at v2 unflagged, then include A at v1. At the
+        # merge version v2, B has no decision yet, so a merge-version-only scan sees no conflict;
+        # the disagreement appears at v3. The guard must scan every affected boundary, not just
+        # merge versions. Restricting it to merge versions lets the v1 inclusion commit.
+        s = self.seed()
+        with self.Session() as db:
+            for version in (1, 2, 3):
+                research_review.create_protocol(db, s.project, s.owner, version=version, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            candidate_a, candidate_b = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)]); db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 3, "excluded")
+            # The v3 decision closed v2 and v1: neither the merge below it nor the decision below
+            # that can be recorded, so no later boundary is left to scan (rules 1 and 2).
+            with self.assertRaises(HTTPException) as backdated_merge:
+                research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: unflagged", protocol_version=2)
+            self.assertEqual(backdated_merge.exception.status_code, 409)
+            with self.assertRaises(HTTPException) as backdated:
+                research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 1, "included")
+            self.assertEqual(backdated.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_a).count(), 0)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "report_merge").count(), 0)
+            # The same merge on the open snapshot records the conflict-free picture as it stands.
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: unflagged", protocol_version=3)
+            self.assertFalse(result["requires_adjudication"])
+            v3 = research_review.flow_counts(db, s.project, s.owner, 3)
+            self.assertEqual((v3["screened"], v3["title_abstract_excluded"], v3["pending_adjudication"]), (1, 1, 0))
+
+    async def test_backdated_merge_resolves_target_representative(self):
+        # R51 finding 3: include A and exclude C at v1, merge B→C at v2, split B at v3, then backdate
+        # A→B to v1. At v2 the component is A→B→C, so A's inclusion conflicts with C's exclusion —
+        # but comparing against B's own (absent) decision hides it. The merge scan must resolve the
+        # target to its snapshot representative. Using the direct target lets the v1 merge commit.
+        s = self.seed()
+        with self.Session() as db:
+            for version in (1, 2, 3):
+                research_review.create_protocol(db, s.project, s.owner, version=version, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b, report_c = (ReviewReport(id=uuid4(), project_id=s.project) for _ in range(3))
+            db.add_all([report_a, report_b, report_c]); db.commit()
+            candidate_a, candidate_b, candidate_c = uuid4(), uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id),
+                        ReviewCandidate(id=candidate_c, project_id=s.project, report_id=report_c.id)]); db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_c, "title_abstract", 1, "excluded")
+            result = research_review.merge_reports(db, s.project, s.owner, report_b.id, report_c.id, "Fixture: B into C", protocol_version=2)
+            self.assertFalse(result["requires_adjudication"])
+            research_review.split_report(db, s.project, s.owner, report_b.id, "Fixture: split B", protocol_version=3)
+            with self.assertRaises(HTTPException) as backdated:
+                research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: backdated A into B", protocol_version=1)
+            self.assertEqual(backdated.exception.status_code, 409)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "report_merge").count(), 1)
+
+    async def test_backdated_merge_same_direction_is_not_cycle(self):
+        # R51 finding 4 (positive): merge A→B at v3, split A at v4, then merge A→B at v1. The new
+        # edge is the same direction as the existing v3 edge; every affected graph stays acyclic, so
+        # the merge must succeed. Treating source→target reachability as a cycle spuriously returns 409.
+        s = self.seed()
+        with self.Session() as db:
+            for version in (1, 3, 4):
+                research_review.create_protocol(db, s.project, s.owner, version=version, screening_modes={}, commit=False)
+            db.commit()
+            report_a, report_b = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([report_a, report_b]); db.commit()
+            db.add_all([ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report_a.id),
+                        ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report_b.id)]); db.commit()
+            research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: A into B at v3", protocol_version=3)
+            research_review.split_report(db, s.project, s.owner, report_a.id, "Fixture: split A", protocol_version=4)
+            # Backdated below the split, the re-merge is refused; a same-direction edge over an
+            # existing later edge can no longer be constructed at all.
+            with self.assertRaises(HTTPException) as backdated:
+                research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: backdated same direction", protocol_version=1)
+            self.assertEqual(backdated.exception.status_code, 409)
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: re-merge after split", protocol_version=4)
+            self.assertFalse(result["requires_adjudication"])
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "report_merge").count(), 2)
+
+    async def test_merge_with_conflicting_decisions_requires_adjudication(self):
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()  # solo stages: single decisions are final
+            source, target = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([source, target]); db.commit()  # parents before children: UOW has no relationship() ordering
+            version_x, version_y = ReviewReportVersion(id=uuid4(), report_id=source.id), ReviewReportVersion(id=uuid4(), report_id=target.id)
+            db.add_all([version_x, version_y]); db.commit()
+            candidate_x, candidate_y = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_x, project_id=s.project, report_id=source.id, selected_version_id=version_x.id),
+                        ReviewCandidate(id=candidate_y, project_id=s.project, report_id=target.id, selected_version_id=version_y.id)])
+            db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate_x, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_y, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_x, "fulltext", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_y, "fulltext", 1, "excluded")
+            counts_before = research_review.flow_counts(db, s.project, s.owner, 1)  # pre-merge snapshot
+            result = research_review.merge_reports(db, s.project, s.owner, source.id, target.id, "Fixture: same report re-derived",
+                                                   protocol_version=1)
+            self.assertTrue(result["requires_adjudication"])
+            self.assertEqual(result["conflicting_decisions"][0]["source"], "included")
+            self.assertEqual(result["conflicting_decisions"][0]["target"], "excluded")
+            # The conflict is unresolved: the merged candidate is pending, not silently included or excluded.
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["included_reports"], counts["fulltext_excluded"], counts["pending_adjudication"]), (0, 0, 1))
+            # Resolution: the named adjudicator decides the merged (target) candidate.
+            research_review.record_decision(db, s.project, s.owner, candidate_y, "fulltext", 1, "included", role="adjudication")
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (1, 0))
+            # Cyclic and chained merges are rejected under lock.
+            with self.assertRaises(HTTPException) as cycle:
+                research_review.merge_reports(db, s.project, s.owner, target.id, source.id, "Fixture: reverse", protocol_version=1)
+            self.assertEqual(cycle.exception.status_code, 409)  # target is already merged
+            research_review.split_report(db, s.project, s.owner, source.id, "Fixture: identity review failed", protocol_version=1)
+            third = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(third); db.commit()
+            research_review.merge_reports(db, s.project, s.owner, source.id, target.id, "Fixture: re-merge", protocol_version=1)
+            with self.assertRaises(HTTPException) as chained:
+                research_review.merge_reports(db, s.project, s.owner, third.id, source.id, "Fixture: into merged", protocol_version=1)
+            self.assertEqual(chained.exception.status_code, 409)  # source already merged
+            with self.assertRaises(HTTPException) as self_merge:
+                research_review.merge_reports(db, s.project, s.owner, third.id, third.id, "Fixture: self", protocol_version=1)
+            self.assertEqual(self_merge.exception.status_code, 422)
+            research_review.split_report(db, s.project, s.owner, source.id, "Fixture: cleanup", protocol_version=1)
+            # Reversal: split restores both candidates. The recorded adjudication decision
+            # remains on the target candidate (append-only history — never rewritten); flagging
+            # the affected review for re-decision is amendment machinery for P10.
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["included_reports"], counts["fulltext_excluded"], counts["pending_adjudication"]), (2, 0, 0))
+            # R23: a merge onto a candidate absent from the requested snapshot is rejected
+            # and preserves the current snapshot exactly.
+            counts_stable = research_review.flow_counts(db, s.project, s.owner, 1)
+            late_report2 = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(late_report2); db.commit()
+            late_candidate2 = ReviewCandidate(id=uuid4(), project_id=s.project, report_id=late_report2.id,
+                                              selected_version_id=None, protocol_version=2)
+            db.add(late_candidate2); db.commit()
+            with self.assertRaises(HTTPException) as snapshot2:
+                research_review.merge_reports(db, s.project, s.owner, target.id, late_report2.id,
+                                              "Fixture: onto later candidate", protocol_version=1)
+            self.assertEqual(snapshot2.exception.status_code, 422)
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), counts_stable)
+            # R24: a non-retained merge target is refused — folding occurrences into it
+            # would remove them from accounting.
+            non_retained_report = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(non_retained_report); db.commit()
+            non_retained = ReviewCandidate(id=uuid4(), project_id=s.project, report_id=non_retained_report.id,
+                                           selected_version_id=None, protocol_version=1, retained=False)
+            db.add(non_retained); db.commit()
+            conservation_before = research_review.flow_counts(db, s.project, s.owner, 1)
+            with self.assertRaises(HTTPException) as non_retained_refused:
+                research_review.merge_reports(db, s.project, s.owner, source.id, non_retained_report.id,
+                                              "Fixture: onto non-retained", protocol_version=1)
+            self.assertEqual(non_retained_refused.exception.status_code, 422)
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), conservation_before)
+            # Historic snapshots: a merge at a later protocol version leaves v1 sets untouched.
+
+    async def test_independent_review_privacy(self):
+        s = self.seed()
+        reviewer_1, reviewer_2 = uuid4(), uuid4()
+        with self.engine.begin() as conn:
+            for uid in (reviewer_1, reviewer_2):
+                conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": uid, "e": str(uid) + "@test.invalid"})
+                conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": uid})
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1,
+                                            screening_modes={"title_abstract": "solo", "fulltext": "dual"}, commit=False)
+            db.commit()
+            report = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(report); db.commit()  # parent before child: UOW has no relationship() ordering
+            version = ReviewReportVersion(id=uuid4(), report_id=report.id)
+            db.add(version); db.commit()
+            candidate = ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report.id, selected_version_id=version.id)
+            db.add(candidate); db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate.id, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, reviewer_1, candidate.id, "fulltext", 1, "included")
+            visible_to_2 = research_review.visible_decisions(db, s.project, reviewer_2, 1)
+            self.assertEqual([d for d in visible_to_2 if d.actor_id == reviewer_1], [])  # dual: hidden until both submit
+            # Solo-stage decisions are final and visible to every authorized reader.
+            visible_ta = research_review.visible_decisions(db, s.project, reviewer_2, 1)
+            self.assertEqual(len([d for d in visible_ta if d.stage == "title_abstract"]), 1)
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["fulltext_assessed"], counts["pending_adjudication"]), (0, 1))  # one reviewer is not dual review
+            # One reviewer cannot satisfy dual review by submitting twice.
+            with self.assertRaises(HTTPException) as duplicate:
+                research_review.record_decision(db, s.project, reviewer_1, candidate.id, "fulltext", 1, "included")
+            self.assertEqual(duplicate.exception.status_code, 409)
+            research_review.record_decision(db, s.project, reviewer_2, candidate.id, "fulltext", 1, "excluded")
+            visible = research_review.visible_decisions(db, s.project, reviewer_2, 1)
+            self.assertEqual(len([d for d in visible if d.candidate_id == candidate.id and d.stage == "fulltext"]), 2)
+            # Disagreement exists at v1, so the named adjudicator may decide. An amended protocol
+            # with nothing recorded under it yet has not closed v1.
+            research_review.amend_protocol(db, s.project, s.owner, new_version=2, commit=False)
+            db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate.id, "fulltext", 1, "included", role="adjudication")
+            counts_v1_final = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual(counts_v1_final["included_reports"], 1)
+            # A v2 decision does not exist in the v1 snapshot (historical read regression).
+            db.commit()
+            research_review.record_decision(db, s.project, reviewer_1, candidate.id, "fulltext", 2, "included")
+            historical = research_review.visible_decisions(db, s.project, reviewer_2, 1)
+            self.assertEqual([d for d in historical if d.protocol_version == 2], [])
+            # Adjudication evaluates the latest applicable cohort only: v1 dual excludes
+            # plus a lone v2 inclusion do not combine into a fabricated disagreement.
+            with self.assertRaises(HTTPException) as cohort:
+                research_review.record_decision(db, s.project, s.owner, candidate.id, "fulltext", 2,
+                                                "included", role="adjudication")
+            self.assertEqual(cohort.exception.status_code, 409)
+            # Decisions cannot predate the candidate's acquisition: a v2-introduced
+            # candidate refuses a v1 decision.
+            v2_report = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(v2_report); db.commit()
+            v2_candidate = ReviewCandidate(id=uuid4(), project_id=s.project, report_id=v2_report.id,
+                                           selected_version_id=None, protocol_version=2)
+            db.add(v2_candidate); db.commit()
+            with self.assertRaises(HTTPException) as predate:
+                research_review.record_decision(db, s.project, s.owner, v2_candidate.id, "title_abstract", 1, "included")
+            self.assertEqual(predate.exception.status_code, 409)  # v1 closed at the first v2 decision
+            # The lone v2 submission is dual-hidden from the peer but visible to its author.
+            self.assertEqual(len([d for d in research_review.visible_decisions(db, s.project, reviewer_2, 2)
+                                  if d.protocol_version == 2]), 0)
+            self.assertEqual(len([d for d in research_review.visible_decisions(db, s.project, reviewer_1, 2)
+                                  if d.protocol_version == 2]), 1)
+            # The closed v1 snapshot cannot be re-adjudicated, and its counts did not move.
+            with self.assertRaises(HTTPException) as closed:
+                research_review.record_decision(db, s.project, s.owner, candidate.id, "fulltext", 1, "excluded", role="adjudication")
+            self.assertEqual(closed.exception.status_code, 409)
+            db.rollback()  # a refused write holds the project root lock until its transaction ends
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), counts_v1_final)
+            db.rollback()
+            # A solo reviewer superseding their own submission does not fabricate a
+            # disagreement for adjudication (effective decisions only).
+            with self.Session() as db:
+                report2 = ReviewReport(id=uuid4(), project_id=s.project)
+                db.add(report2); db.commit()
+                version2 = ReviewReportVersion(id=uuid4(), report_id=report2.id)
+                db.add(version2); db.commit()
+                candidate2 = ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report2.id,
+                                             selected_version_id=version2.id)
+                db.add(candidate2); db.commit()
+                # Solo stage permits repeated submissions by the same reviewer.
+                research_review.record_decision(db, s.project, reviewer_1, candidate2.id, "title_abstract", 2, "excluded")
+                research_review.record_decision(db, s.project, reviewer_1, candidate2.id, "title_abstract", 2, "included")
+                with self.assertRaises(HTTPException) as fabricated:
+                    research_review.record_decision(db, s.project, s.owner, candidate2.id, "title_abstract", 2,
+                                                    "excluded", role="adjudication")
+                self.assertEqual(fabricated.exception.status_code, 409)
+                self.assertIn("genuine disagreement", fabricated.exception.detail)
+
+    # ---------- C10: conversion ----------
+
+    def _v1_document(self, paper_id, quote="Exact fixture result."):
+        from app.services.investigation import text_hash
+        claim_id, finding_id, relation_id = str(uuid4()), str(uuid4()), str(uuid4())
+        section_id, block_id = str(uuid4()), str(uuid4())
+        document = {
+            "format": "openpaper/investigation", "version": 1,
+            "case": {"question": "Fixture question"},
+            "claims": [{"id": claim_id, "statement": "Fixture claim statement.", "reasoning": "R", "caveats": "C"}],
+            "findings": [{"id": finding_id, "label": "Fixture finding", "observed_result": "O",
+                          "author_interpretation": "A", "our_interpretation": "U", "limitations": "L",
+                          "source": {"kind": "anchored", "paper_id": str(paper_id), "start_line": 1, "end_line": 1,
+                                     "quote": quote, "source_sha256": text_hash("Title\n" + quote + "\nLimitations."),
+                                     "quote_sha256": text_hash(quote)}}],
+            "relations": [{"id": relation_id, "claim_id": claim_id, "finding_id": finding_id,
+                           "relation": "supports", "rationale": "Fixture rationale."}],
+            "manuscript": {"title": "Fixture manuscript", "sections": [{"id": section_id, "title": "S", "blocks": [
+                {"id": block_id, "kind": "paragraph", "text": "Human fixture prose.", "claim_ids": [claim_id],
+                 "finding_ids": [finding_id],
+                 "provenance": {"kind": "assistant", "request_id": str(uuid4()), "message_id": str(uuid4())},
+                 "dependency_pins": {}}]}]},
+        }
+        return document, {"claim_id": claim_id, "finding_id": finding_id, "relation_id": relation_id, "block_id": block_id}
+
+    def _write_v1_row(self, project, document):
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO project_investigations (project_id,schema_version,revision,document) VALUES (:p,1,7,:doc)"),
+                         {"p": project, "doc": json.dumps(document)})
+
+    async def test_conversion_preserves_identity_and_is_atomic(self):
+        from unittest.mock import patch
+        from fastapi import HTTPException
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture A", "Title\nExact fixture result.\nLimitations.")
+        document, ids = self._v1_document(paper)
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            # Unconverted projects refuse typed writes: one authoritative write path.
+            with self.assertRaises(HTTPException) as refusal:
+                research_entities.create_entity(db, s.project, s.owner, "claim", {"statement": "Premature"})
+            self.assertEqual(refusal.exception.status_code, 409)
+        with self.Session() as db, patch.object(db, "commit", side_effect=RuntimeError("Synthetic conversion failure")):
+            with self.assertRaises(RuntimeError):
+                research_convert.convert_project(db, s.project, s.owner)
+        with self.engine.begin() as conn:
+            for table in ("research_entities", "research_relations", "research_source_versions", "research_projects"):
+                count = conn.execute(self.text(f"SELECT count(*) FROM {table} WHERE project_id = :p"), {"p": s.project}).scalar_one()
+                self.assertEqual(count, 0, f"{table} must be untouched after the aborted conversion")
+            revision_count = conn.execute(self.text("SELECT count(*) FROM research_entity_revisions WHERE entity_id IN (SELECT id FROM research_entities WHERE project_id = :p)"), {"p": s.project}).scalar_one()
+            self.assertEqual(revision_count, 0, "revision rows must be untouched after the aborted conversion")
+            row = conn.execute(self.text("SELECT revision, document FROM project_investigations WHERE project_id = :p"), {"p": s.project}).one()
+            self.assertEqual(row.revision, 7)
+            self.assertEqual(row.document["claims"][0]["statement"], "Fixture claim statement.")
+        with self.Session() as db:
+            manifest = research_convert.convert_project(db, s.project, s.owner)
+            self.assertEqual(manifest["counts"], {"claims": 1, "findings": 1, "relations": 1, "sections": 1, "source_versions": 1})
+            self.assertEqual(manifest["unresolved_sources"], [])
+            self.assertEqual(manifest["v1_revision"], 7)
+            self.assertEqual(manifest["manuscript_dependencies"][0]["provenance_origin"], "assistant")
+            claim = db.get(ResearchEntity, UUID(ids["claim_id"]))
+            finding = db.get(ResearchEntity, UUID(ids["finding_id"]))
+            self.assertEqual(claim.payload["statement"], "Fixture claim statement.")
+            self.assertEqual(finding.payload["label"], "Fixture finding")
+            version = db.query(ResearchSourceVersion).filter(ResearchSourceVersion.project_id == s.project).one()
+            self.assertEqual(finding.payload["anchor"]["source_version_id"], str(version.id))
+            self.assertEqual(finding.payload["anchor"]["quote"], "Exact fixture result.")
+            self.assertEqual(version.text_sha256, document["findings"][0]["source"]["source_sha256"])
+            self.assertEqual(version.source_metadata["title"], "Fixture A")
+            history = db.query(ResearchEntityRevision).filter(ResearchEntityRevision.entity_id == claim.id).one()
+            self.assertEqual(history.origin, "imported")
+            self.assertIn("v1 storage conversion", history.provenance["origin_label"])
+            relation = db.query(ResearchRelation).filter(ResearchRelation.id == UUID(ids["relation_id"])).one()
+            self.assertEqual((relation.relation_type, str(relation.source_id), str(relation.target_id)),
+                             ("supports", ids["finding_id"], ids["claim_id"]))
+            root = db.get(ResearchProject, s.project)
+            self.assertEqual((root.storage_generation, root.change_sequence), ("v2", 5))  # 4 created + the flip
+            v1 = db.get(ProjectInvestigation, s.project)
+            self.assertEqual(v1.revision, 7)  # v1 snapshot retained read-only
+            self.assertEqual(v1.document["manuscript"]["sections"][0]["blocks"][0]["provenance"]["kind"], "assistant")
+            with self.assertRaises(HTTPException) as repeat:
+                research_convert.convert_project(db, s.project, s.owner)
+            self.assertEqual(repeat.exception.status_code, 409)
+            # One authoritative write path: legacy v1 investigation writes are refused once converted.
+            from app.schemas.investigation import SaveInvestigation, InvestigationDocument
+            from fastapi import HTTPException as HTTPError
+            with self.assertRaises(HTTPError) as legacy_write:
+                __import__("app.services.investigation", fromlist=["save"]).save(
+                    db, s.project, s.owner, SaveInvestigation(document=InvestigationDocument()),
+                    f'"investigation:{s.project}:7"')
+            self.assertEqual(legacy_write.exception.status_code, 409)
+
+    async def test_conversion_binds_each_finding_by_its_own_hash(self):
+        # Two findings anchored to one paper whose current bytes match only the newer
+        # capture: the stale-hash finding stays unresolved and is never rebound to the
+        # version created for the newer capture.
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture D", "Title\nNewer wording.\nLimitations.")
+        from app.services.investigation import text_hash
+        stale = {"id": str(uuid4()), "label": "Stale capture", "source": {"kind": "anchored", "paper_id": str(paper),
+                                                                          "start_line": 1, "end_line": 1, "quote": "Title",
+                                                                          "source_sha256": text_hash("Title\nOld wording.\nLimitations."),
+                                                                          "quote_sha256": text_hash("Title")}}
+        current = {"id": str(uuid4()), "label": "Current capture", "source": {"kind": "anchored", "paper_id": str(paper),
+                                                                              "start_line": 2, "end_line": 2, "quote": "Newer wording.",
+                                                                              "source_sha256": text_hash("Title\nNewer wording.\nLimitations."),
+                                                                              "quote_sha256": text_hash("Newer wording.")}}
+        document = {"format": "openpaper/investigation", "version": 1, "case": {}, "claims": [],
+                    "findings": [stale, current], "relations": [], "manuscript": {"title": "", "sections": []}}
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            manifest = research_convert.convert_project(db, s.project, s.owner)
+            self.assertEqual(len(manifest["unresolved_sources"]), 1)
+            self.assertEqual(db.query(ResearchSourceVersion).filter(ResearchSourceVersion.project_id == s.project).count(), 1)
+            stale_entity = db.get(ResearchEntity, UUID(stale["id"]))
+            current_entity = db.get(ResearchEntity, UUID(current["id"]))
+            self.assertNotIn("source_version_id", stale_entity.payload["anchor"])
+            self.assertEqual(current_entity.payload["anchor"]["quote"], "Newer wording.")
+
+    async def test_conversion_refuses_hash_mismatch_without_binding(self):
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture B", "Title\nOriginal wording.\nLimitations.")
+        document, ids = self._v1_document(paper, quote="Original wording.")
+        with self.engine.begin() as conn:
+            conn.execute(self.text("UPDATE papers SET raw_content = :raw WHERE id = :p"), {"raw": "Title\nChanged wording.\nLimitations.", "p": paper})
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            manifest = research_convert.convert_project(db, s.project, s.owner)
+            self.assertEqual(manifest["unresolved_sources"][0]["reason"], "source_hash_mismatch")
+            self.assertEqual(db.query(ResearchSourceVersion).filter(ResearchSourceVersion.project_id == s.project).count(), 0)
+            finding = db.get(ResearchEntity, UUID(ids["finding_id"]))
+            self.assertNotIn("source_version_id", finding.payload["anchor"])
+            self.assertIn("requires review", finding.payload["anchor"]["notes"])
+
+    async def test_conversion_refreshes_cached_paper_across_replacement(self):
+        # R45: conversion must refresh a cached Paper before hashing. Session A caches the
+        # original bytes and stays open while session B commits a replacement; converting
+        # through A must leave the original capture unresolved, never certify stale bytes.
+        # Removing research_convert's Paper refresh makes A bind a version against the old
+        # bytes, so the unresolved assertions below fail.
+        from app.database.models import Paper
+        s = self.seed()
+        original = "Title\nExact fixture result.\nLimitations."
+        paper = self.seed_paper(s.project, s.owner, "Fixture C", original)
+        document, ids = self._v1_document(paper)  # source_sha256 binds the ORIGINAL bytes
+        self._write_v1_row(s.project, document)
+        db_a = self.Session()
+        try:
+            cached = db_a.get(Paper, paper)
+            self.assertEqual(cached.raw_content, original)
+            with self.engine.begin() as conn:
+                conn.execute(self.text("UPDATE papers SET raw_content = :raw WHERE id = :p"),
+                             {"raw": "Title\nReplacement wording.\nLimitations.", "p": paper})
+            manifest = research_convert.convert_project(db_a, s.project, s.owner)
+            self.assertEqual(manifest["counts"]["source_versions"], 0)
+            self.assertEqual(len(manifest["unresolved_sources"]), 1)
+            self.assertEqual(manifest["unresolved_sources"][0]["reason"], "source_hash_mismatch")
+            self.assertEqual(db_a.query(ResearchSourceVersion).filter_by(project_id=s.project).count(), 0)
+            finding = db_a.get(ResearchEntity, UUID(ids["finding_id"]))
+            self.assertNotIn("source_version_id", finding.payload["anchor"])
+            self.assertIn("requires review", finding.payload["anchor"]["notes"])
+        finally:
+            db_a.close()
+
+    async def test_same_transaction_adjudication_and_reference_validation(self):
+        # R18: an adjudication recorded in the SAME transaction as the conflicting merge
+        # still resolves it (durable shared-sequence ordering), and the contract payload
+        # fields validate their references.
+        s = self.seed()
+        other = self.seed()
+        self._write_v1_row(s.project, {"format": "openpaper/investigation", "version": 1, "case": {},
+                                       "claims": [], "findings": [], "relations": [],
+                                       "manuscript": {"title": "", "sections": []}})
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()  # solo modes: single decisions are final
+            source, target = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([source, target]); db.commit()
+            version_x, version_y = ReviewReportVersion(id=uuid4(), report_id=source.id), ReviewReportVersion(id=uuid4(), report_id=target.id)
+            db.add_all([version_x, version_y]); db.commit()
+            candidate_x, candidate_y = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_x, project_id=s.project, report_id=source.id, selected_version_id=version_x.id),
+                        ReviewCandidate(id=candidate_y, project_id=s.project, report_id=target.id, selected_version_id=version_y.id)])
+            db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate_x, "title_abstract", 1, "included", commit=False)
+            research_review.record_decision(db, s.project, s.owner, candidate_y, "title_abstract", 1, "included", commit=False)
+            research_review.record_decision(db, s.project, s.owner, candidate_x, "fulltext", 1, "included", commit=False)
+            research_review.record_decision(db, s.project, s.owner, candidate_y, "fulltext", 1, "excluded", commit=False)
+            result = research_review.merge_reports(db, s.project, s.owner, source.id, target.id, "Fixture: conflict",
+                                                   protocol_version=1, commit=False)
+            self.assertTrue(result["requires_adjudication"])
+            # Same transaction: the resolution still postdates the merge event.
+            research_review.record_decision(db, s.project, s.owner, candidate_y, "fulltext", 1, "included",
+                                            role="adjudication", commit=False)
+            db.commit()
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (1, 0))
+            # Contract payload fields persist, read back, and validate references.
+            claim = research_entities.create_entity(db, s.project, s.owner, "claim", {"statement": "Anchor claim."})
+            assumption = research_entities.create_entity(db, s.project, s.owner, "assumption",
+                                                         {"text": "Fixture assumption.",
+                                                          "basis_entity_ids": [claim["entity_id"]]})
+            self.assertEqual(assumption["revision"], 1)
+            gap = research_entities.create_entity(db, s.project, s.owner, "gap",
+                                                  {"description": "Fixture gap.",
+                                                   "blocking_entity_ids": [claim["entity_id"]]})
+            loaded = research_entities.load_entity(db, s.project, s.owner, UUID(assumption["entity_id"]))
+            self.assertEqual(loaded["entity"]["payload"]["basis_entity_ids"], [claim["entity_id"]])
+            with self.assertRaises(HTTPException) as dangling:
+                research_entities.create_entity(db, s.project, s.owner, "gap",
+                                                {"description": "Dangling dependency.",
+                                                 "blocking_entity_ids": [str(uuid4())]})
+            self.assertEqual(dangling.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as cross_user:
+                research_entities.create_entity(db, s.project, s.owner, "decision",
+                                                {"text": "Fixture decision.", "decided_by": str(uuid4())})
+            self.assertEqual(cross_user.exception.status_code, 422)
+            decision = research_entities.create_entity(db, s.project, s.owner, "decision",
+                                                       {"text": "Fixture decision.", "decided_by": str(s.owner)})
+            self.assertIn("change_sequence", decision)
+
+    async def test_merge_carries_unresolved_source_disagreement(self):
+        # R25: merging a half-disagreed source (no adjudication) onto a decided target
+        # forces adjudication on the merged candidate instead of erasing the disagreement.
+        s = self.seed()
+        reviewer_1, reviewer_2 = uuid4(), uuid4()
+        with self.engine.begin() as conn:
+            for uid in (reviewer_1, reviewer_2):
+                conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": uid, "e": str(uid) + "@test.invalid"})
+                conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": uid})
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1,
+                                            screening_modes={"title_abstract": "solo", "fulltext": "dual"}, commit=False)
+            db.commit()
+            source, target = ReviewReport(id=uuid4(), project_id=s.project), ReviewReport(id=uuid4(), project_id=s.project)
+            db.add_all([source, target]); db.commit()
+            version_s, version_t = ReviewReportVersion(id=uuid4(), report_id=source.id), ReviewReportVersion(id=uuid4(), report_id=target.id)
+            db.add_all([version_s, version_t]); db.commit()
+            candidate_s, candidate_t = uuid4(), uuid4()
+            db.add_all([ReviewCandidate(id=candidate_s, project_id=s.project, report_id=source.id, selected_version_id=version_s.id),
+                        ReviewCandidate(id=candidate_t, project_id=s.project, report_id=target.id, selected_version_id=version_t.id)])
+            db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate_s, "title_abstract", 1, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_t, "title_abstract", 1, "included")
+            # Source reviewers disagree; no adjudication has been recorded.
+            research_review.record_decision(db, s.project, reviewer_1, candidate_s, "fulltext", 1, "included")
+            research_review.record_decision(db, s.project, reviewer_2, candidate_s, "fulltext", 1, "excluded")
+            # Target decided by two agreeing reviewers.
+            research_review.record_decision(db, s.project, reviewer_1, candidate_t, "fulltext", 1, "included")
+            research_review.record_decision(db, s.project, reviewer_2, candidate_t, "fulltext", 1, "included")
+            result = research_review.merge_reports(db, s.project, s.owner, source.id, target.id,
+                                                   "Fixture: unresolved disagreement", protocol_version=1)
+            self.assertTrue(result["requires_adjudication"])
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (0, 1))
+            # The named adjudicator resolves the carried disagreement.
+            research_review.record_decision(db, s.project, s.owner, candidate_t, "fulltext", 1, "included", role="adjudication")
+            counts = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual((counts["included_reports"], counts["pending_adjudication"]), (1, 0))
+
+    async def test_conversion_waits_for_concurrent_first_save(self):
+        # R25: conversion takes the same project lock as v1 saves, so a first save that
+        # commits during conversion is converted (never overwritten by empty v2 storage).
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture F", "Title\nExact fixture result.\nLimitations.")
+        document, ids = self._v1_document(paper)
+        from sqlalchemy import text as raw_text
+        conn1 = self.engine.connect()
+        tx1 = conn1.begin()
+        conn1.execute(raw_text("SELECT id FROM project WHERE id = :p FOR UPDATE"), {"p": str(s.project)})
+        conn1.execute(raw_text("INSERT INTO project_investigations (project_id, schema_version, revision, document) "
+                                "VALUES (:p, 1, 1, :doc)"), {"p": str(s.project), "doc": json.dumps(document)})
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(lambda: _convert_in_session(self, s.project, s.owner))
+            import time
+            time.sleep(0.5)
+            self.assertFalse(future.done())  # blocked on the project lock: ordered after the save
+            tx1.commit()
+            manifest = future.result(timeout=10)
+        self.assertEqual(manifest["counts"]["claims"], 1)
+        conn1.close()
+
+    async def test_anchor_verification_refreshes_cached_paper(self):
+        # R44: _verify_anchor refreshes the cached Paper — a retained session cannot
+        # anchor a new quotation against old bytes after a committed replacement.
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture I", "Title\nExact fixture result.\nLimitations.")
+        document, ids = self._v1_document(paper)
+        self._write_v1_row(s.project, document)
+        db_a = self.Session()
+        try:
+            research_convert.convert_project(db_a, s.project, s.owner)
+            # Session A caches the paper (old bytes) and stays open.
+            cached_paper = db_a.get(__import__("app.database.models", fromlist=["Paper"]).Paper, paper)
+            self.assertIn("Exact fixture result.", cached_paper.raw_content)
+            with self.engine.begin() as conn:
+                conn.execute(self.text("UPDATE papers SET raw_content = :raw WHERE id = :p"),
+                             {"raw": "Title\nReplacement wording.\nLimitations.", "p": paper})
+            # Session A anchors a NEW quotation against the replacement source through
+            # its cached paper: the refresh must see the new bytes and reject the old
+            # quotation with 409 (not accept it against stale bytes).
+            from app.services.investigation import text_hash
+            with self.assertRaises(HTTPException) as stale_bytes:
+                research_entities.create_entity(db_a, s.project, s.owner, "finding",
+                                                {"label": "Anchored after replacement",
+                                                 "anchor": {"source_version_id": db_a.query(
+                                                     __import__("app.database.models", fromlist=["ResearchSourceVersion"]).ResearchSourceVersion).filter_by(
+                                                     project_id=s.project).first().id,
+                                                     "start_line": 2, "end_line": 2,
+                                                     "quote": "Exact fixture result.",
+                                                     "quote_sha256": text_hash("Exact fixture result.")}})
+            self.assertEqual(stale_bytes.exception.status_code, 409)
+        finally:
+            db_a.close()
+
+    async def test_anchor_requires_current_project_source_access(self):
+        # R45: a new or changed anchor must require the current ProjectPaper association.
+        # Revoking project-source access refuses the anchor even though the global Paper
+        # row and its bytes still exist. Removing _verify_anchor's association check lets
+        # both writes below succeed against the still-present Paper, failing the assertions.
+        from app.database.models import Paper, ResearchSourceVersion
+        from app.services.investigation import text_hash
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture R", "Title\nExact fixture result.\nLimitations.")
+        document, ids = self._v1_document(paper)
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            version = db.query(ResearchSourceVersion).filter_by(project_id=s.project).one()
+            anchor = {"source_version_id": str(version.id), "start_line": 2, "end_line": 2,
+                      "quote": "Exact fixture result.", "quote_sha256": text_hash("Exact fixture result.")}
+            created = research_entities.create_entity(db, s.project, s.owner, "finding",
+                                                      {"label": "Before revocation", "anchor": anchor})
+            self.assertEqual(created["revision"], 1)
+            entity_id = created["entity_id"]
+        with self.engine.begin() as conn:
+            conn.execute(self.text("DELETE FROM project_paper WHERE project_id = :p AND paper_id = :paper"),
+                         {"p": s.project, "paper": paper})
+        with self.Session() as db:
+            version = db.query(ResearchSourceVersion).filter_by(project_id=s.project).one()
+            anchor = {"source_version_id": str(version.id), "start_line": 2, "end_line": 2,
+                      "quote": "Exact fixture result.", "quote_sha256": text_hash("Exact fixture result.")}
+            with self.assertRaises(HTTPException) as new_anchor:
+                research_entities.create_entity(db, s.project, s.owner, "finding",
+                                                {"label": "After revocation", "anchor": anchor})
+            self.assertEqual(new_anchor.exception.status_code, 409)
+            changed = {"source_version_id": str(version.id), "start_line": 1, "end_line": 1,
+                       "quote": "Title", "quote_sha256": text_hash("Title")}
+            with self.assertRaises(HTTPException) as changed_anchor:
+                research_entities.revise_entity(db, s.project, s.owner, UUID(entity_id), 1,
+                                                {"label": "Changed after revocation", "anchor": changed})
+            self.assertEqual(changed_anchor.exception.status_code, 409)
+            self.assertIsNotNone(db.get(Paper, paper))  # only the association is gone, not the Paper
+
+    async def test_metered_rejects_malformed_quantities(self):
+        s = self.seed()
+        with self.Session() as db:
+            # Price tables are global; this suite registers its own version so the test is
+            # independent of the admission test's registrations.
+            metered.register_price_table(db, {"synthesis_task": {"unit_prices": {"input_tokens": 0.00001, "output_tokens": 0.00003},
+                                                                 "max_cost": 0.5}}, version=3)
+            limits = {"max_inflight": 2}
+            # Negative quantities cannot offset the cost cap (R25).
+            with self.assertRaises(HTTPException) as negative:
+                metered.reserve(db, s.project, s.owner, "synthesis_task",
+                                {"units": {"input_tokens": 1000000, "output_tokens": -1000000}},
+                                {}, idempotency_key="negative", limits=limits)
+            self.assertEqual(negative.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as not_finite:
+                metered.reserve(db, s.project, s.owner, "synthesis_task",
+                                {"units": {"input_tokens": float("nan")}}, {}, idempotency_key="nan", limits=limits)
+            self.assertEqual(not_finite.exception.status_code, 422)
+            estimate = {"units": {"input_tokens": 10000, "output_tokens": 2000}}
+            operation, _ = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate,
+                                           {"question": "fixture"}, idempotency_key="q-1", limits=limits)
+            metered.admit(db, s.project, s.owner, operation.id)
+            metered.start(db, s.project, s.owner, operation.id)
+            with self.assertRaises(HTTPException) as negative_usage:
+                metered.settle(db, s.project, s.owner, operation.id, {"units": {"input_tokens": -5}})
+            self.assertEqual(negative_usage.exception.status_code, 422)
+            metered.settle(db, s.project, s.owner, operation.id, {"units": {"input_tokens": 10432, "output_tokens": 1717}})
+            self.assertEqual(operation.state, "completed")
+
+    async def test_load_entity_redacts_with_cached_paper(self):
+        # R42: the redaction check refreshes the cached Paper — a session retaining the
+        # paper across a text-clearing commit still redacts (quotation never leaves the
+        # server through current payload or history).
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture H", "Title\nExact fixture result.\nLimitations.")
+        document, ids = self._v1_document(paper)
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+        db_a = self.Session()
+        try:
+            cached_paper = db_a.get(__import__("app.database.models", fromlist=["Paper"]).Paper, paper)
+            self.assertIsNotNone(cached_paper)  # session A caches the paper and stays open
+            with self.Session() as db:
+                loaded = research_entities.load_entity(db, s.project, s.owner, UUID(ids["finding_id"]))
+                self.assertIn("quote", loaded["entity"]["payload"]["anchor"])
+            with self.engine.begin() as conn:
+                conn.execute(self.text("UPDATE papers SET raw_content = NULL WHERE id = :p"), {"p": paper})
+            # Session A redacts through its cached paper.
+            loaded = research_entities.load_entity(db_a, s.project, s.owner, UUID(ids["finding_id"]))
+            self.assertNotIn("quote", loaded["entity"]["payload"]["anchor"])
+            self.assertNotIn("Exact fixture result.", json.dumps(loaded))
+        finally:
+            db_a.close()
+
+    async def test_load_entity_refreshes_cached_head(self):
+        # R46: load_entity must refresh a cached entity head. Session A retains a strong
+        # reference to the revision-1 head (the identity map is weak, so without a retained
+        # reference the row would be re-fetched) while another session commits revision 2;
+        # reading through A must return the committed head consistent with history [1, 2],
+        # not a stale revision-1 head alongside newer history. Removing the head refresh
+        # returns revision 1 with history [1, 2].
+        s = self.seed()
+        document, ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        claim_id = UUID(ids["claim_id"])
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+        db_a = self.Session()
+        try:
+            cached_head = db_a.get(ResearchEntity, claim_id)  # strong reference keeps revision 1 cached
+            self.assertEqual(cached_head.revision, 1)
+            with self.Session() as db:
+                research_entities.revise_entity(db, s.project, s.owner, claim_id, 1,
+                                                {"statement": "Edited in another session."})
+            self.assertEqual(cached_head.revision, 1)  # still the stale cached head in session A
+            loaded = research_entities.load_entity(db_a, s.project, s.owner, claim_id)
+            self.assertEqual(loaded["entity"]["revision"], 2)
+            self.assertEqual(loaded["entity"]["payload"]["statement"], "Edited in another session.")
+            self.assertEqual([h["revision"] for h in loaded["history"]], [1, 2])
+        finally:
+            db_a.close()
+
+    async def test_editing_imported_content_preserves_its_provenance(self):
+        s = self.seed()
+        document, ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            claim = db.get(ResearchEntity, UUID(ids["claim_id"]))
+            self.assertEqual(claim.payload["statement"], "Fixture claim statement.")
+            result = research_entities.revise_entity(db, s.project, s.owner, UUID(ids["claim_id"]), 1,
+                                                     {"statement": "Edited after conversion."})
+            self.assertEqual(result["revision"], 2)
+            history = db.query(ResearchEntityRevision).filter(ResearchEntityRevision.entity_id == UUID(ids["claim_id"])).order_by(ResearchEntityRevision.revision).all()
+            latest = history[-1]
+            self.assertEqual(latest.origin, "imported")  # never promoted to human-authored
+            self.assertTrue(latest.provenance.get("edited"))
+            self.assertIn("v1 storage conversion", latest.provenance["origin_label"])
+            self.assertEqual(latest.derived_from, {"entity_id": ids["claim_id"], "revision": 1})
+            # A human edit derives with preserved imported origin; a different origin kind is refused.
+            human_edit = research_entities.revise_entity(db, s.project, s.owner, UUID(ids["claim_id"]), 2,
+                                                         {"statement": "Edited after conversion."}, origin="human")
+            self.assertEqual(human_edit["revision"], 3)
+            with self.assertRaises(HTTPException) as reoriginate:
+                research_entities.revise_entity(db, s.project, s.owner, UUID(ids["claim_id"]), 3,
+                                                {"statement": "Assembled promotion attempt."}, origin="assembled")
+            self.assertEqual(reoriginate.exception.status_code, 422)
+
+    async def test_native_assistant_provenance_is_validated(self):
+        # Contract 2.2 / v1 semantics: assistant provenance requires a completed durable
+        # draft request owned by this actor in this project, linked to the cited message.
+        s = self.seed()
+        document, ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        other = self.seed()
+        editor = uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": editor, "e": str(editor) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": editor})
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            request_id, message_id, conversation_id = uuid4(), uuid4(), uuid4()
+            db.add(Conversation(id=conversation_id, user_id=s.owner, conversable_type="project", conversable_id=s.project))
+            db.add(Message(id=message_id, conversation_id=conversation_id, role="assistant", content="Fixture draft", sequence=1))
+            db.commit()
+            def draft_request(project, actor, state="completed", request_id=request_id, message_id=message_id):
+                return ProjectDraftRequest(id=request_id, project_id=project, requester_id=actor,
+                                           request_hash="a" * 64, snapshot={}, base_revision=1,
+                                           section_id=uuid4(), state=state,
+                                           conversation_id=conversation_id, message_id=message_id)
+            db.add(draft_request(s.project, s.owner))
+            # Persist a genuine foreign-project request: cross-project identity is refused
+            # even though the row exists and is complete.
+            foreign_request = draft_request(other.project, other.owner, request_id=uuid4())
+            db.add(foreign_request); db.commit()
+            claim_id = UUID(ids["claim_id"])
+            provenance = {"request_id": str(request_id), "message_id": str(message_id)}
+            created = research_entities.create_entity(db, s.project, s.owner, "claim",
+                                                      {"statement": "Assisted claim."}, origin="assistant",
+                                                      provenance=provenance, entity_id=uuid4())
+            self.assertEqual(created["revision"], 1)
+            for mutate, expected in (
+                (lambda: research_entities.create_entity(db, s.project, s.owner, "claim",
+                                                         {"statement": "Ghost."}, origin="assistant",
+                                                         provenance={"request_id": str(uuid4()), "message_id": str(message_id)}), 422),
+                (lambda: research_entities.create_entity(db, s.project, s.owner, "claim",
+                                                         {"statement": "Cross."}, origin="assistant",
+                                                         provenance={"request_id": str(foreign_request.id),
+                                                                     "message_id": str(message_id)}), 422),
+                # An authorized editor introducing another actor's request identity is refused
+                # by provenance validation, not merely by authorization.
+                (lambda: research_entities.create_entity(db, s.project, editor, "claim",
+                                                         {"statement": "Wrong actor."}, origin="assistant",
+                                                         provenance=provenance), 422),
+            ):
+                with self.assertRaises(HTTPException) as forged:
+                    mutate()
+                self.assertEqual(forged.exception.status_code, expected)
+            # Preserved identity travels: an authorized collaborator edits the assistant text.
+            revised = research_entities.revise_entity(db, s.project, editor, UUID(created["entity_id"]), 1,
+                                                      {"statement": "Collaborator edit of assisted claim."})
+            self.assertEqual(revised["revision"], 2)
+            # State transitions are re-checked on revisions with newly introduced identity too.
+            db.add(draft_request(s.project, s.owner, state="pending", request_id=uuid4())); db.commit()
+        with self.Session() as db:
+            pending_request = db.query(ProjectDraftRequest).filter(ProjectDraftRequest.state == "pending").first()
+            with self.assertRaises(HTTPException) as incomplete:
+                research_entities.revise_entity(db, s.project, s.owner, UUID(ids["claim_id"]), 1,
+                                                {"statement": "Pending identity"}, origin="assistant",
+                                                provenance={"request_id": str(pending_request.id),
+                                                            "message_id": str(pending_request.message_id)})
+            self.assertEqual(incomplete.exception.status_code, 422)
+            # Proposal application inherits the same validation: a valid native proposal
+            # applies; one carrying forged identity is refused at apply time.
+            from app.services import research_proposals
+            valid, _ = research_proposals.create_proposal(db, s.project, s.owner, "assistant",
+                                                          {"request_id": str(request_id), "message_id": str(message_id),
+                                                           "edits": [{"entity_id": ids["claim_id"], "payload": {"statement": "Assisted proposal."}}]},
+                                                          {ids["claim_id"]: 1}, idempotency_key="native-valid")
+            research_proposals.approve_proposal(db, s.project, s.owner, valid.id)
+            result = research_proposals.apply_proposal(db, s.project, s.owner, valid.id)
+            self.assertFalse(result["replayed"])
+            forged_proposal, _ = research_proposals.create_proposal(db, s.project, s.owner, "assistant",
+                                                                    {"request_id": str(uuid4()), "message_id": str(uuid4()),
+                                                                     "edits": [{"entity_id": ids["claim_id"], "payload": {"statement": "Forged identity proposal."}}]},
+                                                                    {ids["claim_id"]: 2}, idempotency_key="native-forged")
+            research_proposals.approve_proposal(db, s.project, s.owner, forged_proposal.id)
+            with self.assertRaises(HTTPException) as forged_apply:
+                research_proposals.apply_proposal(db, s.project, s.owner, forged_proposal.id)
+            self.assertEqual(forged_apply.exception.status_code, 422)
+
+    # ---------- C05/C07: forgery, endpoint legality, isolation ----------
+
+    async def test_typed_writes_forgery_and_role_isolation(self):
+        from fastapi import HTTPException
+        s = self.seed()
+        other = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture C", "Title\nExact fixture result.\nLimitations.")
+        document, ids = self._v1_document(paper)
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            claim_id = UUID(ids["claim_id"])
+            with self.assertRaises(HTTPException) as forged:
+                research_entities.create_entity(db, s.project, s.owner, "finding",
+                                                {"label": "Forged anchor", "anchor": {"source_version_id": str(uuid4()),
+                                                                                      "start_line": 1, "end_line": 1,
+                                                                                      "quote": "x", "quote_sha256": "a" * 64}})
+            self.assertEqual(forged.exception.status_code, 422)
+            from app.services.investigation import text_hash
+            version_id = db.query(ResearchSourceVersion).filter(ResearchSourceVersion.project_id == s.project).one().id
+            # A fabricated quotation carrying a previously valid digest is rejected: the
+            # digest must match the submitted text itself.
+            with self.assertRaises(HTTPException) as forged_text:
+                research_entities.create_entity(db, s.project, s.owner, "finding",
+                                                {"label": "Fabricated text", "anchor": {"source_version_id": str(version_id),
+                                                                                        "start_line": 1, "end_line": 1,
+                                                                                        "quote": "FABRICATED",
+                                                                                        "quote_sha256": text_hash("Exact fixture result.")}})
+            self.assertEqual(forged_text.exception.status_code, 422)
+            # A correct quotation claimed at a different range is rejected by line verification.
+            with self.assertRaises(HTTPException) as forged_range:
+                research_entities.create_entity(db, s.project, s.owner, "finding",
+                                                {"label": "Wrong range", "anchor": {"source_version_id": str(version_id),
+                                                                                    "start_line": 1, "end_line": 3,
+                                                                                    "quote": "Exact fixture result.",
+                                                                                    "quote_sha256": text_hash("Exact fixture result.")}})
+            self.assertEqual(forged_range.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as bogus_type:
+                research_entities.create_entity(db, s.project, s.owner, "speculation", {"text": "x"})
+            self.assertEqual(bogus_type.exception.status_code, 422)
+            assumption = research_entities.create_entity(db, s.project, s.owner, "assumption", {"text": "Fixture assumption"})
+            with self.assertRaises(HTTPException) as cross:
+                research_entities.create_relation(db, s.project, s.owner, "supports", uuid4(), claim_id, "Rationale text.")
+            self.assertEqual(cross.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as illegal:
+                research_entities.create_relation(db, s.project, s.owner, "supports", claim_id, claim_id, "Rationale text.")
+            self.assertEqual(illegal.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as no_rationale:
+                research_entities.create_relation(db, s.project, s.owner, "assumes", claim_id, UUID(assumption["entity_id"]), "   ")
+            self.assertEqual(no_rationale.exception.status_code, 422)
+            relation = research_entities.create_relation(db, s.project, s.owner, "assumes", claim_id, UUID(assumption["entity_id"]),
+                                                         "Fixture assumption rationale.")
+            self.assertIn("relation_id", relation)
+            loaded = research_entities.load_entity(db, s.project, s.viewer, claim_id)
+            self.assertEqual(loaded["entity"]["type"], "claim")
+            with self.assertRaises(HTTPException) as viewer_write:
+                research_entities.revise_entity(db, s.project, s.viewer, claim_id, 1, {"statement": "Viewer edit"})
+            self.assertEqual(viewer_write.exception.status_code, 403)
+            with self.assertRaises(HTTPException) as outsider_read:
+                research_entities.load_entity(db, s.project, s.outsider, claim_id)
+            self.assertEqual(outsider_read.exception.status_code, 404)
+            first = research_entities.revise_entity(db, s.project, s.owner, claim_id, 1, {"statement": "First edit."})
+            self.assertEqual(first["revision"], 2)
+            with self.assertRaises(HTTPException) as conflict:
+                research_entities.revise_entity(db, s.project, s.owner, claim_id, 1, {"statement": "Losing edit"})
+            self.assertEqual(conflict.exception.status_code, 412)
+        with self.Session() as db:
+            research_convert.convert_project(db, other.project, other.owner)
+            with self.assertRaises(HTTPException) as foreign_relation:
+                research_entities.create_relation(db, other.project, other.owner, "assumes",
+                                                  UUID(ids["claim_id"]), UUID(assumption["entity_id"]), "Cross-project rationale.")
+            self.assertEqual(foreign_relation.exception.status_code, 422)
+
+    async def test_load_entity_redacts_revoked_sources(self):
+        s = self.seed()
+        paper = self.seed_paper(s.project, s.owner, "Fixture E", "Title\nExact fixture result.\nLimitations.")
+        document, ids = self._v1_document(paper)
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            loaded = research_entities.load_entity(db, s.project, s.owner, UUID(ids["finding_id"]))
+            self.assertIn("quote", loaded["entity"]["payload"]["anchor"])
+        with self.engine.begin() as conn:
+            conn.execute(self.text("DELETE FROM project_paper WHERE project_id = :p"), {"p": s.project})
+        with self.Session() as db:
+            loaded = research_entities.load_entity(db, s.project, s.owner, UUID(ids["finding_id"]))
+            anchor = loaded["entity"]["payload"]["anchor"]
+            self.assertNotIn("quote", anchor)
+            self.assertNotIn("quote_sha256", anchor)
+            self.assertEqual(anchor["paper_id"], str(paper))
+            for entry in loaded["history"]:
+                self.assertNotIn("quote", entry["payload"]["anchor"])
+            self.assertNotIn("Exact fixture result.", json.dumps(loaded))
+
+    # ---------- C08: concurrency ----------
+
+    async def test_concurrent_revisions_single_winner_and_atomic_rollback(self):
+        from unittest.mock import patch
+        from fastapi import HTTPException
+        s = self.seed()
+        document, ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+        def revise(_):
+            with self.Session() as db:
+                try:
+                    research_entities.revise_entity(db, s.project, s.owner, UUID(ids["claim_id"]), 1,
+                                                    {"statement": f"Edit at {uuid4()}"})
+                    return 200
+                except HTTPException as error: return error.status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(revise, range(2)))
+        self.assertEqual(sorted(outcomes), [200, 412])
+        def disjoint(index):
+            with self.Session() as db:
+                research_entities.create_entity(db, s.project, s.owner, "gap", {"description": f"Parallel gap {index}"})
+            return 200
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(list(pool.map(disjoint, range(2))), [200, 200])
+        with self.Session() as db:
+            entity = db.get(ResearchEntity, UUID(ids["claim_id"]))
+            before = (entity.revision, entity.payload["statement"])
+            sequence_before = db.get(ResearchProject, s.project).change_sequence
+            with patch.object(db, "commit", side_effect=RuntimeError("Synthetic failure")):
+                with self.assertRaises(RuntimeError):
+                    research_entities.revise_entity(db, s.project, s.owner, UUID(ids["claim_id"]), entity.revision,
+                                                    {"statement": "Must not persist"})
+            db.rollback()
+            entity = db.get(ResearchEntity, UUID(ids["claim_id"]))
+            self.assertEqual((entity.revision, entity.payload["statement"]), before)
+            self.assertEqual(db.get(ResearchProject, s.project).change_sequence, sequence_before)
+
+    async def test_stale_cached_entity_raises_412_not_integrity_error(self):
+        # R36/R37: the locking read must observe the committed row even when the session
+        # holds a cached instance. The caching session stays OPEN across the intervening
+        # commit, and the stale write goes through the SAME cached session — without the
+        # refresh this raises IntegrityError instead of 412.
+        from unittest.mock import patch
+        from fastapi import HTTPException
+        s = self.seed()
+        document, ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        db_a = self.Session()
+        try:
+            research_convert.convert_project(db_a, s.project, s.owner)
+            claim_id = UUID(ids["claim_id"])
+            # Session A caches the entity at revision 1 and stays open.
+            cached = db_a.get(ResearchEntity, claim_id)
+            self.assertEqual(cached.revision, 1)
+            # Session B commits revision 2 while A holds its cached instance.
+            with self.Session() as db_b:
+                research_entities.revise_entity(db_b, s.project, s.owner, claim_id, 1,
+                                                {"statement": "Intervening edit."})
+            # Session A revises with an expected revision of 1: the guard must observe
+            # the committed revision 2 and raise 412 (never an IntegrityError).
+            with patch.object(db_a, "commit", side_effect=RuntimeError("Rollback after 412")):
+                with self.assertRaises(HTTPException) as stale:
+                    research_entities.revise_entity(db_a, s.project, s.owner, claim_id, 1,
+                                                    {"statement": "Stale-guard edit."})
+            self.assertEqual(stale.exception.status_code, 412)
+            db_a.rollback()  # discard the failed transaction from session A
+            entity = db_a.get(ResearchEntity, claim_id)
+            self.assertEqual((entity.revision, entity.payload["statement"]), (2, "Intervening edit."))
+        finally:
+            db_a.close()
+
+    async def test_cached_role_demotion_and_cached_investigation_across_save(self):
+        # R38: cached authorization and generation state must not bypass demotion or
+        # cutover — both regressions retain cached rows across intervening commits.
+        from unittest.mock import patch
+        from fastapi import HTTPException
+        s = self.seed()
+        editor = uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": editor, "e": str(editor) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": editor})
+        db_a = self.Session()
+        try:
+            # Session A caches the editor role.
+            research_access.authorize(db_a, s.project, editor, write=True)
+            # Session B demotes the editor to viewer.
+            with self.engine.begin() as conn:
+                conn.execute(self.text("UPDATE project_role SET role = 'viewer' WHERE project_id = :p AND user_id = :u"),
+                             {"p": s.project, "u": editor})
+            # Session A: the demotion is observed (403), never bypassed.
+            with self.assertRaises(HTTPException) as demoted:
+                research_access.authorize(db_a, s.project, editor, write=True)
+            self.assertEqual(demoted.exception.status_code, 403)
+        finally:
+            db_a.close()
+        # Cached investigation across an intervening save: conversion must convert the
+        # SAVED document, not a stale cached one.
+        paper = self.seed_paper(s.project, s.owner, "Fixture G", "Title\nOriginal wording.\nLimitations.")
+        document_a, ids = self._v1_document(paper, quote="Original wording.")
+        db_b = self.Session()
+        try:
+            db_b.add(ProjectInvestigation(project_id=s.project, schema_version=1, revision=1,
+                                          document=document_a))
+            db_b.commit()  # first save: revision 1 — session B caches it
+            row_b = db_b.query(ProjectInvestigation).filter(ProjectInvestigation.project_id == s.project).first()
+            self.assertEqual(row_b.revision, 1)
+            # Session C (a third session) saves revision 2 while B retains its cache.
+            document_c, _ = self._v1_document(paper, quote="Revised wording.")
+            document_c["claims"] = [{"id": str(uuid4()), "statement": "Revised claim.", "reasoning": "", "caveats": ""}]
+            document_c["findings"] = []
+            document_c["relations"] = []
+            with self.engine.begin() as conn:
+                conn.execute(self.text("UPDATE project_investigations SET revision = 2, document = :doc WHERE project_id = :p"),
+                             {"doc": json.dumps(document_c), "p": s.project})
+            # Session B converts with its cached row: the refresh must observe revision 2
+            # (without it, the stale revision-1 document would be converted).
+            manifest = research_convert.convert_project(db_b, s.project, s.owner)
+            self.assertEqual(manifest["v1_revision"], 2)
+            self.assertEqual(manifest["counts"]["claims"], 1)
+            entity = db_b.get(ResearchEntity, UUID(document_c["claims"][0]["id"]))
+            self.assertEqual(entity.payload["statement"], "Revised claim.")
+        finally:
+            db_b.close()
+
+    async def test_cached_state_cannot_bypass_guards(self):
+        # R39: cached reports cannot bypass merge guards; cached roles cannot bypass
+        # demotion; cached v1 roots cannot bypass cutover.
+        from fastapi import HTTPException
+        from app.database.models import ProjectRole, ResearchProject
+        s = self.seed()
+        editor = uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": editor, "e": str(editor) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": editor})
+        # R40: three cached-state regressions, each sensitive to its refresh.
+        from app.database.models import ProjectRole, ResearchProject
+        from app.schemas.investigation import SaveInvestigation, InvestigationDocument
+        # (1) Cached report across an intervening merge: session A caches X, session B
+        # merges X into Y, session A merges X into Z through its cached row.
+        report_x_id, report_y_id, report_z_id = uuid4(), uuid4(), uuid4()
+        with self.Session() as db:
+            db.add(ReviewProtocol(id=uuid4(), project_id=s.project, version=1, screening_modes={}))
+            db.add_all([ReviewReport(id=report_x_id, project_id=s.project),
+                        ReviewReport(id=report_y_id, project_id=s.project),
+                        ReviewReport(id=report_z_id, project_id=s.project)])
+            db.commit()  # parents before children: UOW has no relationship() ordering
+            db.add_all([ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report_x_id, protocol_version=1),
+                        ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report_y_id, protocol_version=1),
+                        ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report_z_id, protocol_version=1)])
+            db.commit()
+        db_a = self.Session()
+        try:
+            cached_x = db_a.get(ReviewReport, report_x_id)  # session A caches X
+            self.assertIsNotNone(cached_x)
+            with self.Session() as db_b:
+                research_review.merge_reports(db_b, s.project, s.owner, report_x_id, report_y_id,
+                                              "Fixture: X into Y", protocol_version=1)
+            # Session A merges X into Z through its cached row: X is already merged — 409.
+            with self.assertRaises(HTTPException) as stale_merge:
+                research_review.merge_reports(db_a, s.project, s.owner, report_x_id, report_z_id,
+                                              "Fixture: X into Z from cache", protocol_version=1)
+            self.assertEqual(stale_merge.exception.status_code, 409)
+        finally:
+            db_a.close()
+        with self.Session() as db:
+            self.assertEqual(db.query(ReviewReport).filter(ReviewReport.merged_into == report_z_id).count(), 0)
+        # (2) Cached editor role across a demotion: session A caches the role row,
+        # session B demotes, session A's authorize observes 403.
+        editor = uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": editor, "e": str(editor) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": editor})
+        db_a = self.Session()
+        try:
+            role_a = db_a.query(ProjectRole).filter(ProjectRole.project_id == s.project,
+                                                    ProjectRole.user_id == editor).first()
+            self.assertEqual(role_a.role, "editor")  # strong reference retained
+            with self.engine.begin() as conn:
+                conn.execute(self.text("UPDATE project_role SET role = 'viewer' WHERE project_id = :p AND user_id = :u"),
+                             {"p": s.project, "u": editor})
+            with self.assertRaises(HTTPException) as demoted:
+                research_access.authorize(db_a, s.project, editor, write=True)
+            self.assertEqual(demoted.exception.status_code, 403)
+        finally:
+            db_a.close()
+        # (3) Cached v1 root across a conversion (R43): TWO sessions each draw the v1
+        # root and retain it across the flip; the legacy-save rejection and the
+        # repeat-conversion rejection are exercised through separate cached sessions, so
+        # neither refresh borrows freshness from the other.
+        self._write_v1_row(s.project, {"format": "openpaper/investigation", "version": 1, "case": {},
+                                       "claims": [], "findings": [], "relations": [],
+                                       "manuscript": {"title": "", "sections": []}})
+        db_save, db_convert = self.Session(), self.Session()
+        try:
+            research_access.advance_change_sequence(db_save, s.project)
+            db_save.commit()
+            research_access.advance_change_sequence(db_convert, s.project)
+            db_convert.commit()
+            # Strong references retained across the flip: both sessions hold the cached
+            # v1 view while session db converts (R44).
+            root_save = db_save.get(ResearchProject, s.project)
+            root_convert = db_convert.get(ResearchProject, s.project)
+            self.assertEqual((root_save.storage_generation, root_convert.storage_generation), ("v1", "v1"))
+            with self.Session() as db_b:
+                research_convert.convert_project(db_b, s.project, s.owner)
+            # The cached views still show v1 (stale), while a fresh read shows v2.
+            self.assertEqual((root_save.storage_generation, root_convert.storage_generation), ("v1", "v1"))
+            with self.Session() as db:
+                self.assertEqual(db.get(ResearchProject, s.project).storage_generation, "v2")
+            with self.assertRaises(HTTPException) as cutover:
+                __import__("app.services.investigation", fromlist=["save"]).save(
+                    db_save, s.project, s.owner, SaveInvestigation(document=InvestigationDocument()),
+                    f'"investigation:{s.project}:1"')
+            self.assertEqual(cutover.exception.status_code, 409)
+            with self.assertRaises(HTTPException) as repeat:
+                research_convert.convert_project(db_convert, s.project, s.owner)
+            self.assertEqual(repeat.exception.status_code, 409)
+        finally:
+            db_save.close(); db_convert.close()
+        with self.Session() as db:
+            root = db.get(ResearchProject, s.project)
+            self.assertEqual(root.storage_generation, "v2")
+            self.assertEqual(root.conversion_manifest["counts"]["claims"], 0)
+
+    # ---------- C26/C27: proposals ----------    # ---------- C26/C27: proposals ----------    # ---------- C26/C27: proposals ----------
+
+    async def test_proposal_apply_replay_and_forgery(self):
+        from fastapi import HTTPException
+        s = self.seed()
+        document, ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            claim_id = UUID(ids["claim_id"])
+            with self.assertRaises(HTTPException) as missing_identity:
+                research_proposals.create_proposal(db, s.project, s.owner, "external_ai",
+                                                   {"edits": [{"entity_id": str(claim_id), "payload": {"statement": "External edit"}}]},
+                                                   {str(claim_id): 1})
+            self.assertEqual(missing_identity.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as impersonation:
+                research_proposals.create_proposal(db, s.project, s.owner, "external_ai",
+                                                   {"client_identity": "fixture-chatgpt-client", "content_sha256": "a" * 64,
+                                                    "request_id": str(uuid4()),
+                                                    "edits": [{"entity_id": str(claim_id), "payload": {"statement": "External edit"}}]},
+                                                   {str(claim_id): 1})
+            self.assertEqual(impersonation.exception.status_code, 422)
+            payload = {"client_identity": "fixture-chatgpt-client", "content_sha256": "b" * 64,
+                       "declared_model": "fixture-model-label",
+                       "edits": [{"entity_id": str(claim_id), "payload": {"statement": "External paragraph from the ChatGPT fixture."}}]}
+            proposal, created = research_proposals.create_proposal(db, s.project, s.owner, "external_ai", payload,
+                                                                   {str(claim_id): 1}, idempotency_key="ext-1")
+            self.assertFalse(created["replayed"])
+            proposal_2, replay = research_proposals.create_proposal(db, s.project, s.owner, "external_ai", payload,
+                                                                    {str(claim_id): 1}, idempotency_key="ext-1")
+            self.assertTrue(replay["replayed"]); self.assertEqual(proposal_2.id, proposal.id)
+            with self.assertRaises(HTTPException) as key_conflict:
+                research_proposals.create_proposal(db, s.project, s.owner, "external_ai",
+                                                   {**payload, "edits": [{"entity_id": str(claim_id), "payload": {"statement": "Different"}}]},
+                                                   {str(claim_id): 1}, idempotency_key="ext-1")
+            self.assertEqual(key_conflict.exception.status_code, 409)
+            with self.assertRaises(HTTPException) as unapproved:
+                research_proposals.apply_proposal(db, s.project, s.owner, proposal.id)
+            self.assertEqual(unapproved.exception.status_code, 409)
+            research_proposals.approve_proposal(db, s.project, s.owner, proposal.id, expires_in_seconds=3600)
+            result = research_proposals.apply_proposal(db, s.project, s.owner, proposal.id)
+            self.assertFalse(result["replayed"])
+            self.assertEqual(result["receipt"]["approver_id"], str(s.owner))
+            entity = db.get(ResearchEntity, claim_id)
+            self.assertEqual(entity.revision, 2)
+            revision = db.query(ResearchEntityRevision).filter_by(entity_id=claim_id, revision=2).one()
+            self.assertEqual(revision.origin, "external_ai")
+            self.assertEqual(revision.provenance["client_identity"], "fixture-chatgpt-client")
+            self.assertEqual(revision.derived_from, {"entity_id": str(claim_id), "revision": 1})
+            replay_apply = research_proposals.apply_proposal(db, s.project, s.owner, proposal.id)
+            self.assertTrue(replay_apply["replayed"])
+            self.assertEqual(replay_apply["receipt"], result["receipt"])
+            self.assertEqual(db.get(ResearchEntity, claim_id).revision, 2)  # no double apply
+            # Human proposal approved against revision 2, then a concurrent edit makes it stale.
+            human, _ = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                          {"edits": [{"entity_id": str(claim_id), "payload": {"statement": "Human proposal"}}]},
+                                                          {str(claim_id): 2}, idempotency_key="human-1")
+            research_proposals.approve_proposal(db, s.project, s.owner, human.id)
+            research_entities.revise_entity(db, s.project, s.owner, claim_id, 2, {"statement": "Concurrent human edit"})
+            with self.assertRaises(HTTPException) as stale_apply:
+                research_proposals.apply_proposal(db, s.project, s.owner, human.id)
+            self.assertEqual(stale_apply.exception.status_code, 409)
+            self.assertEqual(db.get(ResearchProposal, human.id).state, "stale")
+            # Forged approval (wrong payload binding) is rejected at apply time.
+            forged, _ = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                           {"edits": [{"entity_id": str(claim_id), "payload": {"statement": "Forged approval target"}}]},
+                                                           {str(claim_id): 3}, idempotency_key="forged-1")
+            forged_row = db.get(ResearchProposal, forged.id)
+            forged_row.approval = {"approver_id": str(s.owner), "approved_at": "2026-01-01T00:00:00+00:00",
+                                   "expires_at": "2099-01-01T00:00:00+00:00", "bound_payload_sha256": "c" * 64,
+                                   "bound_targets": forged_row.targets}
+            forged_row.state = "approved"; db.commit()
+            with self.assertRaises(HTTPException) as forged_apply:
+                research_proposals.apply_proposal(db, s.project, s.owner, forged.id)
+            self.assertEqual(forged_apply.exception.status_code, 409)
+            # A payload mutated after approval cannot ride the approval: the digest is recomputed.
+            tampered, _ = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                             {"edits": [{"entity_id": str(claim_id), "payload": {"statement": "Approved text"}}]},
+                                                             {str(claim_id): 3}, idempotency_key="tamper-1")
+            research_proposals.approve_proposal(db, s.project, s.owner, tampered.id)
+            db.execute(__import__("sqlalchemy").text("UPDATE research_proposals SET payload = payload || :patch WHERE id = :id"),
+                       {"patch": json.dumps({"injected": True}), "id": str(tampered.id)})
+            db.expire_all()
+            with self.assertRaises(HTTPException) as tamper:
+                research_proposals.apply_proposal(db, s.project, s.owner, tampered.id)
+            self.assertEqual(tamper.exception.status_code, 409)
+            # Expired approvals return 410 and mark the proposal expired.
+            expired, _ = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                            {"edits": [{"entity_id": str(claim_id), "payload": {"statement": "Expired target"}}]},
+                                                            {str(claim_id): 3}, idempotency_key="expired-1")
+            research_proposals.approve_proposal(db, s.project, s.owner, expired.id, expires_in_seconds=-1)
+            with self.assertRaises(HTTPException) as expired_apply:
+                research_proposals.apply_proposal(db, s.project, s.owner, expired.id)
+            self.assertEqual(expired_apply.exception.status_code, 410)
+            self.assertEqual(db.get(ResearchProposal, expired.id).state, "expired")
+
+    # ---------- C29: metered admission core ----------
+
+    async def test_metered_admission_replay_and_uncertain_completion(self):
+        s = self.seed()
+        with self.Session() as db:
+            # No price table: every metered path is refused while deterministic work continues.
+            with self.assertRaises(HTTPException) as unpriced:
+                metered.reserve(db, s.project, s.owner, "synthesis_task", {"units": {"input_tokens": 100}}, {},
+                                limits={"max_inflight": 2})
+            self.assertEqual(unpriced.exception.status_code, 409)
+            self.assertEqual(unpriced.exception.detail, "operation_not_priceable")
+            metered.register_price_table(db, {"synthesis_task": {"unit_prices": {"input_tokens": 0.00001, "output_tokens": 0.00003},
+                                                                 "max_cost": 0.5}}, version=1)
+            # Admission requires explicitly configured limits; defaults are never unrestricted.
+            with self.assertRaises(HTTPException) as unbounded:
+                metered.reserve(db, s.project, s.owner, "synthesis_task", {"units": {"input_tokens": 10}}, {}, idempotency_key="nolimits")
+            self.assertEqual(unbounded.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as still_unpriced:
+                metered.reserve(db, s.project, s.owner, "unregistered_operation", {"units": {"calls": 1}}, {},
+                                limits={"max_inflight": 2})
+            self.assertEqual(still_unpriced.exception.status_code, 409)
+            estimate = {"units": {"input_tokens": 10000, "output_tokens": 2000}}
+            limits = {"max_inflight": 2}
+            operation, created = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate,
+                                                 {"question": "fixture"}, idempotency_key="m-1", limits=limits)
+            self.assertFalse(created["replayed"])
+            self.assertEqual(operation.state, "reserved")
+            self.assertAlmostEqual(created["estimated_cost"], 10000 * 0.00001 + 2000 * 0.00003)
+            duplicate, replay = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate,
+                                                {"question": "fixture"}, idempotency_key="m-1", limits=limits)
+            self.assertTrue(replay["replayed"]); self.assertEqual(duplicate.id, operation.id)
+            with self.assertRaises(HTTPException) as payload_conflict:
+                metered.reserve(db, s.project, s.owner, "synthesis_task", estimate,
+                                {"question": "different"}, idempotency_key="m-1", limits=limits)
+            self.assertEqual(payload_conflict.exception.status_code, 409)
+            with self.assertRaises(HTTPException) as over_cap:
+                metered.reserve(db, s.project, s.owner, "synthesis_task",
+                                {"units": {"input_tokens": 90000000, "output_tokens": 0}}, {}, idempotency_key="m-2", limits=limits)
+            self.assertEqual(over_cap.exception.status_code, 429)
+            # Dispatch is gated on a specific admitted reservation, not merely a price table entry.
+            with self.assertRaises(HTTPException) as not_admitted:
+                metered.assert_dispatchable(db, s.project, s.owner, operation.id)
+            self.assertEqual(not_admitted.exception.status_code, 409)
+            metered.admit(db, s.project, s.owner, operation.id)
+            metered.assert_dispatchable(db, s.project, s.owner, operation.id)
+            metered.start(db, s.project, s.owner, operation.id)
+            # Dispatch and state transitions recheck current authorization inside the transaction.
+            member = uuid4()
+            with self.engine.begin() as conn:
+                conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": member, "e": str(member) + "@test.invalid"})
+                conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'viewer')"), {"id": uuid4(), "p": s.project, "u": member})
+            with self.assertRaises(HTTPException) as viewer_dispatch:
+                metered.assert_dispatchable(db, s.project, member, operation.id)
+            self.assertEqual(viewer_dispatch.exception.status_code, 403)
+            with self.engine.begin() as conn:
+                conn.execute(self.text("DELETE FROM project_role WHERE project_id = :p AND user_id = :u"), {"p": s.project, "u": member})
+            with self.assertRaises(HTTPException) as revoked_dispatch:
+                metered.assert_dispatchable(db, s.project, member, operation.id)
+            self.assertEqual(revoked_dispatch.exception.status_code, 404)
+            settled = metered.settle(db, s.project, s.owner, operation.id,
+                                     {"units": {"input_tokens": 10432, "output_tokens": 1717}})
+            self.assertEqual(settled.state, "completed")
+            self.assertEqual(settled.usage["units"]["input_tokens"], 10432)  # estimate retained separately
+            self.assertEqual(settled.estimate, estimate)
+            uncertain, _ = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate, {"question": "u"},
+                                           idempotency_key="m-3", limits=limits)
+            metered.admit(db, s.project, s.owner, uncertain.id)
+            metered.start(db, s.project, s.owner, uncertain.id)
+            metered.fail(db, s.project, s.owner, uncertain.id, uncertain=True, error_code="provider_timeout")
+            self.assertEqual(uncertain.state, "uncertain")
+            self.assertEqual(uncertain.error_code, "provider_timeout")
+            with self.assertRaises(HTTPException) as settle_uncertain:
+                metered.settle(db, s.project, s.owner, uncertain.id, {"units": {}})
+            self.assertEqual(settle_uncertain.exception.status_code, 409)
+            # Replaying an uncertain key returns the uncertain record: no silent re-dispatch.
+            replayed_uncertain, replay = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate,
+                                                         {"question": "u"}, idempotency_key="m-3", limits=limits)
+            self.assertTrue(replay["replayed"]); self.assertEqual(replayed_uncertain.state, "uncertain")
+            with self.assertRaises(HTTPException) as state_conflict:
+                metered.cancel(db, s.project, s.owner, operation.id)
+            self.assertEqual(state_conflict.exception.status_code, 409)
+            fresh, _ = metered.reserve(db, s.project, s.owner, "synthesis_task", estimate, {"question": "c"},
+                                       idempotency_key="m-4", limits=limits)
+            metered.cancel(db, s.project, s.owner, fresh.id)
+            self.assertEqual(fresh.state, "cancelled")
+            self.assertEqual(metered.active_price_table(db).version, 1)
+        # Uncertain completion retains its reservation and counts as in-flight exposure:
+        # with one uncertain operation outstanding, a max_inflight of 1 refuses everything.
+        with self.Session() as db:
+            metered.register_price_table(db, {"bounded_task": {"unit_prices": {"calls": 1.0}, "max_cost": 10.0}}, version=2)
+            with self.assertRaises(HTTPException) as uncertain_exposure:
+                metered.reserve(db, s.project, s.owner, "bounded_task", {"units": {"calls": 1}}, {},
+                                idempotency_key="cap-exposure", limits={"max_inflight": 1})
+            self.assertEqual(uncertain_exposure.exception.status_code, 429)
+            with self.Session() as db:
+                with self.assertRaises(HTTPException) as outsider:
+                    metered.reserve(db, s.project, s.outsider, "synthesis_task", {"units": {"input_tokens": 1}}, {},
+                                    idempotency_key="x", limits={"max_inflight": 1})
+                self.assertEqual(outsider.exception.status_code, 404)
+        # Concurrent opposite merges cannot both win; the loser sees the committed state.
+        merge_project, merge_owner = uuid4(), uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": merge_owner, "e": str(merge_owner) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project (id,admin_id,title) VALUES (:p,:u,'Merge race fixture')"), {"p": merge_project, "u": merge_owner})
+            report_a, report_b = uuid4(), uuid4()
+            conn.execute(self.text("INSERT INTO review_reports (id,project_id,identity_state) VALUES (:a,:p,'unreviewed'),(:b,:p,'unreviewed')"), {"a": report_a, "b": report_b, "p": merge_project})
+        with self.Session() as db:
+            research_review.create_protocol(db, merge_project, merge_owner, version=1, commit=False)
+            db.commit()
+            # Both racers need v1 candidates: the membership guard requires them.
+            db.add_all([ReviewCandidate(id=uuid4(), project_id=merge_project, report_id=report_a, protocol_version=1),
+                        ReviewCandidate(id=uuid4(), project_id=merge_project, report_id=report_b, protocol_version=1)])
+            db.commit()
+        def merge_race(direction):
+            with self.Session() as db:
+                try:
+                    research_review.merge_reports(db, merge_project, merge_owner, report_a, report_b, "Fixture: race",
+                                                  protocol_version=1) if direction == 0 else \
+                    research_review.merge_reports(db, merge_project, merge_owner, report_b, report_a, "Fixture: race",
+                                                  protocol_version=1)
+                    return 200
+                except HTTPException as error: return error.status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(merge_race, range(2)))
+        self.assertEqual(sorted(outcomes), [200, 409])
+
+        # Concurrent reserves cannot race past the in-flight cap (atomic admission).
+        race_project, race_owner = uuid4(), uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": race_owner, "e": str(race_owner) + "@test.invalid"})
+            conn.execute(self.text("INSERT INTO project (id,admin_id,title) VALUES (:p,:u,'Race fixture')"), {"p": race_project, "u": race_owner})
+        def race(index):
+            with self.Session() as db:
+                try:
+                    metered.reserve(db, race_project, race_owner, "bounded_task", {"units": {"calls": 1}}, {"n": index},
+                                    idempotency_key=f"race-{index}", limits={"max_inflight": 1})
+                    return 200
+                except HTTPException as error: return error.status_code
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            outcomes = list(pool.map(race, range(3)))
+        self.assertEqual(sorted(outcomes), [200, 429, 429])  # exactly one admission wins
+
+    async def test_conversion_fresh_root_persists_manifest(self):
+        # R31: converting a project with NO research root takes the INSERT branch; the
+        # durable manifest must be readable from a fresh session afterwards.
+        s = self.seed()
+        with self.Session() as db:
+            self.assertIsNone(db.get(ResearchProject, s.project))
+            self._write_v1_row(s.project, {"format": "openpaper/investigation", "version": 1, "case": {},
+                                           "claims": [], "findings": [], "relations": [],
+                                           "manuscript": {"title": "", "sections": []}})
+        with self.Session() as db:
+            manifest = research_convert.convert_project(db, s.project, s.owner)
+        with self.Session() as db:  # fresh session: readback of persisted durability
+            root = db.get(ResearchProject, s.project)
+            self.assertIsNotNone(root.conversion_manifest)
+            self.assertEqual(root.conversion_manifest["converter_version"], manifest["converter_version"])
+            self.assertEqual(root.conversion_manifest["counts"]["claims"], 0)
+            self.assertEqual(root.storage_generation, "v2")
+
+    async def test_review_mutations_advance_change_sequence(self):
+        # R27/R28: every committed review mutation advances the project change sequence
+        # atomically (UPDATE ... RETURNING); failures roll the sequence back with the
+        # transaction; cached sessions and concurrent initializations cannot lose draws.
+        from app.database.models import ResearchProject
+        from unittest.mock import patch
+        s = self.seed()
+        with self.Session() as db:
+            sequence_at_start = db.get(ResearchProject, s.project)
+            self.assertIsNone(sequence_at_start)  # root created by the first research mutation
+            research_review.create_protocol(db, s.project, s.owner, version=1, commit=False)
+            db.commit()
+            report = ReviewReport(id=uuid4(), project_id=s.project)
+            db.add(report); db.commit()  # parent before child
+            candidate = ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report.id)
+            db.add(candidate); db.commit()
+            occurrence = ReviewOccurrence(id=uuid4(), project_id=s.project, provider="fixture",
+                                          search_ref="fixture-search", external_hit_id="hit-1")
+            db.add(occurrence); db.commit()
+            receipt = research_review.map_occurrences(db, s.project, s.owner, candidate.id, occurrence.id, [])
+            self.assertEqual(receipt["change_sequence"], 2)
+            research_review.record_decision(db, s.project, s.owner, candidate.id, "title_abstract", 1, "included")
+            with self.Session() as db:
+                root = db.get(ResearchProject, s.project)
+                self.assertEqual(root.change_sequence, 3)  # mapping + decision each advanced it
+            # A failure AFTER sequence advancement rolls the sequence back with the
+            # transaction: no decision row, no sequence change.
+            with self.Session() as db, patch.object(db, "commit", side_effect=RuntimeError("Synthetic failure")):
+                with self.assertRaises(RuntimeError):
+                    research_review.record_decision(db, s.project, s.owner, candidate.id, "title_abstract", 1, "included")
+            with self.Session() as db:
+                root = db.get(ResearchProject, s.project)
+                self.assertEqual(root.change_sequence, 3)
+                # Exactly the pre-existing decision: the failed write left no row.
+                self.assertEqual(db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate.id).count(), 1)
+            # A cached ORM root cannot lose increments: this session read the root above.
+            drawn = research_access.advance_change_sequence(db, s.project)
+            self.assertEqual(drawn, 4)
+            db.commit()
+            # Conversion extends the sequence monotonically (4 + flip = 5) and enables
+            # typed writes for the proposal section below.
+            self._write_v1_row(s.project, {"format": "openpaper/investigation", "version": 1, "case": {},
+                                           "claims": [], "findings": [], "relations": [],
+                                           "manuscript": {"title": "", "sections": []}})
+            with self.Session() as db:
+                s_manifest = research_convert.convert_project(db, s.project, s.owner)
+                self.assertEqual(s_manifest["change_sequence"], 5)
+            # Concurrent mutations serialize without lost updates, including concurrent
+            # initialization on a fresh project.
+            from concurrent.futures import ThreadPoolExecutor
+            fresh_project = uuid4()
+            with self.engine.begin() as conn:
+                conn.execute(self.text("INSERT INTO project (id, admin_id, title) VALUES (:p, :u, 'Seq race')"),
+                             {"p": str(fresh_project), "u": str(s.owner)})
+            def bump(_):
+                with self.Session() as db:
+                    sequence = research_access.advance_change_sequence(db, fresh_project)
+                    db.commit()
+                    return sequence
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                sequences = sorted(pool.map(bump, range(3)))
+            self.assertEqual(sequences, [1, 2, 3])  # concurrent initialization, no lost draws
+            with self.Session() as db:
+                self.assertEqual(db.get(ResearchProject, fresh_project).change_sequence, 3)
+            # Conversion extends the sequence monotonically, even for empty storage.
+            self._write_v1_row(fresh_project, {"format": "openpaper/investigation", "version": 1, "case": {},
+                                               "claims": [], "findings": [], "relations": [],
+                                               "manuscript": {"title": "", "sections": []}})
+            with self.Session() as db:
+                # The same session previously read the root: its cached ORM value must not
+                # compute the increment (R29).
+                cached = db.get(ResearchProject, fresh_project)
+                self.assertEqual(cached.change_sequence, 3)
+                # R35: the commit-to-return window is exercised — an intervening writer
+                # draws immediately after the conversion's internal commit, before
+                # convert_project returns. The RETURNING capture must keep the
+                # conversion-time sequence (a post-commit read would report the newer one).
+                real_commit = db.commit
+                def commit_then_intervene():
+                    real_commit()
+                    with self.Session() as other:
+                        research_access.advance_change_sequence(other, fresh_project)
+                        other.commit()
+                from unittest.mock import patch
+                with patch.object(db, "commit", side_effect=commit_then_intervene):
+                    manifest = research_convert.convert_project(db, fresh_project, s.owner)
+                self.assertEqual(manifest["counts"]["claims"], 0)
+                # The generation flip is itself a mutation: an empty conversion still
+                # advances the sequence (R32): 3 prior advances + the flip = 4.
+                self.assertEqual(manifest["change_sequence"], 4)
+                # The intervening writer drew 5 during the commit-to-return window: the
+                # root moved, but the manifest keeps the conversion-time value (R35).
+                db.expire_all()
+                root = db.get(ResearchProject, fresh_project)
+                self.assertEqual((root.storage_generation, root.change_sequence), ("v2", 5))
+                # The durable manifest is persisted on the fresh-root path and readable
+                # from a fresh session (R30); its sequence is the in-transaction capture.
+                self.assertEqual(root.conversion_manifest["converter_version"], manifest["converter_version"])
+                self.assertEqual(root.conversion_manifest["counts"], manifest["counts"])
+                self.assertEqual(root.conversion_manifest["change_sequence"], manifest["change_sequence"])
+                self.assertEqual(root.conversion_manifest["change_sequence"], 4)
+            with self.Session() as db:
+                root = db.get(ResearchProject, fresh_project)
+                self.assertGreater(root.change_sequence, manifest["change_sequence"])
+                self.assertEqual(root.conversion_manifest["change_sequence"], manifest["change_sequence"])
+            # Link receipts carry the committed sequence.
+            with self.Session() as db:
+                link_report = ReviewReport(id=uuid4(), project_id=fresh_project)
+                link_study_row = ReviewStudy(id=uuid4(), project_id=fresh_project, description="Fixture study")
+                db.add_all([link_report, link_study_row]); db.commit()
+                research_review.create_protocol(db, fresh_project, s.owner, version=1)  # draws 6
+                receipt = research_review.link_study(db, fresh_project, s.owner, link_report.id,
+                                                     link_study_row.id, "Fixture linkage")
+            with self.Session() as db:
+                self.assertEqual(receipt["change_sequence"], 7)  # conversion flip + protocol + this link
+                root = db.get(ResearchProject, fresh_project)
+                self.assertEqual(root.change_sequence, 7)
+            # Proposal and metered mutations advance the sequence and persist receipts
+            # (R31/R32): creation, approval, replay recovery, and rollback. Root reads use
+            # raw SQL: the identity map caches stale values after raw-SQL advances.
+            from unittest.mock import patch
+            from sqlalchemy import text as raw_text
+            with self.Session() as db:
+                claim_id = uuid4()
+                db.add(ResearchEntity(id=claim_id, project_id=s.project, type="claim", revision=1,
+                                      payload={"statement": "Sequence claim."}, created_by=s.owner))
+                db.add(ResearchEntityRevision(id=uuid4(), entity_id=claim_id, revision=1,
+                                              payload={"statement": "Sequence claim."}, origin="human",
+                                              provenance={}, actor_id=s.owner))
+                db.commit()
+            def root_sequence():
+                with self.Session() as db:
+                    return db.execute(raw_text("SELECT change_sequence FROM research_projects WHERE project_id = :p"),
+                                      {"p": str(s.project)}).scalar_one()
+            before = root_sequence()
+            print("DEBUG before:", before)
+            with self.Session() as db:
+                proposal_payload = {"edits": [{"entity_id": str(claim_id), "payload": {"statement": "Seq proposal."}}]}
+                proposal, receipt = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                                       proposal_payload, {str(claim_id): 1},
+                                                                       idempotency_key="seq-1")
+                self.assertEqual(receipt["change_sequence"], before + 1)
+                research_proposals.approve_proposal(db, s.project, s.owner, proposal.id)
+                self.assertEqual(root_sequence(), before + 2)
+                self.assertEqual(db.get(ResearchProposal, proposal.id).change_sequence, before + 2)
+                # Replay recovers the persisted original receipt without a new mutation.
+                replay, replay_receipt = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                                            proposal_payload, {str(claim_id): 1},
+                                                                            idempotency_key="seq-1")
+                self.assertTrue(replay_receipt["replayed"])
+                self.assertEqual(replay_receipt["change_sequence"], before + 1)
+                self.assertEqual(root_sequence(), before + 2)
+                # Rollback after advancement: the proposal row and its sequence draw are
+                # discarded together — nothing persists, nothing advances.
+                research_proposals.create_proposal(db, s.project, s.owner, "human", proposal_payload,
+                                                   {str(claim_id): 2}, idempotency_key="seq-rollback",
+                                                   commit=False)
+                db.rollback()
+                self.assertEqual(root_sequence(), before + 2)
+                self.assertEqual(db.query(ResearchProposal).filter(
+                    ResearchProposal.idempotency_key == "seq-rollback").count(), 0)
+                # Fresh-session create→approve→apply→creation-replay (R33): the creation
+                # receipt survives application and replays with its original value.
+                creation_sequence = before + 3  # seq-1 create (+1) and approve (+1) preceded this
+                proposal2, receipt2 = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                                         proposal_payload, {str(claim_id): 1},
+                                                                         idempotency_key="seq-2")
+                self.assertEqual(receipt2["change_sequence"], creation_sequence)
+                research_proposals.approve_proposal(db, s.project, s.owner, proposal2.id)
+                proposal2_id = str(proposal2.id)  # capture inside the owning session
+                research_proposals.apply_proposal(db, s.project, s.owner, proposal2.id)
+            with self.Session() as db:
+                row = db.get(ResearchProposal, UUID(proposal2_id))
+                self.assertEqual(row.state, "applied")
+                self.assertIsNotNone(row.applied_receipt)
+                self.assertEqual(row.receipt["change_sequence"], creation_sequence)  # creation receipt preserved
+                self.assertEqual(row.applied_receipt["applied"][str(claim_id)]["revision"], 2)
+                replay2, replay2_receipt = research_proposals.create_proposal(db, s.project, s.owner, "human",
+                                                                              proposal_payload, {str(claim_id): 1},
+                                                                              idempotency_key="seq-2")
+                self.assertTrue(replay2_receipt["replayed"])
+                self.assertEqual(replay2_receipt["change_sequence"], creation_sequence)  # original value
+            with self.Session() as db:
+                root_sequence_check = db.execute(raw_text(
+                    "SELECT change_sequence FROM research_projects WHERE project_id = :p"),
+                    {"p": str(s.project)}).scalar_one()
+                self.assertEqual(root_sequence_check, creation_sequence + 2)  # approve (+1) and apply edits (+1)
+                # Metered reservations carry the sequence in their receipt.
+                metered.register_price_table(db, {"bounded_task": {"unit_prices": {"calls": 1.0}, "max_cost": 10.0}},
+                                             version=900)
+                metered_operation, metered_receipt = metered.reserve(db, s.project, s.owner, "bounded_task",
+                                                                     {"units": {"calls": 1}}, {}, idempotency_key="seq-1",
+                                                                     limits={"max_inflight": 5})
+                self.assertIn("change_sequence", metered_receipt)
+                self.assertGreater(metered_receipt["change_sequence"], before + 2)
+                # Metered replay recovers the persisted receipt; refusal rolls back.
+                metered_replay, metered_replay_receipt = metered.reserve(db, s.project, s.owner, "bounded_task",
+                                                                         {"units": {"calls": 1}}, {},
+                                                                         idempotency_key="seq-1",
+                                                                         limits={"max_inflight": 5})
+                self.assertTrue(metered_replay_receipt["replayed"])
+                self.assertEqual(metered_replay_receipt["change_sequence"],
+                                 metered_receipt["change_sequence"])
+                metered.reserve(db, s.project, s.owner, "bounded_task", {"units": {"calls": 1}},
+                                {"n": "rollback"}, idempotency_key="metered-rollback",
+                                limits={"max_inflight": 5}, commit=False)
+                db.rollback()
+            # Draws after the before-read: seq-1 create+approve, proposal2 create+approve,
+            # the apply edit, and the metered reservation (+6); the two rollbacks discarded
+            # their draws. Also duplicate migration-discipline headers removed below.
+            self.assertEqual(root_sequence(), before + 6)
+
+    # ---------- migration discipline ----------
+
+    async def test_additive_migration_upgrade_downgrade_upgrade(self):
+        import importlib.util
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+        s = self.seed()
+        spec = importlib.util.spec_from_file_location("research_core_migration",
+                                                      Path(__file__).resolve().parents[1] / "migrations/versions/2026_11_13_0100_research_core.py")
+        migration = importlib.util.module_from_spec(spec); spec.loader.exec_module(migration)
+        names = ["research_projects", "research_source_versions", "research_entities", "research_entity_revisions",
+                 "research_relations", "review_protocols", "review_reports", "review_report_versions",
+                 "review_occurrences", "review_studies", "review_report_studies", "review_candidates",
+                 "review_decisions", "review_mapping_events", "research_proposals", "metered_price_tables",
+                 "metered_operations"]
+        with self.engine.begin() as conn:
+            for name in names: conn.execute(self.text(f"DROP TABLE IF EXISTS {name} CASCADE"))
+            with Operations.context(MigrationContext.configure(conn)):
+                migration.upgrade(); migration.downgrade(); migration.upgrade()
+            self.assertEqual(conn.execute(self.text("SELECT description FROM project WHERE id = :p"), {"p": s.project}).scalar_one(),
+                             "Keep legacy description")
+            self.assertEqual(conn.execute(self.text("SELECT count(*) FROM information_schema.tables WHERE table_schema = :s AND table_name = ANY(:names)"),
+                                          {"s": self.schema, "names": names}).scalar_one(), len(names))
+            # The migration carries the occurrence-retry uniqueness: the same provider,
+            # search and external hit cannot create two occurrences on a migrated database.
+            from psycopg2 import errors as pg_errors
+            conn.execute(self.text("INSERT INTO review_occurrences (id,project_id,provider,search_ref,external_hit_id) VALUES (:a,:p,'fixture','q','hit-1')"), {"a": uuid4(), "p": s.project})
+            nested = conn.begin_nested()
+            with self.assertRaises(Exception) as duplicate:
+                conn.execute(self.text("INSERT INTO review_occurrences (id,project_id,provider,search_ref,external_hit_id) VALUES (:a,:p,'fixture','q','hit-1')"), {"a": uuid4(), "p": s.project})
+            nested.rollback()
+            self.assertIn("uq_review_occurrence_hit", str(duplicate.exception))
+
+
+    # ---------- RULES-review-versioning.md: one test per rule ----------
+    def _two_reports(self, db, s, count=2, **candidate):
+        reports = [ReviewReport(id=uuid4(), project_id=s.project) for _ in range(count)]
+        db.add_all(reports); db.commit()
+        candidates = [uuid4() for _ in reports]
+        db.add_all([ReviewCandidate(id=cid, project_id=s.project, report_id=report.id, **candidate)
+                    for cid, report in zip(candidates, reports)])
+        db.commit()
+        return reports, candidates
+
+    async def test_closed_snapshot_refuses_every_versioned_write(self):
+        # Rules 1-3: one v2 record closes v1 for all five writers, and no protocol row may be
+        # inserted at or below a version that already carries records.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            (report_a, report_b, report_c), (candidate_a, _b, _c) = self._two_reports(db, s, 3)
+            occurrence = ReviewOccurrence(id=uuid4(), project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1")
+            study = ReviewStudy(id=uuid4(), project_id=s.project, description="Fixture study")
+            db.add_all([occurrence, study]); db.commit()
+            research_review.merge_reports(db, s.project, s.owner, report_c.id, report_b.id, "Fixture: v1 merge", protocol_version=1)
+            self.assertEqual(research_review._snapshot_high_water(db, s.project), 1)
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 2, "included")  # no v2 protocol row
+            self.assertEqual(research_review._snapshot_high_water(db, s.project), 2)
+            before = (db.query(ReviewDecision).count(), db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project).count())
+            writes = {
+                "decision": lambda: research_review.record_decision(db, s.project, s.owner, candidate_a, "fulltext", 1, "excluded"),
+                "mapping": lambda: research_review.map_occurrences(db, s.project, s.owner, candidate_a, occurrence.id, [], protocol_version=1),
+                "link": lambda: research_review.link_study(db, s.project, s.owner, report_a.id, study.id, "Fixture", protocol_version=1),
+                "merge": lambda: research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture", protocol_version=1),
+                "split": lambda: research_review.split_report(db, s.project, s.owner, report_c.id, "Fixture", protocol_version=1),
+            }
+            for name, write in writes.items():
+                with self.assertRaises(HTTPException, msg=name) as closed:
+                    write()
+                self.assertEqual(closed.exception.status_code, 409, name)
+                self.assertIn("closed", closed.exception.detail, name)
+                db.rollback()
+            for version in (1, 2):  # 1 exists already (duplicate); 2 would re-govern the v2 decision
+                with self.assertRaises(HTTPException) as regovern:
+                    research_review.create_protocol(db, s.project, s.owner, version=version, screening_modes={"title_abstract": "dual"})
+                self.assertEqual(regovern.exception.status_code, 409)
+                db.rollback()
+            self.assertEqual((db.query(ReviewDecision).count(),
+                              db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project).count()), before)
+            self.assertEqual(db.query(ReviewProtocol).filter(ReviewProtocol.project_id == s.project).count(), 1)
+            # The open snapshot accepts all of them, and a protocol above the mark is accepted.
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, occurrence.id, [], protocol_version=2)
+            research_review.link_study(db, s.project, s.owner, report_a.id, study.id, "Fixture", protocol_version=2)
+            research_review.split_report(db, s.project, s.owner, report_c.id, "Fixture", protocol_version=2)
+            research_review.create_protocol(db, s.project, s.owner, version=3, screening_modes={})
+
+    async def test_acquisition_guards_on_the_open_snapshot(self):
+        # A record cannot enter a snapshot older than the acquisition that introduced its
+        # occurrence or candidate (R13/R14). Pinned on an open snapshot, where rule 2 is silent.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            (_report,), (candidate,) = self._two_reports(db, s, 1)
+            (_later_report,), (later_candidate,) = self._two_reports(db, s, 1, protocol_version=3)
+            early = ReviewOccurrence(id=uuid4(), project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1")
+            later = ReviewOccurrence(id=uuid4(), project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2", protocol_version=3)
+            db.add_all([early, later]); db.commit()
+            attempts = (lambda: research_review.map_occurrences(db, s.project, s.owner, candidate, later.id, [], protocol_version=2),
+                        lambda: research_review.map_occurrences(db, s.project, s.owner, later_candidate, early.id, [], protocol_version=2),
+                        lambda: research_review.record_decision(db, s.project, s.owner, later_candidate, "title_abstract", 2, "included"))
+            for attempt in attempts:
+                with self.assertRaises(HTTPException) as premature:
+                    attempt()
+                self.assertEqual(premature.exception.status_code, 422)
+                db.rollback()
+            self.assertEqual(research_review._snapshot_high_water(db, s.project), 0)  # refusals recorded nothing
+
+    async def test_concurrent_writers_cannot_backdate_past_each_other(self):
+        # Rule 4: a v2 write holds the project root lock until it commits. A racing v1 write
+        # waits on that lock and then reads the committed mark, so it is refused; without the
+        # lock both would pass against the stale mark and v1 would change after v2 exists.
+        import time
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            _reports, (candidate_a, candidate_b) = self._two_reports(db, s)
+        winner = self.Session()
+        try:
+            research_review.record_decision(winner, s.project, s.owner, candidate_a, "title_abstract", 2, "included", commit=False)
+            def backdated():
+                with self.Session() as db:
+                    try:
+                        research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "included")
+                        return 200
+                    except HTTPException as error:
+                        return error.status_code
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(backdated)
+                time.sleep(0.5)
+                self.assertFalse(future.done())  # blocked on the project root lock
+                winner.commit()
+                self.assertEqual(future.result(timeout=10), 409)
+        finally:
+            winner.close()
+        with self.Session() as db:
+            self.assertEqual(db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_b).count(), 0)
+
+    async def test_adjudication_uses_the_requested_snapshot(self):
+        # R52 finding 2 / rule 7: only protocol v1 exists; opposing decisions and the merge are
+        # recorded at v2. The conflict lives at v2 and must be adjudicable at v2. Looking it up
+        # at the governing protocol row's version (1) finds no merge and returns 409.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            (report_a, report_b), (candidate_a, candidate_b) = self._two_reports(db, s)
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 2, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 2, "excluded")
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: conflicting", protocol_version=2)
+            self.assertTrue(result["requires_adjudication"])
+            pending = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual(pending["pending_adjudication"], 1)
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 2, "included", role="adjudication")
+            resolved = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((resolved["pending_adjudication"], resolved["title_abstract_excluded"]), (0, 0))
+
+    async def test_amendment_cohort_after_unflagged_merge_is_ordinary_review(self):
+        # R52 finding 3 / rule 6: unanimous dual v1 reviews, an unflagged merge, then a v2
+        # amendment cohort on the representative. The first v2 reviewer leaves the cohort
+        # incomplete (pending), which is not a retroactive disagreement; the second completes it.
+        s = self.seed()
+        reviewer_1, reviewer_2 = uuid4(), uuid4()
+        with self.engine.begin() as conn:
+            for uid in (reviewer_1, reviewer_2):
+                conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": uid, "e": str(uid) + "@test.invalid"})
+                conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": uid})
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={"title_abstract": "dual"}, commit=False)
+            db.commit()
+            (report_a, report_b), (candidate_a, candidate_b) = self._two_reports(db, s)
+            for candidate in (candidate_a, candidate_b):
+                for reviewer in (reviewer_1, reviewer_2):
+                    research_review.record_decision(db, s.project, reviewer, candidate, "title_abstract", 1, "included")
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: unanimous", protocol_version=1)
+            self.assertFalse(result["requires_adjudication"])
+            v1 = research_review.flow_counts(db, s.project, s.owner, 1)
+            research_review.amend_protocol(db, s.project, s.owner, new_version=2)
+            research_review.record_decision(db, s.project, reviewer_1, candidate_b, "title_abstract", 2, "excluded")
+            self.assertEqual(db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_b,
+                                                             ReviewDecision.protocol_version == 2).count(), 1)
+            half = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((half["title_abstract_excluded"], half["pending_adjudication"]), (0, 1))
+            research_review.record_decision(db, s.project, reviewer_2, candidate_b, "title_abstract", 2, "excluded")
+            done = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((done["screened"], done["title_abstract_excluded"], done["pending_adjudication"]), (1, 1, 0))
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), v1)
+
+    async def test_failed_batch_apply_leaves_no_partial_edit(self):
+        # R52 finding 1 / rule 8: the second edit of an approved batch violates its schema. The
+        # apply fails 422 and the first edit must not stay flushed in the session, where the next
+        # unrelated commit would persist it. A later, valid proposal on the same targets applies.
+        s = self.seed()
+        document, _ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        first, second = uuid4(), uuid4()
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            for entity_id in (first, second):
+                research_entities.create_entity(db, s.project, s.owner, "claim", {"statement": "original"}, entity_id=entity_id)
+            targets = {str(first): 1, str(second): 1}
+            bad, _ = research_proposals.create_proposal(db, s.project, s.owner, "human", {"edits": [
+                {"entity_id": str(first), "payload": {"statement": "first changed"}},
+                {"entity_id": str(second), "payload": {"statement": ""}}]}, targets)
+            bad_id = bad.id
+            research_proposals.approve_proposal(db, s.project, s.owner, bad_id)
+            with self.assertRaises(HTTPException) as invalid:
+                research_proposals.apply_proposal(db, s.project, s.owner, bad_id)
+            self.assertEqual(invalid.exception.status_code, 422)
+            # An unrelated mutation commits on the SAME session, as a request handler would.
+            research_entities.create_entity(db, s.project, s.owner, "claim", {"statement": "unrelated"})
+        with self.Session() as db:
+            self.assertEqual([db.get(ResearchEntity, entity_id).revision for entity_id in (first, second)], [1, 1])
+            self.assertEqual(db.query(ResearchEntityRevision).filter(ResearchEntityRevision.entity_id.in_((first, second))).count(), 2)
+            self.assertEqual(db.get(ResearchProposal, bad_id).state, "approved")
+            good, _ = research_proposals.create_proposal(db, s.project, s.owner, "human", {"edits": [
+                {"entity_id": str(first), "payload": {"statement": "first changed"}},
+                {"entity_id": str(second), "payload": {"statement": "second changed"}}]}, targets)
+            research_proposals.approve_proposal(db, s.project, s.owner, good.id)
+            self.assertFalse(research_proposals.apply_proposal(db, s.project, s.owner, good.id)["replayed"])
+            self.assertEqual([db.get(ResearchEntity, entity_id).revision for entity_id in (first, second)], [2, 2])
+
+    # ---------- R53: one apply unit, edit envelopes, protocol establishment, lock order, one derivation ----------
+
+    def _two_claims(self, s):
+        document, _ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        first, second = uuid4(), uuid4()
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            for entity_id in (first, second):
+                research_entities.create_entity(db, s.project, s.owner, "claim", {"statement": "original"}, entity_id=entity_id)
+        return first, second
+
+    def _approved(self, db, s, edits, targets):
+        proposal, _ = research_proposals.create_proposal(db, s.project, s.owner, "human", {"edits": edits}, targets)
+        research_proposals.approve_proposal(db, s.project, s.owner, proposal.id)
+        return proposal.id
+
+    async def test_apply_is_one_unit_with_its_state_and_receipt(self):
+        # R53 finding 1 / rule 8. Three ways the edits used to outlive a failed or repeated apply:
+        # a failure in the second revision, a failure while building the receipt, and a replay
+        # inside the caller's own transaction on a session that does not autoflush.
+        from unittest.mock import patch
+        s = self.seed()
+        first, second = self._two_claims(s)
+        targets = {str(first): 1, str(second): 1}
+        edits = [{"entity_id": str(first), "payload": {"statement": "first changed"}},
+                 {"entity_id": str(second), "payload": {"statement": "second changed"}}]
+        real_revise = research_entities.revise_entity
+
+        def second_revision_fails(db, project_id, actor_id, entity_id, *args, **kwargs):
+            if entity_id == second: raise HTTPException(422, "Synthetic failure in the second revision")
+            return real_revise(db, project_id, actor_id, entity_id, *args, **kwargs)
+
+        def untouched():
+            with self.Session() as db:
+                return [db.get(ResearchEntity, entity_id).revision for entity_id in (first, second)]
+
+        with self.Session() as db:
+            failing = self._approved(db, s, edits, targets)
+            with patch.object(research_entities, "revise_entity", side_effect=second_revision_fails):
+                with self.assertRaises(HTTPException) as failed:
+                    research_proposals.apply_proposal(db, s.project, s.owner, failing)
+            self.assertEqual(failed.exception.status_code, 422)
+            # An unrelated mutation commits on the SAME session, as a request handler would.
+            research_entities.create_entity(db, s.project, s.owner, "claim", {"statement": "unrelated"})
+        self.assertEqual(untouched(), [1, 1])
+        with self.Session() as db:
+            row = db.get(ResearchProposal, failing)
+            self.assertEqual((row.state, row.applied_receipt), ("approved", None))
+            # A stored approval that lost its approver is refused before any edit is written.
+            unbound = self._approved(db, s, edits, targets)
+            row = db.get(ResearchProposal, unbound)
+            row.approval = {key: value for key, value in row.approval.items() if key != "approver_id"}
+            db.commit()
+            with self.assertRaises(HTTPException) as refused:
+                research_proposals.apply_proposal(db, s.project, s.owner, unbound)
+            self.assertEqual(refused.exception.status_code, 409)
+            research_entities.create_entity(db, s.project, s.owner, "claim", {"statement": "unrelated again"})
+        self.assertEqual(untouched(), [1, 1])
+        with self.Session(autoflush=False) as db:
+            good = self._approved(db, s, edits, targets)
+            applied = research_proposals.apply_proposal(db, s.project, s.owner, good, commit=False)
+            self.assertFalse(applied["replayed"])
+            replay = research_proposals.apply_proposal(db, s.project, s.owner, good, commit=False)
+            self.assertTrue(replay["replayed"])
+            self.assertEqual(replay["receipt"], applied["receipt"])
+            db.commit()
+        self.assertEqual(untouched(), [2, 2])
+        with self.Session() as db:
+            row = db.get(ResearchProposal, good)
+            self.assertEqual((row.state, row.applied_receipt), ("applied", applied["receipt"]))
+
+    async def test_malformed_edit_envelopes_are_client_errors(self):
+        # R53 finding 7: every malformed envelope is a 422 at apply, never an unhandled exception;
+        # target ids are bound in canonical spelling, and one target is edited at most once.
+        s = self.seed()
+        first, second = self._two_claims(s)
+        change = {"statement": "changed"}
+        envelopes = [
+            [{"entity_id": str(first)}],                                   # no payload
+            [{"entity_id": str(first), "payload": "not an object"}],
+            ["not an object"],
+            [{"entity_id": [str(first)], "payload": change}],              # id is not a string
+            [{"entity_id": "not-a-uuid", "payload": change}],
+            [{"entity_id": str(second), "payload": change}],               # not a bound target
+            [{"entity_id": str(first), "payload": change},
+             {"entity_id": first.hex, "payload": {"statement": "changed twice"}}],  # one target, two edits
+        ]
+        with self.Session() as db:
+            for edits in envelopes:
+                proposal = self._approved(db, s, edits, {str(first): 1})
+                with self.assertRaises(HTTPException, msg=repr(edits)) as refused:
+                    research_proposals.apply_proposal(db, s.project, s.owner, proposal)
+                self.assertEqual(refused.exception.status_code, 422, repr(edits))
+                db.rollback()
+            for targets in ({"not-a-uuid": 1}, {str(first): 1, first.hex: 1}, {str(first): True}, {str(first): 0}):
+                with self.assertRaises(HTTPException, msg=repr(targets)) as refused:
+                    research_proposals.create_proposal(db, s.project, s.owner, "human", {"edits": []}, targets)
+                self.assertEqual(refused.exception.status_code, 422, repr(targets))
+                db.rollback()
+            self.assertEqual(db.get(ResearchEntity, first).revision, 1)
+            # A compact, upper-case spelling accepted at creation binds the same record at apply.
+            compact = self._approved(db, s, [{"entity_id": first.hex.upper(), "payload": change}], {first.hex: 1})
+            self.assertEqual(db.get(ResearchProposal, compact).targets, {str(first): 1})
+            self.assertFalse(research_proposals.apply_proposal(db, s.project, s.owner, compact)["replayed"])
+            self.assertEqual(db.get(ResearchEntity, first).revision, 2)
+
+    async def test_a_protocol_governs_before_the_first_versioned_write(self):
+        # R53 finding 3 / rule 3: a mapping or linkage recorded before any protocol used to set the
+        # mark and then block the protocol meant to govern it. Every versioned write now needs a
+        # governing protocol, and versions start at 1, so a mark of zero only ever means "empty".
+        s = self.seed()
+        with self.Session() as db:
+            (report_a, report_b), (candidate_a, _b) = self._two_reports(db, s)
+            occurrence = ReviewOccurrence(id=uuid4(), project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1")
+            study = ReviewStudy(id=uuid4(), project_id=s.project, description="Fixture study")
+            db.add_all([occurrence, study]); db.commit()
+            report_a_id, report_b_id, occurrence_id, study_id = report_a.id, report_b.id, occurrence.id, study.id
+            writes = {
+                "map": lambda version: research_review.map_occurrences(db, s.project, s.owner, candidate_a, occurrence_id, [], protocol_version=version),
+                "link": lambda version: research_review.link_study(db, s.project, s.owner, report_a_id, study_id, "Fixture", protocol_version=version),
+                "decide": lambda version: research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", version, "included"),
+                "merge": lambda version: research_review.merge_reports(db, s.project, s.owner, report_a_id, report_b_id, "Fixture", protocol_version=version),
+                "split": lambda version: research_review.split_report(db, s.project, s.owner, report_a_id, "Fixture", protocol_version=version),
+            }
+            for name, write in writes.items():
+                with self.assertRaises(HTTPException, msg=name) as ungoverned:
+                    write(1)
+                self.assertEqual(ungoverned.exception.status_code, 404, name)
+                db.rollback()
+            self.assertEqual(research_review._snapshot_high_water(db, s.project), 0)
+            for version in (0, -1):
+                with self.assertRaises(HTTPException) as below_one:
+                    research_review.create_protocol(db, s.project, s.owner, version=version)
+                self.assertEqual(below_one.exception.status_code, 422)
+                db.rollback()
+            research_review.create_protocol(db, s.project, s.owner, version=1)
+            for name, write in writes.items():
+                with self.assertRaises(HTTPException, msg=name) as zero:
+                    write(0)
+                self.assertEqual(zero.exception.status_code, 422, name)
+                db.rollback()
+            writes["link"](1); writes["map"](1); writes["decide"](1)
+            self.assertEqual(research_review._snapshot_high_water(db, s.project), 1)
+
+    async def test_protocol_writers_read_under_the_project_lock(self):
+        # R53 finding 4 / rule 4: the duplicate check and the amendment parent are read after the
+        # project lock. Two creators of one version get a 409, not a uniqueness error; an
+        # amendment racing another copies the committed latest protocol, not the one it saw first.
+        import time
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, criteria=[{"id": "c1"}])
+
+        def attempt(call):
+            with self.Session() as db:
+                try: return call(db)
+                except HTTPException as error: return error.status_code
+
+        def race(first_move, second_move):
+            winner = self.Session()
+            try:
+                held = first_move(winner)
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(attempt, second_move)
+                    time.sleep(0.5)
+                    self.assertFalse(future.done())  # waiting on the project root lock
+                    winner.commit()
+                    return held, future.result(timeout=10)
+            finally:
+                winner.close()
+
+        _held, duplicate = race(
+            lambda db: research_review.create_protocol(db, s.project, s.owner, version=2, criteria=[{"id": "c2"}], commit=False).id,
+            lambda db: research_review.create_protocol(db, s.project, s.owner, version=2).id)
+        self.assertEqual(duplicate, 409)
+
+        def follow(db):
+            row = research_review.amend_protocol(db, s.project, s.owner, new_version=4)
+            return row.parent_version_id, row.criteria
+        third, followed = race(
+            lambda db: research_review.amend_protocol(db, s.project, s.owner, new_version=3, criteria=[{"id": "c3"}], commit=False).id,
+            follow)
+        self.assertEqual(followed, (third, [{"id": "c3"}]))
+
+    async def test_review_writers_queue_behind_a_project_lock_holder(self):
+        # R53 finding 5 / rule 4: conversion and the legacy save lock the project row, then the
+        # research root. A review writer used to take the root first and the project row later
+        # (through a foreign-key insert), so the two could each wait on the other. Writers now take
+        # the project row first: one facing a holder waits there, holding no root lock.
+        import time
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1)
+            (report_a, _b), (_a, _b2) = self._two_reports(db, s)
+            study = ReviewStudy(id=uuid4(), project_id=s.project, description="Fixture study")
+            db.add(study); db.commit()
+            report_id, study_id = report_a.id, study.id
+
+        def writer():
+            with self.Session() as db:
+                return research_review.link_study(db, s.project, s.owner, report_id, study_id, "Fixture")["change_sequence"]
+
+        holder = self.Session()
+        try:
+            research_access.authorize(holder, s.project, s.owner, write=True, lock=True)  # as conversion does
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(writer)
+                time.sleep(0.5)
+                self.assertFalse(future.done())  # waiting on the project row
+                holder.execute(self.text("SELECT 1 FROM research_projects WHERE project_id = :p FOR UPDATE NOWAIT"), {"p": s.project})
+                holder.commit()
+                self.assertGreater(future.result(timeout=10), 0)
+        finally:
+            holder.close()
+
+    async def test_merge_adjudication_and_counts_read_one_derivation(self):
+        # R53 finding 6 / rule 9: the merge receipt, the adjudication guard and the flow counts
+        # used three different computations of a candidate's outcome. They now read one.
+        s = self.seed()
+        stage = "title_abstract"
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={})
+            reports, candidates = self._two_reports(db, s, 5)
+            a, b, c, d, e = [report.id for report in reports]
+            candidate_a, candidate_b, _c, candidate_d, candidate_e = candidates
+            decide = lambda candidate, value, **extra: research_review.record_decision(
+                db, s.project, s.owner, candidate, stage, 1, value, **extra)
+            merge = lambda source, target: research_review.merge_reports(
+                db, s.project, s.owner, source, target, "Fixture", protocol_version=1)
+            counts = lambda: research_review.flow_counts(db, s.project, s.owner, 1)
+            decide(candidate_a, "included"); decide(candidate_b, "excluded")
+            self.assertTrue(merge(a, b)["requires_adjudication"])
+            # A conflict an earlier merge left pending is carried by a later merge on either side.
+            self.assertTrue(merge(c, b)["requires_adjudication"])   # pending on the target
+            self.assertTrue(merge(b, d)["requires_adjudication"])   # pending on the source
+            self.assertEqual((counts()["pending_adjudication"], counts()["screened"]), (1, 0))
+            decide(candidate_d, "included", role="adjudication")
+            self.assertEqual((counts()["pending_adjudication"], counts()["title_abstract_excluded"], counts()["screened"]), (0, 0, 1))
+            # A resolved conflict is not adjudicable again.
+            with self.assertRaises(HTTPException) as settled:
+                decide(candidate_d, "excluded", role="adjudication")
+            self.assertEqual(settled.exception.status_code, 409)
+            db.rollback()
+            # The adjudication is final within its version: a later screening decision at the same
+            # version changes neither the counts nor the outcome a merge compares.
+            decide(candidate_d, "excluded")
+            self.assertEqual((counts()["pending_adjudication"], counts()["title_abstract_excluded"], counts()["screened"]), (0, 0, 1))
+            decide(candidate_e, "excluded")
+            result = merge(e, d)
+            self.assertEqual(result["conflicting_decisions"], [{"stage": stage, "source": "excluded", "target": "included"}])
+        other = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, other.project, other.owner, version=1, screening_modes={})
+            (a, b), (candidate_a, candidate_b) = self._two_reports(db, other)
+            a, b = a.id, b.id
+            research_review.record_decision(db, other.project, other.owner, candidate_a, stage, 1, "included")
+            research_review.record_decision(db, other.project, other.owner, candidate_b, stage, 1, "excluded")
+            research_review.merge_reports(db, other.project, other.owner, a, b, "Fixture", protocol_version=1)
+            research_review.record_decision(db, other.project, other.owner, candidate_b, stage, 1, "included", role="adjudication")
+            research_review.amend_protocol(db, other.project, other.owner, new_version=2)
+            research_review.record_decision(db, other.project, other.owner, candidate_b, stage, 2, "excluded")
+            # The v2 cohort agrees with itself and governs. The merge once flagged this stage, but
+            # nothing is in dispute now, so an opposing adjudication is refused.
+            with self.assertRaises(HTTPException) as superseded:
+                research_review.record_decision(db, other.project, other.owner, candidate_b, stage, 2, "included", role="adjudication")
+            self.assertEqual(superseded.exception.status_code, 409)
+            db.rollback()
+            v2 = research_review.flow_counts(db, other.project, other.owner, 2)
+            self.assertEqual((v2["title_abstract_excluded"], v2["pending_adjudication"]), (1, 0))
+            v1 = research_review.flow_counts(db, other.project, other.owner, 1)
+            self.assertEqual((v1["title_abstract_excluded"], v1["pending_adjudication"]), (0, 0))
+
+    async def test_adjudication_is_final_within_its_version(self):
+        # Rule 9a (owner decision, 2026-11-18). Dual stage: two reviewers disagree and the owner
+        # adjudicates. A third reviewer recording at the same version, agreeing or not, leaves the
+        # stage decided. Only a cohort under a later protocol version replaces the adjudication.
+        s = self.seed()
+        reviewers = [uuid4() for _ in range(4)]
+        with self.engine.begin() as conn:
+            for uid in reviewers:
+                conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": uid, "e": str(uid) + "@test.invalid"})
+                conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": uid})
+        stage = "title_abstract"
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={stage: "dual"})
+            _reports, (candidate, _other) = self._two_reports(db, s)
+            state = lambda version: tuple(research_review.flow_counts(db, s.project, s.owner, version)[key]
+                                          for key in ("screened", "title_abstract_excluded", "pending_adjudication"))
+            research_review.record_decision(db, s.project, reviewers[0], candidate, stage, 1, "included")
+            research_review.record_decision(db, s.project, reviewers[1], candidate, stage, 1, "excluded")
+            self.assertEqual(state(1), (0, 0, 1))
+            research_review.record_decision(db, s.project, s.owner, candidate, stage, 1, "included", role="adjudication")
+            self.assertEqual(state(1), (1, 0, 0))
+            research_review.record_decision(db, s.project, reviewers[2], candidate, stage, 1, "included")
+            self.assertEqual(state(1), (1, 0, 0))
+            research_review.record_decision(db, s.project, reviewers[3], candidate, stage, 1, "excluded")
+            self.assertEqual(state(1), (1, 0, 0))
+            with self.assertRaises(HTTPException) as settled:
+                research_review.record_decision(db, s.project, s.owner, candidate, stage, 1, "excluded", role="adjudication")
+            self.assertEqual(settled.exception.status_code, 409)
+            db.rollback()
+            # A later protocol version reopens review: its cohort governs once complete.
+            research_review.amend_protocol(db, s.project, s.owner, new_version=2)
+            self.assertEqual(state(2), (1, 0, 0))
+            research_review.record_decision(db, s.project, reviewers[0], candidate, stage, 2, "excluded")
+            self.assertEqual(state(2), (0, 0, 1))
+            research_review.record_decision(db, s.project, reviewers[1], candidate, stage, 2, "excluded")
+            self.assertEqual(state(2), (1, 1, 0))
+
+    async def test_uncommitted_writes_are_visible_to_the_next_call(self):
+        # R54: every service flushes before returning, so a caller composing several commit=False
+        # calls in one transaction (on a session that does not autoflush, as the application's
+        # does not) reads its own writes back. Unflushed, the next call's locking read or refresh
+        # missed or discarded them: approve-then-apply answered "pending", a second revision left
+        # the entity head behind its history and unrevisable.
+        s = self.seed()
+        first, second = self._two_claims(s)
+        with self.Session() as db:
+            proposal, _ = research_proposals.create_proposal(
+                db, s.project, s.owner, "human",
+                {"edits": [{"entity_id": str(first), "payload": {"statement": "changed"}}]}, {str(first): 1}, commit=False)
+            proposal_id = proposal.id
+            research_proposals.approve_proposal(db, s.project, s.owner, proposal_id, commit=False)
+            self.assertFalse(research_proposals.apply_proposal(db, s.project, s.owner, proposal_id, commit=False)["replayed"])
+            research_entities.revise_entity(db, s.project, s.owner, second, 1, {"statement": "second"}, commit=False)
+            research_entities.revise_entity(db, s.project, s.owner, second, 2, {"statement": "third"}, commit=False)
+            research_review.create_protocol(db, s.project, s.owner, version=1, commit=False)
+            with self.assertRaises(HTTPException) as duplicate:
+                research_review.create_protocol(db, s.project, s.owner, version=1, commit=False)
+            self.assertEqual(duplicate.exception.status_code, 409)
+            db.commit()
+        with self.Session() as db:
+            self.assertEqual([db.get(ResearchEntity, entity_id).revision for entity_id in (first, second)], [2, 3])
+            self.assertEqual(sorted(row.revision for row in db.query(ResearchEntityRevision).filter(
+                ResearchEntityRevision.entity_id == second).all()), [1, 2, 3])
+            self.assertEqual(db.get(ResearchProposal, proposal_id).state, "applied")
+            _reports, (candidate, _other) = self._two_reports(db, s)
+            research_review.amend_protocol(db, s.project, s.owner, new_version=3, commit=False)
+            # An amendment extends the chain: it cannot be placed below the latest protocol,
+            # even while nothing is recorded above version 1.
+            with self.assertRaises(HTTPException) as below:
+                research_review.amend_protocol(db, s.project, s.owner, new_version=2, commit=False)
+            self.assertEqual(below.exception.status_code, 409)
+            with self.assertRaises(HTTPException) as zero:
+                research_review.amend_protocol(db, s.project, s.owner, new_version=0, commit=False)
+            self.assertEqual(zero.exception.status_code, 422)
+            research_review.record_decision(db, s.project, s.owner, candidate, "title_abstract", 3, "included", commit=False)
+            db.commit()
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 3)["screened"], 1)
+
+
+def _convert_in_session(test, project, owner):
+    from app.services import research_convert
+    with test.Session() as db:
+        return research_convert.convert_project(db, project, owner)
