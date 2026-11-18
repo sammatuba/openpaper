@@ -124,6 +124,26 @@ Client container only. Cloud Build `5cc5ba38-abf9-4112-abc8-eafd556a2852` from `
 
 Smoke on the staged URL and then on `papers.sammatuba.workers.dev` and the `run.app` host: `/api/health` 200, `/` 200, `/login` 200, `/projects` 200, `/projects/{id}/discuss` 200, `/vendor/textfold/reader.js` 404 (200 on the previous revision, so the new client is the one served), unauthenticated investigation 401, unauthenticated `POST /api/mcp` 401. The signed-in reader on real data was not exercised.
 
+## Map and panel (2026-11-18, after owner feedback on the deployed reader)
+
+Owner feedback: the deployed reader is text only, lacks the earlier mind-map and graph view, and sits at the bottom of Discuss. See the amendment in `STRATEGY-native-fold-reader.md`.
+
+Changed: `lib/fold-map.ts` (layout), `components/fold/FoldMap.tsx` (map), `FoldedReader.tsx` (Map and Read views, detail pane, own scroll area), `components/project/BriefPanel.tsx` (right-slot panel), `ProjectWorkspaceProvider.tsx` (`brief` panel mode), `ProjectHeader.tsx` (Brief button), Discuss page (bottom section removed), `investigation/shared.tsx` (Open folded preview opens the panel). Removed `ProjectResearchOverview.tsx`. Client only.
+
+Executed (WSL, Node 22, production build, Chromium at 1440 and 390 px):
+
+- `tsc --noEmit`, `npm run lint`: no errors.
+- `npm run test:textfold`: passes, including the new `scripts/test-fold-map.cjs` (tree layout, columns by depth, folding, argument links, shared findings, plain node text, hostile ids, 200-paragraph layout, no overlapping nodes).
+- `test:research-overview:browser`: passes. Panel opens from the header and from Discuss, takes focus, closes on Escape and returns focus; map nodes do not overlap; fold, collapse all, zoom, fit; selecting a paragraph shows it under the map and Read in context scrolls to it; an imported brief draws both argument links and no finding nodes; 200 paragraphs open folded and expand in 54 to 196 ms.
+- `test:project-workflow:browser`, `test:investigation:browser`: pass. Write preview draws cited findings as shared nodes with a link to Evidence; on a phone, following a finding closes the panel.
+- Sizes: Discuss route 8.52 kB / 190 kB first load (the reader moved to the shared project layout).
+
+Defect found by the new unit test and fixed: a map node showed raw `[text][label]` for a reference-style link; node text now resolves references as the text view does.
+
+Not executed for this change: independent review outcome (see below when recorded), Firefox and Safari, signed-in real data, touch pinch zoom, a brief with many crossing argument links.
+
+Known limits: node positions are computed, not draggable; the panel's level, view and selection reset when it is closed; the map is a list of buttons to assistive technology, with Read as the fully structured view.
+
 ## Not executed
 
 - Firefox and Safari; only Chromium.

@@ -63,9 +63,18 @@ Upstream is **Apache-2.0** (Xia Chen, `chenxiachan/textfold`), not MIT. Conseque
 | --- | --- | --- |
 | Whether the word-morph animation is part of what the owner values | Dropped | Owner says the morph is the point. Then it is built as our own small layout animation in a later slice, still not a port |
 | Whether anyone relies on browser-local highlights | Dropped without migration | Owner has highlights to keep. Then export them from the deployed build before this ships |
-| Whether the argument map is used | Replaced by the Topic outline and listed links | A project with many `links` proves the list unreadable |
+| Whether the argument map is used | ~~Replaced by the Topic outline and listed links~~ Reversed on 2026-11-18, see the amendment below | A project with many `links` proves the list unreadable |
 | UI name | "Folded reading" in the interface; "Textfold" only for the file format in import and export | Owner prefers another name |
 | Rendering cost on long briefs (format allows 100 sections of 1000 units) | Render all, measure on the 50-section fixture | Measured slowness; then collapse sections by default |
+
+## Amendment, 2026-11-18: map and panel (owner feedback after deployment)
+
+The owner used the deployed reader and rejected it: text only, without the earlier mind-map and graph view, and placed at the bottom of Discuss where it is hard to reach. Two defaults above are reversed. The decision to implement internally and not embed stands.
+
+- **Map.** The reader has a map view of OpenPaper's own, and it is the view that opens first. Title, sections and paragraphs are a left-to-right tree; argument links (`links`) are dashed, labelled arrows across it; in investigation previews the findings paragraphs cite are shared nodes, which makes the Write preview a graph and not only a tree. Layout is a pure function (`client/src/lib/fold-map.ts`), rendered as HTML buttons over an SVG edge layer (`client/src/components/fold/FoldMap.tsx`). No graph library is added and nothing is ported from TextFold.
+- **Panel.** The reader is no longer mounted in page content. It lives in the workspace's right slot (`client/src/components/project/BriefPanel.tsx`), opened by Brief in the project header on every project route, by the question card on Discuss and by Open folded preview on Overview, Evidence and Write. `ProjectResearchOverview.tsx` is removed; Edit brief, the invalid-levels notice, the empty state and the open-questions list moved into the panel.
+- **Still dropped:** word-morph animation, gesture zoom beyond Ctrl+wheel, display settings, browser-local highlights.
+- **What would change this:** the owner finds the map layout wrong for real briefs (then adjust the layout function, which is isolated), or wants free-form node positions (then positions need storage, which the reader does not have today).
 
 ## Next
 

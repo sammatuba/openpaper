@@ -1,6 +1,6 @@
 "use client";
 
-import { PanelLeftClose, PanelLeftOpen, Sparkles } from "lucide-react";
+import { Network, PanelLeftClose, PanelLeftOpen, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -54,6 +54,7 @@ export function ProjectHeader() {
         crumb,
         rightPanel,
         toggleArtifacts,
+        toggleBrief,
         railCollapsed,
         toggleRail,
         setHasCollaborators,
@@ -137,6 +138,20 @@ export function ProjectHeader() {
                     setHasCollaborators={setHasCollaborators}
                     currentUserIsAdmin={project?.role === "admin"}
                 />
+                <Button
+                    variant="outline"
+                    size="sm"
+                    className={cn(
+                        "h-7 gap-1.5 px-2.5 text-xs",
+                        rightPanel === "brief" && "border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/30",
+                    )}
+                    onClick={toggleBrief}
+                    aria-label="Toggle research brief panel"
+                    aria-pressed={rightPanel === "brief"}
+                >
+                    <Network className="h-3.5 w-3.5 text-blue-500" />
+                    <span className="hidden sm:inline">Brief</span>
+                </Button>
                 <Button
                     variant="outline"
                     size="sm"

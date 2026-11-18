@@ -19,8 +19,12 @@ import {
 } from "@/hooks/useProjects";
 
 // What the right pane is currently showing: paper reader tabs, the artifacts
-// panel, or nothing (collapsed).
-export type RightPanelMode = "reader" | "artifacts" | null;
+// panel, the folded brief, or nothing (collapsed).
+export type RightPanelMode = "reader" | "artifacts" | "brief" | null;
+
+// What the brief panel shows: the project's research brief, or the folded
+// preview of the investigation view on screen.
+export type BriefSource = "brief" | "page";
 
 // Which view the add-papers sheet opens on. "initial" is the chooser;
 // callers that already know the user's intent deep-link to upload/library.
@@ -54,6 +58,10 @@ interface ProjectWorkspaceValue {
     crumb: string | null;
     setCrumb: (crumb: string | null) => void;
     rightPanel: RightPanelMode;
+    briefSource: BriefSource;
+    openBrief: (source?: BriefSource) => void;
+    toggleBrief: () => void;
+    closeBrief: () => void;
     toggleArtifacts: () => void;
     closeArtifacts: () => void;
     // Transient collapse (e.g. on sending a chat message): hides the artifacts
@@ -186,6 +194,19 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
         });
     }, [openPaperIds.length]);
 
+    const [briefSource, setBriefSource] = useState<BriefSource>("brief");
+    const openBrief = useCallback((source: BriefSource = "brief") => {
+        setBriefSource(source);
+        setRightPanel("brief");
+    }, []);
+    // Closing the brief gives the slot back to open paper tabs, as the artifacts panel does.
+    const closeBrief = useCallback(() => {
+        setRightPanel((mode) => (mode !== "brief" ? mode : openPaperIds.length > 0 ? "reader" : null));
+    }, [openPaperIds.length]);
+    const toggleBrief = useCallback(() => {
+        setRightPanel((mode) => (mode !== "brief" ? "brief" : openPaperIds.length > 0 ? "reader" : null));
+    }, [openPaperIds.length]);
+
     const openAddPapers = useCallback((view: AddPapersView = "initial") => {
         setAddPapersInitialView(view);
         setAddPapersOpen(true);
@@ -269,6 +290,10 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
         crumb,
         setCrumb,
         rightPanel,
+        briefSource,
+        openBrief,
+        toggleBrief,
+        closeBrief,
         toggleArtifacts,
         closeArtifacts,
         collapseArtifacts,
@@ -289,7 +314,7 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
         conversations, isConversationsLoading, refetchConversations,
         openPaperIds, activePaperId, readerSearchTerm,
         openPaper, activatePaper, closePaper, closeReader, refreshPaperUrl,
-        crumb, rightPanel, toggleArtifacts, closeArtifacts, collapseArtifacts, railCollapsed, toggleRail,
+        crumb, rightPanel, briefSource, openBrief, toggleBrief, closeBrief, toggleArtifacts, closeArtifacts, collapseArtifacts, railCollapsed, toggleRail,
         addPapersOpen, addPapersInitialView, openAddPapers, hasCollaborators,
         uploadJobs, addUploadJobs,
     ]);

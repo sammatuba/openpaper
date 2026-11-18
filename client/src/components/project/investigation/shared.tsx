@@ -1,17 +1,12 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
+import { ReactNode, useEffect, useId, useRef } from "react";
 import { CheckCircle2, CircleDot, FileQuestion, FileWarning, FileX, Layers, XCircle } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { investigationPreview } from "@/lib/investigation-preview";
 import type { Relation } from "@/lib/investigation";
 import { Button } from "@/components/ui/button";
 import { useProjectWorkspace } from "@/components/project/ProjectWorkspaceProvider";
-import { useInvestigation } from "@/components/project/InvestigationProvider";
-
-const FoldedReader = dynamic(() => import("@/components/fold/FoldedReader").then(module => module.FoldedReader));
 
 export const newId = () => crypto.randomUUID();
 
@@ -157,27 +152,15 @@ export function ViewFrame({ children, wide }: { children: ReactNode; wide?: bool
     );
 }
 
-// The folded reading view of the current (possibly unsaved) document. It makes
-// no request and no model call; finding links route to the Evidence view.
-export function FoldedPreview({ view }: { view: "case" | "evidence" | "draft" }) {
-    const { projectId } = useProjectWorkspace();
-    const { document: doc } = useInvestigation();
-    const [open, setOpen] = useState(false);
-    const folded = useMemo(() => investigationPreview(doc, view, projectId), [doc, projectId, view]);
-
+// Opens the folded view of the current (possibly unsaved) document in the
+// project's brief panel. It makes no request and no model call.
+export function FoldedPreview() {
+    const { rightPanel, briefSource, openBrief, closeBrief } = useProjectWorkspace();
+    const open = rightPanel === "brief" && briefSource === "page";
     return (
-        <div className="space-y-4">
-            <Button variant="outline" size="sm" aria-expanded={open} onClick={() => setOpen(!open)}>
-                <Layers aria-hidden className="h-4 w-4" />
-                {open ? "Close folded preview" : "Open folded preview"}
-            </Button>
-            {open && (
-                <FoldedReader
-                    document={folded}
-                    label="Folded document preview"
-                    findingHref={id => doc.findings.some(finding => finding.id === id) ? `/projects/${projectId}/evidence?finding=${id}` : null}
-                />
-            )}
-        </div>
+        <Button variant="outline" size="sm" aria-expanded={open} onClick={() => (open ? closeBrief() : openBrief("page"))}>
+            <Layers aria-hidden className="h-4 w-4" />
+            {open ? "Close folded preview" : "Open folded preview"}
+        </Button>
     );
 }

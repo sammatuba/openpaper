@@ -259,7 +259,7 @@ export function OverviewView() {
                     )}
                 </section>
             </fieldset>
-            <FoldedPreview view="case" />
+            <FoldedPreview />
         </ViewFrame>
     );
 }

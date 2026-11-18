@@ -663,7 +663,7 @@ export function EvidenceView() {
                 )}
             </fieldset>
 
-            <FoldedPreview view="evidence" />
+            <FoldedPreview />
         </ViewFrame>
     );
 }

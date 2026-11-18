@@ -17,7 +17,12 @@ in your research environment; bring the results back into the evidence compariso
 Resume discussions from the workspace or project navigation. Artifacts are
 available from the header and open on request unless you saved an open preference.
 
-Open **Research brief** for the folded reader. Explain why the answer matters,
+Select **Brief** in the project header, on any project page, to open the folded
+reader in the right-hand panel. It opens as a **Map**: the brief's title, sections
+and paragraphs as a branching tree. Select a section to fold or unfold it and a
+paragraph to read it under the map; argument links in an imported brief are drawn
+as dashed, labelled arrows. **Read** shows the same brief as text. The panel can
+be widened, and Escape closes it. Explain why the answer matters,
 what evidence points each way, how disagreements might be reconciled, and which
 experiment would decide between the explanations. The landscape/novelty section
 compares the closest existing work and records actual source coverage and search
@@ -74,8 +79,9 @@ request and no model call. The five reading levels and the `textfold/doc` format
 originate from [TextFold](https://github.com/chenxiachan/textfold) by Xia Chen
 (Apache-2.0); OpenPaper implements the format and ships none of TextFold's code.
 Until 2026-11-18 OpenPaper embedded TextFold's reader; its word morphs, gesture
-zoom, map canvas, display settings and browser-local highlights were not carried
-over. See `docs/work/STRATEGY-native-fold-reader.md`.
+zoom, display settings and browser-local highlights were not carried over. The
+map is OpenPaper's own (`client/src/components/fold/FoldMap.tsx`, layout in
+`client/src/lib/fold-map.ts`). See `docs/work/STRATEGY-native-fold-reader.md`.
 
 Deployment requires migration `project_research_brief_01` before the updated web
 service. The implementation session did not deploy or change production data.

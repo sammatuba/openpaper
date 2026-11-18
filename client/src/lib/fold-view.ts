@@ -57,6 +57,20 @@ export function nextStep(unit: TextFoldUnit, shown: FoldLevel): FoldLevel | null
     return shown !== 'brief' && brief.level === 'brief' ? 'brief' : 'full';
 }
 
+/** The words of a piece of Markdown, for places that show text only (map nodes, names). */
+export function plainText(markdown: string): string {
+    const words: string[] = [];
+    const walk = (node: Nodes) => {
+        if (node.type === 'definition' || node.type === 'footnoteDefinition' || node.type === 'footnoteReference' || node.type === 'html') return;
+        if (node.type === 'text' || node.type === 'inlineCode' || node.type === 'code') words.push(node.value);
+        else if (node.type === 'image' || node.type === 'imageReference') words.push(node.alt || 'image');
+        else if (node.type === 'break') words.push(' ');
+        else if ('children' in node) { node.children.forEach(walk); if (node.type !== 'root' && !('value' in node) && /^(paragraph|heading|listItem|tableCell|tableRow|blockquote)$/.test(node.type)) words.push(' '); }
+    };
+    walk(grammar.parse(markdown));
+    return words.join('').replace(/\s+/g, ' ').trim();
+}
+
 // Paragraphs render one at a time, but link references and footnotes are
 // defined once for the whole document. The context holds each definition as
 // Markdown, first definition winning as in CommonMark, so a paragraph can be

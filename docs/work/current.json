@@ -8,7 +8,7 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Operator: sign in and read a real brief in the new folded reader (Discuss, and Open folded preview on Overview, Evidence, Write). No PR is open for feat/guided-shell or feat/native-fold-reader; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
+  "next_action": "Owner: look at the map and the Brief panel on the staged revision and decide on promotion. Operator: sign in and read a real brief in the new folded reader (Discuss, and Open folded preview on Overview, Evidence, Write). No PR is open for feat/guided-shell or feat/native-fold-reader; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
   "blocked_on": [
     "No current operator browser/session exposed for authenticated production UI acceptance."
   ],
@@ -508,6 +508,16 @@
     "client_image": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/client@sha256:9c3106fc56f497bf01beb899dbafbc406aaa4e32660acce6f999db90c64755c1",
     "web_revision": "openpaper-00020-dus",
     "traffic_percent": 100,
-    "rollback_revision": "openpaper-00017-lax"
+    "rollback_revision": "openpaper-00017-lax",
+    "map_and_panel": {
+      "date": "2026-11-18",
+      "reason": "owner rejected the deployed text-only reader at the bottom of Discuss",
+      "status": "implemented on feat/native-fold-reader; local checks and browser journeys pass; not deployed",
+      "files": [
+        "client/src/lib/fold-map.ts",
+        "client/src/components/fold/FoldMap.tsx",
+        "client/src/components/project/BriefPanel.tsx"
+      ]
+    }
   }
 }

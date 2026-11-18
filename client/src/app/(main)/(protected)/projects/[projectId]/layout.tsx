@@ -10,6 +10,7 @@ import { ProjectHeader } from "@/components/project/ProjectHeader";
 import { ProjectRail } from "@/components/project/ProjectRail";
 import { ReaderPanel } from "@/components/project/ReaderPanel";
 import { ArtifactsPanel } from "@/components/project/ArtifactsPanel";
+import { BriefPanel } from "@/components/project/BriefPanel";
 import { InvestigationProvider } from "@/components/project/InvestigationProvider";
 import { WorkspaceBar } from "@/components/project/investigation/WorkspaceBar";
 import { AddPapersSheet } from "@/components/project/AddPapersSheet";
@@ -41,8 +42,9 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
                     )}
                     {children}
                 </main>
-                {/* Right slot: reader and artifacts share it, one visible at a time */}
+                {/* Right slot: reader, artifacts and the folded brief share it, one visible at a time */}
                 <ReaderPanel />
+                <BriefPanel />
                 <ArtifactsPanel />
             </div>
             <AddPapersSheet />

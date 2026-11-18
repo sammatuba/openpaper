@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import Markdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Download } from "lucide-react";
+import { Download, FileText, Network, X } from "lucide-react";
+import { FoldMap } from "./FoldMap";
+import type { MapSelection } from "./FoldMap";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -36,7 +38,13 @@ type Props = {
      * never get this, so their extension fields are kept for export, not shown.
      */
     findingHref?: (id: string) => string | null;
+    /** Which view opens first. */
+    initialView?: FoldViewMode;
+    /** Shown after the text in the reading view. */
+    footer?: ReactNode;
 };
+
+export type FoldViewMode = "map" | "read";
 
 export function downloadFold(doc: TextFoldDocument) {
     let serialized: string;
@@ -80,13 +88,18 @@ function scrollParent(element: HTMLElement): Element {
     return window.document.scrollingElement || window.document.documentElement;
 }
 
-export function FoldedReader({ document: doc, label = "Folded reading", initialLevel = "takeaway", exportable = false, findingHref }: Props) {
+export function FoldedReader({ document: doc, label = "Folded reading", initialLevel = "takeaway", exportable = false, findingHref, initialView = "map", footer }: Props) {
     const [level, setLevel] = useState<FoldLevel>(initialLevel);
+    const [view, setView] = useState<FoldViewMode>(initialView);
+    const [selected, setSelected] = useState<MapSelection>(null);
+    // A paragraph to bring into view once the reading view has rendered.
+    const [reveal, setReveal] = useState<string | null>(null);
     // Paragraphs the reader opened further than the document level.
     // Keyed by document id in a Map, because ids are arbitrary strings. Locally folded text has
     // positional ids, so after an edit that shifts paragraphs the state follows the position.
     const [opened, setOpened] = useState<Map<string, FoldLevel>>(() => new Map());
     const root = useRef<HTMLDivElement>(null);
+    const body = useRef<HTMLDivElement>(null);
     const anchor = useRef<{ element: HTMLElement; top: number } | null>(null);
     const prefix = useId();
     const context = useMemo(() => foldContext(doc), [doc]);
@@ -105,10 +118,11 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
     // Keep the paragraph being read in place when every paragraph changes height.
     const changeLevel = (next: FoldLevel) => {
         if (next === level && !opened.size) return;
-        const container = root.current;
+        const container = body.current;
         anchor.current = null;
-        if (container && container.getBoundingClientRect().top < 0) {
-            const visible = Array.from(container.querySelectorAll<HTMLElement>("[data-fold-unit]")).find(unit => unit.getBoundingClientRect().bottom > 0);
+        if (container && container.scrollTop > 0) {
+            const top = container.getBoundingClientRect().top;
+            const visible = Array.from(container.querySelectorAll<HTMLElement>("[data-fold-unit]")).find(unit => unit.getBoundingClientRect().bottom > top);
             if (visible) anchor.current = { element: visible, top: visible.getBoundingClientRect().top };
         }
         setLevel(next);
@@ -120,6 +134,37 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
         if (!kept || !kept.element.isConnected) return;
         scrollParent(kept.element).scrollTop += kept.element.getBoundingClientRect().top - kept.top;
     }, [level]);
+
+    useEffect(() => {
+        if (view !== "read" || !reveal) return;
+        const target = window.document.getElementById(reveal);
+        setReveal(null);
+        if (!target) return;
+        target.scrollIntoView({ block: "start" });
+        target.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
+    }, [view, reveal]);
+
+    // The paragraph or finding picked on the map, looked up in the current document.
+    const picked = useMemo(() => {
+        if (!selected) return null;
+        for (let i = 0; i < doc.sections.length; i++) {
+            const section = doc.sections[i];
+            for (let j = 0; j < section.units.length; j++) {
+                const unit = section.units[j];
+                if (selected.kind === "unit" && unit.id === selected.ref) return { kind: "unit" as const, section, unit, i, j };
+                if (selected.kind === "finding" && Array.isArray(unit.findings)) {
+                    const finding = (unit.findings as FoldFinding[]).find(item => item && item.id === selected.ref);
+                    if (finding) return { kind: "finding" as const, finding };
+                }
+            }
+        }
+        return null;
+    }, [doc, selected]);
+    const openOf = (id: string) => (next: FoldLevel | null) => setOpened(current => {
+        const result = new Map(current);
+        if (next) result.set(id, next); else result.delete(id);
+        return result;
+    });
 
     const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
         if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -140,10 +185,28 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
 
     const hasText = doc.sections.some(section => section.units.some(unit => !silent.has(unit.id)));
     const compact = level === "topic";
+    const linkCount = (doc.links || []).length;
 
     return (
-        <div ref={root} role="region" aria-label={label} tabIndex={-1} onKeyDown={onKeyDown} data-reader-ready="true" data-level={level} className="min-w-0 outline-none">
-            <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 bg-background py-2">
+        <div ref={root} role="region" aria-label={label} tabIndex={-1} onKeyDown={onKeyDown} data-reader-ready="true" data-level={level} data-view={view} className="flex h-full min-h-0 min-w-0 flex-col outline-none">
+            <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b px-3 py-2">
+                <div role="group" aria-label="View" className="flex rounded-lg border p-0.5">
+                    {([["map", "Map", Network], ["read", "Read", FileText]] as const).map(([item, name, Icon]) => (
+                        <button
+                            key={item}
+                            type="button"
+                            aria-pressed={view === item}
+                            data-view-option={item}
+                            onClick={() => setView(item)}
+                            className={cn(
+                                "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+                                view === item ? "bg-blue-600 text-white dark:bg-blue-500" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                            )}
+                        >
+                            <Icon aria-hidden className="h-3.5 w-3.5" />{name}
+                        </button>
+                    ))}
+                </div>
                 <div role="radiogroup" aria-label="Reading level" className="flex flex-wrap gap-1">
                     {LEVEL_ORDER.map((item, index) => (
                         <button
@@ -167,58 +230,110 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
                     ))}
                 </div>
                 {exportable && (
-                    <Button variant="ghost" size="sm" className="gap-1.5 text-xs" onClick={() => downloadFold(doc)}>
+                    <Button variant="ghost" size="sm" className="ml-auto h-7 gap-1.5 px-2 text-xs" onClick={() => downloadFold(doc)}>
                         <Download aria-hidden className="h-3.5 w-3.5" />Export Textfold
                     </Button>
                 )}
             </div>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">{provenanceLine(doc)}</p>
 
-            {!hasText && <p className="mt-6 text-sm text-muted-foreground">Nothing to read here yet.</p>}
-            {hasText && (
-                <div className={cn("mt-6", compact ? "space-y-5" : "space-y-8")}>
-                    {doc.sections.map((section, i) => {
-                        const Heading = section.depth > 1 ? "h4" : "h3";
-                        const topic = section.topic.trim();
-                        const takeaway = section.takeaway.trim();
-                        const same = (value: string) => value.toLocaleLowerCase() === section.title.trim().toLocaleLowerCase();
-                        return (
-                            <section key={section.id} id={domIds.get(section.id)} aria-label={section.title} className="scroll-mt-16">
-                                <Heading className={cn("font-semibold leading-snug [overflow-wrap:anywhere]", section.depth > 1 ? "text-sm" : "text-base")}>{section.title}</Heading>
-                                {(links.get(section.id) || []).length > 0 && (
-                                    <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-                                        {links.get(section.id)!.map((link, index) => <a key={index} className={action} href={`#${domIds.get(link.to)}`}>{link.rel} → {link.title}</a>)}
-                                    </p>
-                                )}
-                                {compact && topic && !same(topic) && <p className="mt-1 text-sm text-muted-foreground">{topic}</p>}
-                                {!doc.provenance.local && (level === "topic" || level === "takeaway") && takeaway && !same(takeaway) && (
-                                    <p className="mt-1 text-sm leading-6 text-muted-foreground">{takeaway}</p>
-                                )}
-                                {section.units.every(unit => silent.has(unit.id)) && <p className="mt-2 text-sm text-muted-foreground">No text in this section.</p>}
-                                <div className={cn("mt-2", compact ? "space-y-1.5" : "space-y-4")}>
-                                    {section.units.map((unit, j) => silent.has(unit.id) ? null : (
-                                        <FoldUnit
-                                            key={unit.id}
-                                            unit={unit}
-                                            domId={domIds.get(unit.id)!}
-                                            path={`${i}-${j}`}
-                                            name={`paragraph ${j + 1} of ${section.title}`}
-                                            documentLevel={level}
-                                            openedTo={opened.get(unit.id)}
-                                            context={context}
-                                            links={(links.get(unit.id) || []).map(link => ({ ...link, href: `#${domIds.get(link.to)}` }))}
-                                            findingHref={findingHref}
-                                            onOpen={next => setOpened(current => {
-                                                const result = new Map(current);
-                                                if (next) result.set(unit.id, next); else result.delete(unit.id);
-                                                return result;
-                                            })}
-                                        />
-                                    ))}
+            {!hasText && <p className="p-4 text-sm text-muted-foreground">Nothing to read here yet.</p>}
+
+            {hasText && view === "map" && (
+                <>
+                    <FoldMap document={doc} level={level} context={context} findings={!!findingHref} selected={picked ? selected : null} onSelect={setSelected} className="flex-1" />
+                    <div aria-live="polite" className="max-h-[45%] shrink-0 overflow-y-auto border-t px-4 py-3" data-map-detail={picked ? picked.kind : "none"}>
+                        {!picked && (
+                            <p className="text-xs leading-5 text-muted-foreground">
+                                Select a paragraph to read it here. Sections fold and unfold.
+                                {linkCount > 0 && " Dashed arrows are argument links."}
+                                {findingHref && " Green nodes are the findings paragraphs cite."}
+                            </p>
+                        )}
+                        {picked?.kind === "unit" && (
+                            <>
+                                <div className="mb-1.5 flex items-start justify-between gap-3">
+                                    <p className="min-w-0 text-xs font-medium text-muted-foreground [overflow-wrap:anywhere]">{picked.section.title} · paragraph {picked.j + 1}</p>
+                                    <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+                                        <button type="button" className={action} onClick={() => { setReveal(domIds.get(picked.unit.id) || null); setView("read"); }}>Read in context</button>
+                                        <button type="button" className={action} aria-label="Close paragraph" onClick={() => setSelected(null)}><X aria-hidden className="h-3.5 w-3.5" /></button>
+                                    </div>
                                 </div>
-                            </section>
-                        );
-                    })}
+                                <FoldUnit
+                                    key={picked.unit.id}
+                                    unit={picked.unit}
+                                    domId={`${prefix}detail`}
+                                    name={`paragraph ${picked.j + 1} of ${picked.section.title}`}
+                                    documentLevel={level}
+                                    openedTo={opened.get(picked.unit.id)}
+                                    context={context}
+                                    links={[]}
+                                    findingHref={findingHref}
+                                    onOpen={openOf(picked.unit.id)}
+                                />
+                            </>
+                        )}
+                        {picked?.kind === "finding" && (
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <p className="text-xs font-medium text-muted-foreground">Finding</p>
+                                    <p className="mt-1 text-sm [overflow-wrap:anywhere]">{picked.finding.label}</p>
+                                    {findingHref?.(picked.finding.id) && (
+                                        <Link prefetch={false} className={cn(action, "mt-1 inline-block text-xs text-blue-700 dark:text-blue-300")} href={findingHref(picked.finding.id)!}>Open in Evidence</Link>
+                                    )}
+                                </div>
+                                <button type="button" className={cn(action, "text-muted-foreground")} aria-label="Close finding" onClick={() => setSelected(null)}><X aria-hidden className="h-3.5 w-3.5" /></button>
+                            </div>
+                        )}
+                    </div>
+                </>
+            )}
+
+            {view === "read" && (
+                <div ref={body} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                    <p className="text-xs leading-5 text-muted-foreground">{provenanceLine(doc)}</p>
+                    {hasText && (
+                        <div className={cn("mt-5", compact ? "space-y-5" : "space-y-8")}>
+                            {doc.sections.map((section, i) => {
+                                const Heading = section.depth > 1 ? "h4" : "h3";
+                                const topic = section.topic.trim();
+                                const takeaway = section.takeaway.trim();
+                                const same = (value: string) => value.toLocaleLowerCase() === section.title.trim().toLocaleLowerCase();
+                                return (
+                                    <section key={section.id} id={domIds.get(section.id)} aria-label={section.title} className="scroll-mt-2">
+                                        <Heading className={cn("font-semibold leading-snug [overflow-wrap:anywhere]", section.depth > 1 ? "text-sm" : "text-base")}>{section.title}</Heading>
+                                        {(links.get(section.id) || []).length > 0 && (
+                                            <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                                                {links.get(section.id)!.map((link, index) => <a key={index} className={action} href={`#${domIds.get(link.to)}`}>{link.rel} → {link.title}</a>)}
+                                            </p>
+                                        )}
+                                        {compact && topic && !same(topic) && <p className="mt-1 text-sm text-muted-foreground">{topic}</p>}
+                                        {!doc.provenance.local && (level === "topic" || level === "takeaway") && takeaway && !same(takeaway) && (
+                                            <p className="mt-1 text-sm leading-6 text-muted-foreground">{takeaway}</p>
+                                        )}
+                                        {section.units.every(unit => silent.has(unit.id)) && <p className="mt-2 text-sm text-muted-foreground">No text in this section.</p>}
+                                        <div className={cn("mt-2", compact ? "space-y-1.5" : "space-y-4")}>
+                                            {section.units.map((unit, j) => silent.has(unit.id) ? null : (
+                                                <FoldUnit
+                                                    key={unit.id}
+                                                    unit={unit}
+                                                    domId={domIds.get(unit.id)!}
+                                                    path={`${i}-${j}`}
+                                                    name={`paragraph ${j + 1} of ${section.title}`}
+                                                    documentLevel={level}
+                                                    openedTo={opened.get(unit.id)}
+                                                    context={context}
+                                                    links={(links.get(unit.id) || []).map(link => ({ ...link, href: `#${domIds.get(link.to)}` }))}
+                                                    findingHref={findingHref}
+                                                    onOpen={openOf(unit.id)}
+                                                />
+                                            ))}
+                                        </div>
+                                    </section>
+                                );
+                            })}
+                        </div>
+                    )}
+                    {footer && <div className="mt-8">{footer}</div>}
                 </div>
             )}
         </div>
@@ -228,7 +343,8 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
 type UnitProps = {
     unit: TextFoldUnit;
     domId: string;
-    path: string;
+    /** Position in the reading view; absent in the map's detail pane. */
+    path?: string;
     name: string;
     documentLevel: FoldLevel;
     openedTo?: FoldLevel;
@@ -259,7 +375,7 @@ function FoldUnit({ unit, domId, path, name, documentLevel, openedTo, context, l
     }, [openedTo]);
     const open = (next: FoldLevel | null) => { refocus.current = true; onOpen(next); };
     return (
-        <div id={domId} data-fold-unit={path} data-shown={shown.level} className="min-w-0 scroll-mt-16">
+        <div id={domId} data-fold-unit={path} data-shown={shown.level} className="min-w-0 scroll-mt-2">
             {attribution && <p className="text-xs font-medium text-muted-foreground">{attribution}</p>}
             {shown.markdown.trim() ? (
                 <FoldMarkdown

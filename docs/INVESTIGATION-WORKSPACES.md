@@ -52,7 +52,10 @@ Generate action is a new explicit request. Manual work remains available.
 
 ## Reader and portability
 
-Open folded preview shows the current view, including unsaved edits, in
+Open folded preview, or Brief in the project header, shows the current view,
+including unsaved edits, in the right-hand panel. It opens as a map of sections
+and paragraphs; on Write, the findings paragraphs cite are shared nodes joined to
+every paragraph that cites them. Read shows the text in
 OpenPaper's folded reader at five levels: Topic, Takeaway, Key, Brief and Full.
 Keys 1–5 select a level while focus is inside the reader; input fields keep their
 keyboard behavior. Under a paragraph, Show source sentences and Show full text

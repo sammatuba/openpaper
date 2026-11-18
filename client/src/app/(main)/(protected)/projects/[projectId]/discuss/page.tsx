@@ -12,7 +12,6 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MentionInput } from "@/components/chat/MentionInput";
 import { MentionSelection, EMPTY_MENTION_SELECTION } from "@/components/chat/MentionAutocomplete";
-import { ProjectResearchOverview } from "@/components/project/ProjectResearchOverview";
 import { isChatCreditAtLimit, useSubscription } from "@/hooks/useSubscription";
 import { useProjectWorkspace } from "@/components/project/ProjectWorkspaceProvider";
 
@@ -50,17 +49,14 @@ const RESEARCH_TASKS = [
 function ProjectPage() {
     const router = useRouter();
     const { projectId, project, isProjectLoading, projectError, papers, isPapersLoading,
-        conversations, isConversationsLoading, refetchConversations, openAddPapers, openPaperIds, pendingDiscussions } = useProjectWorkspace();
+        conversations, isConversationsLoading, refetchConversations, openAddPapers, openPaperIds, pendingDiscussions, openBrief } = useProjectWorkspace();
     const [error, setError] = useState<string | null>(null);
     const [newQuery, setNewQuery] = useState("");
     const [taskId, setTaskId] = useState<string>("evidence");
-    const [briefOpened, setBriefOpened] = useState(false);
-    const [briefOpen, setBriefOpen] = useState(false);
     const [mentionSelection, setMentionSelection] = useState<MentionSelection>(EMPTY_MENTION_SELECTION);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const submittingRef = useRef(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const briefRef = useRef<HTMLDetailsElement>(null);
     const { subscription } = useSubscription();
     const chatDisabled = isChatCreditAtLimit(subscription);
     const isViewer = project?.role === ProjectRole.Viewer;
@@ -125,11 +121,8 @@ function ProjectPage() {
                 <p className="mt-3 text-sm leading-6 text-muted-foreground">Work through a question, check the evidence, and keep your conclusions in the working brief.</p>
                 <div className="mt-4 border-l-2 border-blue-500/50 pl-3">
                     <p className="text-xs font-medium text-muted-foreground">Question in the working brief</p>
-                    <p className="mt-1 line-clamp-3 text-sm leading-6 [overflow-wrap:anywhere]">{question || "What disputed question would this project resolve? Define it in the research brief below."}</p>
-                    <button type="button" className="mt-2 text-xs underline underline-offset-4" onClick={() => {
-                        setBriefOpen(true); setBriefOpened(true);
-                        if (briefRef.current) { briefRef.current.open = true; briefRef.current.scrollIntoView({ block: "start" }); }
-                    }}>{question ? "Read or update the brief" : "Define the research question"}</button>
+                    <p className="mt-1 line-clamp-3 text-sm leading-6 [overflow-wrap:anywhere]">{question || "What disputed question would this project resolve? Define it in the research brief."}</p>
+                    <button type="button" className="mt-2 text-xs underline underline-offset-4" onClick={() => openBrief("brief")}>{question ? "Read or update the brief" : "Define the research question"}</button>
                 </div>
             </header>
 
@@ -168,21 +161,14 @@ function ProjectPage() {
                     {chatDisabled ? <p className="text-sm text-muted-foreground">Your chat credit limit has been reached. <Link href="/pricing" className="underline">View plans</Link></p> : null}
                     <Button onClick={handleNewQuery} disabled={chatDisabled || isSubmitting || !prompt.trim()} className="h-auto whitespace-normal py-2">{isSubmitting ? "Starting discussion…" : task?.action || "Start discussion"}<ArrowRight aria-hidden className="ml-2 h-4 w-4 shrink-0" /></Button>
                 </div>
-                <p className="text-xs leading-5 text-muted-foreground">Discussions are saved in this project. {project.role === ProjectRole.Admin ? "Review the answer, then use Edit brief below to keep your conclusions." : "Share conclusions with a project admin to update the working brief."} {taskId === "experiment" && "Run the experiment in your research environment, then bring the results back for comparison."}</p>
+                <p className="text-xs leading-5 text-muted-foreground">Discussions are saved in this project. {project.role === ProjectRole.Admin ? "Review the answer, then open the Brief panel and use Edit brief to keep your conclusions." : "Share conclusions with a project admin to update the working brief."} {taskId === "experiment" && "Run the experiment in your research environment, then bring the results back for comparison."}</p>
             </section> : <section className="rounded-xl border border-dashed p-6" aria-labelledby="add-sources-heading">
                 <BookOpen aria-hidden className="mb-3 h-6 w-6 text-blue-500" />
                 <h2 id="add-sources-heading" className="font-semibold">Start by adding your evidence</h2>
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">Add the closest related work and papers with conflicting findings. Then compare their evidence or plan the next experiment.</p>
                 <div className="mt-4 flex flex-wrap gap-2"><Button onClick={() => openAddPapers("upload")}>Upload papers</Button><Button variant="outline" onClick={() => openAddPapers("library")}>Add from library</Button></div>
-            </section> : <p className="rounded-xl border p-4 text-sm leading-6 text-muted-foreground">You have view access. Open a paper from the project navigation, read the working brief below, or continue reading an existing discussion.</p>}
+            </section> : <p className="rounded-xl border p-4 text-sm leading-6 text-muted-foreground">You have view access. Open a paper from the project navigation, open the Brief panel to read the working brief, or continue reading an existing discussion.</p>}
 
-            <details ref={briefRef} id="research-brief" open={briefOpen} className="group scroll-mt-5 rounded-xl border p-4 sm:p-5" onToggle={event => {
-                setBriefOpen(event.currentTarget.open);
-                if (event.currentTarget.open) setBriefOpened(true);
-            }}>
-                <summary className="cursor-pointer text-sm font-semibold">Research brief<span className="mt-1 block pl-4 text-xs font-normal leading-5 text-muted-foreground">Read at different levels of detail, inspect sources, and update the working synthesis.</span></summary>
-                {briefOpened && <div className="mt-6"><ProjectResearchOverview project={project} canEdit={project.role === ProjectRole.Admin} embedded /></div>}
-            </details>
             <details className="text-sm">
                 <summary className="cursor-pointer font-medium">How to work on this project</summary>
                 <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6 text-muted-foreground">

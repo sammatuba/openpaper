@@ -417,7 +417,7 @@ export function DraftView() {
                 )}
             </fieldset>
 
-            <FoldedPreview view="draft" />
+            <FoldedPreview />
         </ViewFrame>
     );
 }
