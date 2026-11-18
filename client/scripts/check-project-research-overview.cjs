@@ -130,6 +130,23 @@ https://example.org/source?q=&amp;copy; "Literal &amp;amp;"`;
         await evidenceNode.click();
         assert.equal(await evidenceNode.getAttribute('aria-pressed'), 'true');
         assert.equal(await detail.getAttribute('data-map-detail'), 'unit');
+        assert.equal(await detail.evaluate(element => element === document.activeElement), true, 'selecting a node moves focus to its text');
+        await detail.getByRole('button', {name:'Close paragraph',exact:true}).click();
+        assert.equal(await evidenceNode.evaluate(element => element === document.activeElement), true, 'closing the text returns focus to its node');
+        // Another panel taking the slot does not pull focus back to whatever opened the brief.
+        if (width >= 1024) {
+            await page.getByRole('button', {name:'Toggle artifacts panel',exact:true}).click();
+            await panel.waitFor({state:'detached'});
+            assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Toggle artifacts panel');
+            await page.getByRole('button', {name:'Toggle artifacts panel',exact:true}).click();
+            await readerReady('map');
+        }
+        await sectionNodes.first().click();
+        await reader.locator('[data-view-option="read"]').click();
+        await reader.locator('[data-view-option="map"]').click();
+        assert.equal(await sectionNodes.first().getAttribute('aria-expanded'), 'false', 'folded sections survive a visit to the text');
+        await sectionNodes.first().click();
+        await evidenceNode.click();
         assert.match(await detail.innerText(), /A controlled study observed boundary crossings through inter-agent content\./);
         await detail.getByRole('button', {name:/^Show source sentences/}).click();
         await detail.getByRole('button', {name:/^Fold back/}).waitFor();
@@ -270,7 +287,9 @@ https://example.org/source?q=&amp;copy; "Literal &amp;amp;"`;
                 {id:`L${i}.r`,kind:'paragraph',full:definition,sentences:[definition],evidence:[0],brief:[definition],key:'',takeaway:'',topic:''}]};
         })};
         const opened = Date.now();
-        await page.reload(); await readerReady();
+        await page.reload(); await readerReady('map');
+        assert.equal(await page.locator('[data-map-node="unit"]').count(), 0, 'a large brief opens folded');
+        await readerReady();
         const openMs = Date.now() - opened;
         const large = page.locator('[data-reader-ready]');
         assert.equal(await large.locator('[data-fold-unit]').count(), 200);

@@ -5,7 +5,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { ChevronDown, ChevronRight, Maximize, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FoldLevel, TextFoldDocument } from "@/lib/schema";
-import { foldMap, initiallyCollapsed } from "@/lib/fold-map";
+import { foldMap } from "@/lib/fold-map";
 import type { MapNode } from "@/lib/fold-map";
 import type { FoldContext } from "@/lib/fold-view";
 
@@ -20,6 +20,9 @@ type FoldMapProps = {
     context: FoldContext;
     /** Draw cited findings as shared nodes. */
     findings: boolean;
+    /** Folded sections; kept by the reader so they survive a switch to the text and back. */
+    collapsed: ReadonlySet<string>;
+    onCollapsed: (collapsed: Set<string>) => void;
     selected: MapSelection;
     onSelect: (selection: MapSelection) => void;
     className?: string;
@@ -38,8 +41,7 @@ const NODE_STYLE: Record<MapNode["kind"], string> = {
 
 const control = "inline-flex h-7 min-w-7 items-center justify-center rounded-md px-1.5 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40";
 
-export function FoldMap({ document: doc, level, context, findings, selected, onSelect, className }: FoldMapProps) {
-    const [collapsed, setCollapsed] = useState(() => initiallyCollapsed(doc));
+export function FoldMap({ document: doc, level, context, findings, collapsed, onCollapsed, selected, onSelect, className }: FoldMapProps) {
     const [zoom, setZoom] = useState(1);
     const scroller = useRef<HTMLDivElement>(null);
     const marker = useId().replace(/[^a-zA-Z0-9_-]/g, "");
@@ -83,15 +85,15 @@ export function FoldMap({ document: doc, level, context, findings, selected, onS
     };
     const endDrag = () => { drag.current = null; };
 
-    const toggle = (id: string) => setCollapsed(current => {
-        const next = new Set(current);
+    const toggle = (id: string) => {
+        const next = new Set(collapsed);
         if (!next.delete(id)) next.add(id);
-        return next;
-    });
+        onCollapsed(next);
+    };
     const sections = layout.nodes.filter(node => node.kind === "section" && node.children > 0);
     const allOpen = sections.every(node => !node.collapsed);
     // Every section, including ones folded inside a collapsed parent.
-    const setAll = (open: boolean) => setCollapsed(new Set(open ? [] : doc.sections.map(section => section.id)));
+    const setAll = (open: boolean) => onCollapsed(new Set(open ? [] : doc.sections.map(section => section.id)));
 
     // Edges that touch the selection stand out; the rest stay quiet.
     const selectedKey = selected ? `${selected.kind}:${selected.ref}` : "";

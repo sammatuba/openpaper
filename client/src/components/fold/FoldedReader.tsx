@@ -8,6 +8,7 @@ import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Download, FileText, Network, X } from "lucide-react";
 import { FoldMap } from "./FoldMap";
+import { initiallyCollapsed } from "@/lib/fold-map";
 import type { MapSelection } from "./FoldMap";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -92,13 +93,33 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
     const [level, setLevel] = useState<FoldLevel>(initialLevel);
     const [view, setView] = useState<FoldViewMode>(initialView);
     const [selected, setSelected] = useState<MapSelection>(null);
+    const [opened, setOpened] = useState<Map<string, FoldLevel>>(() => new Map());
+    const root = useRef<HTMLDivElement>(null);
+    const [collapsed, setCollapsed] = useState(() => initiallyCollapsed(doc));
+    // The document can change under a mounted reader (a saved edit, an import, typing in a
+    // draft). When its structure changes, state keyed by its ids no longer means the same
+    // paragraphs, so it starts again; edits inside a paragraph keep it.
+    const structure = useMemo(() => doc.id + "\n" + doc.sections.map(section => section.id + "\t" + section.units.map(unit => unit.id).join("\t")).join("\n"), [doc]);
+    const [seen, setSeen] = useState(structure);
+    if (seen !== structure) {
+        setSeen(structure);
+        setCollapsed(initiallyCollapsed(doc));
+        setSelected(null);
+        setOpened(new Map());
+    }
+    const detail = useRef<HTMLDivElement>(null);
+    // Selecting on the map moves focus to the paragraph's text; closing it returns to its node.
+    const select = (next: MapSelection) => {
+        const node = next ? null : root.current?.querySelector<HTMLElement>('[data-map-node][aria-pressed="true"]');
+        setSelected(next);
+        if (next) requestAnimationFrame(() => detail.current?.focus({ preventScroll: true }));
+        else (node || root.current)?.focus({ preventScroll: true });
+    };
     // A paragraph to bring into view once the reading view has rendered.
     const [reveal, setReveal] = useState<string | null>(null);
     // Paragraphs the reader opened further than the document level.
     // Keyed by document id in a Map, because ids are arbitrary strings. Locally folded text has
     // positional ids, so after an edit that shifts paragraphs the state follows the position.
-    const [opened, setOpened] = useState<Map<string, FoldLevel>>(() => new Map());
-    const root = useRef<HTMLDivElement>(null);
     const body = useRef<HTMLDivElement>(null);
     const anchor = useRef<{ element: HTMLElement; top: number } | null>(null);
     const prefix = useId();
@@ -141,7 +162,8 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
         setReveal(null);
         if (!target) return;
         target.scrollIntoView({ block: "start" });
-        target.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
+        // A paragraph already shown in full has no control of its own; the reader keeps focus then.
+        (target.querySelector<HTMLElement>("button") || root.current)?.focus({ preventScroll: true });
     }, [view, reveal]);
 
     // The paragraph or finding picked on the map, looked up in the current document.
@@ -240,8 +262,9 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
 
             {hasText && view === "map" && (
                 <>
-                    <FoldMap document={doc} level={level} context={context} findings={!!findingHref} selected={picked ? selected : null} onSelect={setSelected} className="flex-1" />
-                    <div aria-live="polite" className="max-h-[45%] shrink-0 overflow-y-auto border-t px-4 py-3" data-map-detail={picked ? picked.kind : "none"}>
+                    <FoldMap key={structure} document={doc} level={level} context={context} findings={!!findingHref} collapsed={collapsed} onCollapsed={setCollapsed} selected={picked ? selected : null} onSelect={select} className="flex-1" />
+                    <div ref={detail} tabIndex={-1} role="group" aria-label={picked ? "Selected on the map" : "Map guide"} className="max-h-[45%] shrink-0 overflow-y-auto border-t px-4 py-3 outline-none" data-map-detail={picked ? picked.kind : "none"}>
+                        <p className="mb-1.5 text-[11px] leading-4 text-muted-foreground">{provenanceLine(doc)}</p>
                         {!picked && (
                             <p className="text-xs leading-5 text-muted-foreground">
                                 Select a paragraph to read it here. Sections fold and unfold.
@@ -255,7 +278,7 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
                                     <p className="min-w-0 text-xs font-medium text-muted-foreground [overflow-wrap:anywhere]">{picked.section.title} · paragraph {picked.j + 1}</p>
                                     <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
                                         <button type="button" className={action} onClick={() => { setReveal(domIds.get(picked.unit.id) || null); setView("read"); }}>Read in context</button>
-                                        <button type="button" className={action} aria-label="Close paragraph" onClick={() => setSelected(null)}><X aria-hidden className="h-3.5 w-3.5" /></button>
+                                        <button type="button" className={action} aria-label="Close paragraph" onClick={() => select(null)}><X aria-hidden className="h-3.5 w-3.5" /></button>
                                     </div>
                                 </div>
                                 <FoldUnit
@@ -281,7 +304,7 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
                                         <Link prefetch={false} className={cn(action, "mt-1 inline-block text-xs text-blue-700 dark:text-blue-300")} href={findingHref(picked.finding.id)!}>Open in Evidence</Link>
                                     )}
                                 </div>
-                                <button type="button" className={cn(action, "text-muted-foreground")} aria-label="Close finding" onClick={() => setSelected(null)}><X aria-hidden className="h-3.5 w-3.5" /></button>
+                                <button type="button" className={cn(action, "text-muted-foreground")} aria-label="Close finding" onClick={() => select(null)}><X aria-hidden className="h-3.5 w-3.5" /></button>
                             </div>
                         )}
                     </div>

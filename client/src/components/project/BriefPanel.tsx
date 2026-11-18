@@ -43,14 +43,19 @@ export function BriefPanel() {
     const panel = useRef<HTMLElement>(null);
     const opener = useRef<HTMLElement | null>(null);
     const wasShown = useRef(false);
+    // Set by the panel's own Close and Escape. When another panel takes the slot, or a link
+    // navigates away, focus stays where the user put it.
+    const returnFocus = useRef(false);
     useEffect(() => {
         if (shown && !wasShown.current) {
             opener.current = document.activeElement as HTMLElement;
             panel.current?.focus({ preventScroll: true });
         }
-        if (!shown && wasShown.current && opener.current?.isConnected) opener.current.focus();
+        if (!shown && wasShown.current && returnFocus.current && opener.current?.isConnected) opener.current.focus();
+        returnFocus.current = false;
         wasShown.current = shown;
     }, [shown]);
+    const close = () => { returnFocus.current = true; closeBrief(); };
 
     if (!shown || !project || !brief) return null;
 
@@ -69,12 +74,12 @@ export function BriefPanel() {
             tabIndex={-1}
             aria-label="Research brief panel"
             data-brief-panel={source}
-            onKeyDown={event => { if (event.key === "Escape" && !event.defaultPrevented && !editing) closeBrief(); }}
-            // On a phone the panel covers the page, so following a link out of it (a cited finding) closes it.
-            onClick={event => { if ((event.target as HTMLElement).closest('a[href^="/"]') && window.innerWidth < 768) closeBrief(); }}
+            onKeyDown={event => { if (event.key === "Escape" && !event.defaultPrevented && !editing) close(); }}
+            // Below the desktop layout the panel covers the page, so following a link out of it (a cited finding) closes it.
+            onClick={event => { if ((event.target as HTMLElement).closest('a[href^="/"]') && window.innerWidth < 1024) closeBrief(); }}
             className={cn(
-                "fixed inset-0 z-40 flex flex-col bg-background outline-none md:static md:z-auto md:shrink-0 md:border-l",
-                wide ? "md:w-[72%]" : "md:w-[56%] md:min-w-[440px] md:max-w-[980px]",
+                "fixed inset-0 z-40 flex flex-col bg-background outline-none lg:static lg:z-auto lg:shrink-0 lg:border-l",
+                wide ? "lg:w-[72%]" : "lg:w-[56%] lg:min-w-[440px] lg:max-w-[980px]",
             )}
         >
             <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
@@ -88,10 +93,10 @@ export function BriefPanel() {
                             <Pencil aria-hidden className="h-3 w-3" />Edit brief
                         </Button>
                     )}
-                    <Button variant="ghost" size="icon" className="hidden h-7 w-7 md:inline-flex" aria-pressed={wide} aria-label={wide ? "Narrow the panel" : "Widen the panel"} onClick={() => setWide(!wide)}>
+                    <Button variant="ghost" size="icon" className="hidden h-7 w-7 lg:inline-flex" aria-pressed={wide} aria-label={wide ? "Narrow the panel" : "Widen the panel"} onClick={() => setWide(!wide)}>
                         {wide ? <Minimize2 aria-hidden className="h-4 w-4" /> : <Maximize2 aria-hidden className="h-4 w-4" />}
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Close research brief panel" onClick={closeBrief}>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Close research brief panel" onClick={close}>
                         <X aria-hidden className="h-4 w-4" />
                     </Button>
                 </div>

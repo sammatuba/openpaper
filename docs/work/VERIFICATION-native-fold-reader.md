@@ -140,7 +140,24 @@ Executed (WSL, Node 22, production build, Chromium at 1440 and 390 px):
 
 Defect found by the new unit test and fixed: a map node showed raw `[text][label]` for a reference-style link; node text now resolves references as the text view does.
 
-Not executed for this change: independent review outcome (see below when recorded), Firefox and Safari, signed-in real data, touch pinch zoom, a brief with many crossing argument links.
+Independent review of `90aa2a07`: `./meos review --base 14ceceda` did not complete (Codex workspace out of credits, `.meos/reviews/20261118T150441Z.md`). A stand-in reviewer (a fresh agent given the diff and records, not the author's reasoning) returned **rework** with 10 findings; it found the layout and the handling of untrusted text sound. A Codex pass is owed.
+
+| # | Severity | Finding | Outcome |
+| --- | --- | --- | --- |
+| 1 | important | Panel returned focus to its opener whenever it left the slot, including when Artifacts or a paper took it | Fixed: focus returns only on the panel's own Close and Escape; journey asserts it |
+| 2 | important | Close paragraph, Close finding and Read in context dropped focus to the page | Fixed: closing returns to the map node, Read in context falls back to the reader; journey asserts the first |
+| 3 | important | A large brief imported into an open map rendered unfolded; stale fold state after an in-place change | Fixed: fold state is in the reader and resets, with selection and opened paragraphs, when the document's structure changes; the map re-fits |
+| 4 | minor | Selection followed position after an edit that shifts paragraphs | Fixed with 3 |
+| 5 | minor | Folded sections were lost on Map to Read to Map | Fixed; journey asserts it. Zoom still re-fits |
+| 6 | minor | The selected text was far away in tab order and announced in full | Fixed: selecting moves focus to the text; the live region is removed |
+| 7 | minor | The full-screen overlay is not modal | Not changed: same as the existing reader and artifacts panels |
+| 8 | minor | The panel squeezed the page at narrow desktop widths | Fixed: it is a full-screen sheet below 1024 px |
+| 9 | minor | Relevance and Landscape cards removed without record; provenance line only in Read | Provenance line now also under the map; card removal recorded in the strategy amendment |
+| 10 | minor | Loose timing bound; no unit case for a link under a twice-folded ancestor; stale file names in records | Journey checks added for 1, 2, 5; the rest not changed |
+
+The fixes have not been re-reviewed.
+
+Not executed for this change: Firefox and Safari, signed-in real data, touch pinch zoom, a brief with many crossing argument links.
 
 Known limits: node positions are computed, not draggable; the panel's level, view and selection reset when it is closed; the map is a list of buttons to assistive technology, with Read as the fully structured view.
 
