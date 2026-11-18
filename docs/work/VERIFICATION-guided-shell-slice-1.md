@@ -34,6 +34,21 @@ The investigation journey keeps every earlier assertion (capture â†’ relation â†
 
 Screenshots in `.meos/artifacts/investigation-workspace/` (local, ignored): `overview-{1440,390}.png`, `overview-dark-{1440,390}.png`, `evidence-{1440,390}.png`, `write-{1440,390}.png` plus the regenerated earlier set. Inspected by eye: Overview light 1440, Overview dark 390, Evidence 1440, comparison 390, Write 1440, assistant review 1440.
 
+## Review round 1 (`.meos/reviews/20261118T114503Z.md`, verdict rework) and corrections
+
+| Finding | Correction | Evidence |
+| --- | --- | --- |
+| Discussion starter wrote the prompt and brief to localStorage (pre-existing, carried into `/discuss`) | The pending prompt and mentions are handed over through an in-memory map on `ProjectWorkspaceProvider`; nothing is written to browser storage | Workflow journey asserts no `pending-*` storage key after a discussion starts; the prompt still dispatches once |
+| Write link dropped `?block=` when returning from a citation | The Write destination forwards a `block` parameter that names an existing block | Investigation journey waits for `/draft?block=<citing block>` and asserts that block is in the viewport, for both findings |
+| Ctrl/Cmd+S saved an unchanged document | The shortcut uses the same condition as the Save button | Journey: one PUT for a changed document via the shortcut, zero for an unchanged one, revision stays 1 |
+| A failed project request rendered an unexplained read-only Overview | Overview shows the project error or "Project not found" | Journey: project GET 500 shows an alert and no case fields |
+| Journey could not exercise capture by search | Search mock added; the first finding is captured through "Use these lines" after one failed inspection that offers nothing to attach | Saved quote and both digests equal the inspected lines; the search excerpt is deliberately different text |
+| `h1` always read "The case" | The `h1` is the research question, with a fallback when empty | Journey asserts the level-1 heading name |
+| Visual inspection incomplete | Overview, Evidence and Write are captured at 1440 and 390 in light and dark (12 files) | Inspected by eye in addition to the earlier set: Evidence dark 1440, Write dark 390, Evidence light 390 |
+| Intent's provider boundary contradicted Discuss | Intent now names the two explicit provider actions | [INTENT-guided-shell-slice-1.md](INTENT-guided-shell-slice-1.md) |
+
+After the corrections: `tsc --noEmit`, eslint (0 errors), production build and all three browser journeys pass at both widths, first run each.
+
 ## Not executed
 
 - Server suites: no server file changed, so they were not rerun.

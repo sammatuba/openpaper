@@ -9,7 +9,7 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
 (async()=>{
  const browser=await chromium.launch({executablePath:process.env.OPENPAPER_CHROMIUM,args:['--no-sandbox']});
  try{for(const width of [1440,390]){
-  const page=await browser.newPage({viewport:{width,height:960},reducedMotion:width===390?'reduce':'no-preference'});const errors=[],unexpected=[];let saved=null,revision=0,forceConflict=false,providerCalls=0,sourceChanged=false,failSave=false;const requests=new Map();
+  const page=await browser.newPage({viewport:{width,height:960},reducedMotion:width===390?'reduce':'no-preference'});const errors=[],unexpected=[];let saved=null,revision=0,forceConflict=false,providerCalls=0,sourceChanged=false,failSave=false,puts=0,failInspect=false,failProject=false;const requests=new Map();
   const blank=()=>({format:'openpaper/investigation',version:1,case:{question:'',why_it_matters:'',landscape:'',coverage_limits:'',provisional_answer:'',unresolved_tension:'',reconciliation:'',discriminating_experiment:'',update_criteria:''},claims:[],findings:[],relations:[],manuscript:{title:'',sections:[]}});
   page.setDefaultTimeout(10000);
   const legacyUnit={id:'legacy-u',kind:'paragraph',full:'Imported synthesis remains provisional.',sentences:['Imported synthesis remains provisional.'],evidence:[0],brief:['Imported synthesis remains provisional.'],key:'Imported synthesis',takeaway:'Imported synthesis',topic:'Synthesis'};
@@ -37,7 +37,7 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
     }else body=record;
    }
    else if(p===`/api/projects/${projectId}/investigation`){
-    if(request.method()==='PUT'){
+    if(request.method()==='PUT'){puts++;
      if(failSave){status=500;body={detail:'Synthetic failure'};}
      else if(forceConflict||request.headers()['if-match']!==`"investigation:${projectId}:${revision}"`){status=412;body={detail:'Synthetic conflict'};}
      else{saved=JSON.parse(request.postData()).document;revision++;for(const section of saved.manuscript.sections)for(const block of section.blocks)if(block.kind==='source_quote'&&!block.quote_snapshot)block.quote_snapshot=structuredClone(saved.findings.find(f=>f.id===block.finding_ids[0]).source);}
@@ -45,9 +45,11 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
     if(status===200)body={document:saved||blank(),revision,validation:{findings:Object.fromEntries((saved?.findings||[]).map(f=>[f.id,sourceChanged&&f.source.paper_id===paperId?'source_changed':'current'])),blocks:Object.fromEntries((saved?.manuscript.sections||[]).flatMap(s=>s.blocks).map(b=>[b.id,sourceChanged?'review_needed':'current']))}};
     headers.ETag=`"investigation:${projectId}:${revision}"`;
    }
+   else if(p===`/api/projects/${projectId}/investigation/sources/search`)body={coverage:'Indexed passages only; sources without an index remain inspectable by line.',results:[{paper_id:paperId,start_line:2,end_line:2,excerpt:'Search excerpt, deliberately not the quotation.',title:fixture.sources[0].title}]};
+   else if(failInspect&&p.startsWith(`/api/projects/${projectId}/investigation/sources/`)){status=404;body={detail:'Extracted text unavailable'};}
    else if(p.startsWith(`/api/projects/${projectId}/investigation/sources/`)){const source=fixture.sources.find(source=>p.endsWith('/'+source.id));if(!source)throw Error('Unknown source');body={start_line:2,end_line:2,text:source.quote,source_sha256:sha(source.raw_content),quote_sha256:sha(source.quote)};}
    else if(p.startsWith(`/api/projects/papers/${projectId}/`)&&p.endsWith('/file-url'))body={file_url:base+'/synthetic-fixture.pdf'};
-   else if(p===`/api/projects/${projectId}`)body=project;
+   else if(p===`/api/projects/${projectId}`){if(failProject){status=500;body={detail:'Synthetic project failure'};}else body=project;}
    else if(p===`/api/projects/papers/${projectId}`)body={papers:fixture.sources.map(source=>({id:source.id,title:source.title,authors:[],status:'read',is_owner:true}))};
    else if(p===`/api/projects/conversations/${projectId}`||p==='/api/conversation/everything')body=[];
    else if(p===`/api/projects/invitations/${projectId}/`)body={invitations:[]};
@@ -75,8 +77,12 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
   await workspace.getByLabel('Question',{exact:true}).fill('Does signaling affect agreement?');
   await workspace.getByRole('button',{name:'Add claim',exact:true}).click();
   await workspace.getByLabel('Claim statement').fill(fixture.claim.statement);
-  await page.getByRole('button',{name:'Save investigation',exact:true}).click();
+  assert.equal(puts,0);await page.keyboard.press('Control+s');
   await page.locator('[role=status]').filter({hasText:/^Saved$/}).first().waitFor();
+  assert.equal(puts,1,'Shortcut saves a changed investigation once');
+  assert.equal(await page.getByRole('button',{name:'Save investigation',exact:true}).isDisabled(),true);await page.keyboard.press('Control+s');await page.waitForTimeout(400);
+  assert.equal(puts,1,'Shortcut does not write an unchanged investigation');assert.equal(revision,1);
+  assert.equal(await page.getByRole('heading',{level:1,name:'Does signaling affect agreement?',exact:true}).count(),1,'Page heading is the research question');
   assert.equal(saved.case.question,'Does signaling affect agreement?');const claimId=saved.claims[0].id;
   assert.match(await workspace.getByRole('heading',{name:/^Next: /}).innerText(),/capture a finding/i,'Guide advances to evidence capture');
   await noOverflow('Overview');
@@ -84,9 +90,17 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
   await nav.getByRole('link',{name:'Evidence',exact:true}).click();
   for(const [index,item] of fixture.findings.entries()){
    const addFinding=workspace.getByRole('button',{name:'Add finding',exact:true});await addFinding.waitFor();if(await addFinding.getAttribute('aria-expanded')!=='true')await addFinding.click();
-   await workspace.getByLabel('Project source').selectOption(item.paper_id);
-   await workspace.getByLabel('Start line',{exact:true}).fill('2');
-   await workspace.getByRole('button',{name:'Inspect source lines'}).click();
+   if(index===0){
+    await workspace.getByLabel("Search the project's sources").fill('agreement');await workspace.getByRole('button',{name:'Search',exact:true}).click();
+    await workspace.getByText('Indexed passages only',{exact:false}).waitFor();
+    failInspect=true;await workspace.getByRole('button',{name:'Use these lines'}).first().click();await workspace.getByRole('alert').first().waitFor();
+    assert.equal(await workspace.getByRole('button',{name:'Attach as finding'}).count(),0,'A failed inspection offers nothing to attach');
+    failInspect=false;await workspace.getByRole('button',{name:'Use these lines'}).first().click();
+   }else{
+    await workspace.getByLabel('Project source').selectOption(item.paper_id);
+    await workspace.getByLabel('Start line',{exact:true}).fill('2');
+    await workspace.getByRole('button',{name:'Inspect source lines'}).click();
+   }
    await workspace.getByRole('button',{name:'Attach as finding'}).click();
    await workspace.getByLabel('Label',{exact:true}).nth(index).fill(item.label);
    await workspace.getByLabel('Observed result',{exact:true}).nth(index).fill(fixture.sources[index].quote);
@@ -103,7 +117,7 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
   await workspace.getByLabel('Candidate reconciliation (our interpretation)').fill(fixture.reconciliation);
   await page.getByRole('button',{name:'Save investigation',exact:true}).click();
   await page.locator('[role=status]').filter({hasText:/^Saved$/}).first().waitFor();
-  assert.equal(saved.findings[0].source.quote,fixture.sources[0].quote);assert.equal(saved.findings[1].source.quote,fixture.sources[1].quote);
+  assert.equal(saved.findings[0].source.quote,fixture.sources[0].quote,'Search capture stores the inspected lines, not the search excerpt');assert.equal(saved.findings[0].source.quote_sha256,sha(fixture.sources[0].quote));assert.equal(saved.findings[0].source.source_sha256,sha(fixture.sources[0].raw_content));assert.equal(saved.findings[1].source.quote,fixture.sources[1].quote);
   assert.deepEqual(saved.relations.map(r=>r.relation),['supports','qualifies']);
   const comparison=workspace.getByText('Selected comparison',{exact:true}).locator('..');
   assert.match(await comparison.innerText(),/Task family A/);assert.match(await comparison.innerText(),/Task family B/);assert.match(await comparison.innerText(),/80%/);assert.match(await comparison.innerText(),/51%/);
@@ -135,6 +149,8 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
    await page.getByRole('button',{name:'Close reader',exact:true}).click();
    assert.equal(await article.getByRole('button',{name:'Open PDF source',exact:true}).evaluate(el=>el===document.activeElement),true,'Reader close restores focus');
    await nav.getByRole('link',{name:'Write',exact:true}).click();
+   const cited=saved.manuscript.sections[0].blocks.find(b=>b.finding_ids.includes(item.id)).id;await page.waitForURL(url=>url.pathname.endsWith('/draft')&&url.searchParams.get('block')===cited);
+   await workspace.locator('#block-'+cited).waitFor();assert.equal(await workspace.locator('#block-'+cited).evaluate(el=>{const r=el.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight;}),true,'Citing paragraph is in view after returning to Write');
    assert.equal(await workspace.getByLabel('Paragraph',{exact:true}).first().inputValue(),fixture.expected_paragraph);
   }
   await pick(saved.findings.map(f=>f.label));
@@ -189,12 +205,16 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
   await nav.getByRole('link',{name:'Overview',exact:true}).click();await workspace.getByLabel('Claim statement').first().waitFor();
   assert.equal(await workspace.getByRole('heading',{name:/^Next: /}).count(),0,'Guide disappears once every step has happened');
   assert.match(await workspace.locator('#claim-'+saved.claims[0].id).innerText(),/Supports 1[\s\S]*Qualifies 1/,'Claim shows linked evidence counts');
-  await noOverflow('Populated overview');await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`overview-dark-${width}.png`),fullPage:true});
-  await page.evaluate(()=>{localStorage.setItem('darkMode','light');document.documentElement.classList.remove('dark');});await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`overview-${width}.png`),fullPage:true});
-  await nav.getByRole('link',{name:'Evidence',exact:true}).click();await workspace.getByRole('heading',{name:'Evidence',exact:true}).waitFor();await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`evidence-${width}.png`),fullPage:true});
-  await nav.getByRole('link',{name:'Write',exact:true}).click();await workspace.getByLabel('Paragraph',{exact:true}).first().waitFor();await noOverflow('Write');await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`write-${width}.png`),fullPage:true});
+  await noOverflow('Populated overview');
+  for(const theme of ['dark','light']){
+   await page.evaluate(theme=>{localStorage.setItem('darkMode',theme);document.documentElement.classList.toggle('dark',theme==='dark');},theme);const suffix=theme==='dark'?'-dark':'';
+   await nav.getByRole('link',{name:'Overview',exact:true}).click();await workspace.getByLabel('Claim statement').first().waitFor();await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`overview${suffix}-${width}.png`),fullPage:true});
+   await nav.getByRole('link',{name:'Evidence',exact:true}).click();await workspace.getByRole('heading',{name:'Evidence',exact:true}).waitFor();await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`evidence${suffix}-${width}.png`),fullPage:true});
+   await nav.getByRole('link',{name:'Write',exact:true}).click();await workspace.getByLabel('Paragraph',{exact:true}).first().waitFor();await noOverflow('Write');await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`write${suffix}-${width}.png`),fullPage:true});
+  }
   sourceChanged=true;await page.reload();await workspace.getByText('Evidence changed — review needed',{exact:false}).first().waitFor();assert.equal(await workspace.getByLabel('Paragraph',{exact:true}).first().inputValue(),'Unsaved paragraph survives a conflict.');await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`draft-source-changed-${width}.png`),fullPage:true});
   project.role='viewer';await page.goto(`${base}/projects/${projectId}/evidence`);await workspace.getByRole('heading',{name:'Evidence',exact:true}).waitFor();if(!(await workspace.getByLabel('Observed result',{exact:true}).first().isVisible().catch(()=>false)))await workspace.locator('article[id^="finding-"]').first().locator('button[aria-expanded]').first().click();assert.equal(await workspace.getByLabel('Observed result',{exact:true}).first().getAttribute('readonly'),'');assert.equal(await page.getByRole('button',{name:'Save investigation',exact:true}).count(),0,'Viewers are not offered Save');await workspace.getByLabel('Select for comparison').first().check();await workspace.getByText('Selected comparison',{exact:true}).waitFor();await workspace.getByRole('button',{name:'Open PDF source',exact:true}).first().click();await page.locator('.page[data-page-number="1"] canvas').first().waitFor();await page.getByRole('button',{name:'Close reader',exact:true}).click();assert.equal(await workspace.getByRole('button',{name:'Open PDF source',exact:true}).first().isEnabled(),true);
+  project.role='admin';failProject=true;await page.goto(`${base}/projects/${projectId}`);await page.getByRole('main').getByRole('alert').filter({hasText:/./}).first().waitFor();assert.equal(await page.getByLabel('Question',{exact:true}).count(),0,'A failed project request does not render a read-only case');failProject=false;
   assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);await page.close();
  }console.log('Production desktop/mobile manual/assistant insertion-discard, reload/conflict, native AI/human/quotation attribution, native finding callback with unsaved prose, viewer PDF, brief-only initialization and theme preservation passed.');}
  finally{await browser.close();}

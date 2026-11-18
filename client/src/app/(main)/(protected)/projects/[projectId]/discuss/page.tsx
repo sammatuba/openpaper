@@ -50,7 +50,7 @@ const RESEARCH_TASKS = [
 function ProjectPage() {
     const router = useRouter();
     const { projectId, project, isProjectLoading, projectError, papers, isPapersLoading,
-        conversations, isConversationsLoading, refetchConversations, openAddPapers, openPaperIds } = useProjectWorkspace();
+        conversations, isConversationsLoading, refetchConversations, openAddPapers, openPaperIds, pendingDiscussions } = useProjectWorkspace();
     const [error, setError] = useState<string | null>(null);
     const [newQuery, setNewQuery] = useState("");
     const [taskId, setTaskId] = useState<string>("evidence");
@@ -96,10 +96,7 @@ function ProjectPage() {
             const conversation = await fetchFromApi(`/api/projects/conversations/${projectId}`, {
                 method: "POST", body: JSON.stringify({ title: task?.title || "Research discussion" }),
             });
-            localStorage.setItem(`pending-query-${conversation.id}`, prompt);
-            if (mentionSelection.paperIds.length) {
-                localStorage.setItem(`pending-mentions-${conversation.id}`, JSON.stringify(mentionSelection.paperIds));
-            }
+            pendingDiscussions.current.set(conversation.id, { query: prompt, paperIds: [...mentionSelection.paperIds] });
             // The layout stays mounted across routes, so its list needs the new
             // discussion before we navigate away and later offer it for resuming.
             await refetchConversations();

@@ -7,6 +7,7 @@ import {
     useContext,
     useEffect,
     useMemo,
+    useRef,
     useState,
 } from "react";
 import { fetchFromApi, getProjectPaperFileUrl } from "@/lib/api";
@@ -72,6 +73,15 @@ interface ProjectWorkspaceValue {
     // In-flight PDF upload jobs surfaced by PdfUploadTracker in the layout.
     uploadJobs: MinimalJob[];
     addUploadJobs: (jobs: MinimalJob[]) => void;
+    // A discussion's first prompt, handed from the page that starts it to the
+    // conversation page. Held in memory only: research text is never written
+    // to browser storage.
+    pendingDiscussions: { current: Map<string, PendingDiscussion> };
+}
+
+export interface PendingDiscussion {
+    query: string;
+    paperIds: string[];
 }
 
 const ProjectWorkspaceContext = createContext<ProjectWorkspaceValue | null>(null);
@@ -203,6 +213,7 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
         }
     }, [projectId, updatePaper]);
 
+    const pendingDiscussions = useRef(new Map<string, PendingDiscussion>());
     const addUploadJobs = useCallback((jobs: MinimalJob[]) => {
         setUploadJobs((prev) => [...prev, ...jobs]);
     }, []);
@@ -271,6 +282,7 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
         setHasCollaborators,
         uploadJobs,
         addUploadJobs,
+        pendingDiscussions,
     }), [
         projectId, project, isProjectLoading, projectError, refetchProject,
         papers, isPapersLoading, refetchPapers, updatePaper,

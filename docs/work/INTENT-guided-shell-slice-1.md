@@ -22,7 +22,8 @@ Replace the form wall with a guided workspace over the **existing v1 investigati
 - No autosave: the strategy allows it only for migrated (v2) records, and no project is migrated.
 - Canvas, Lab and Library destinations are not added as empty placeholders; they arrive with their packages (P04, P08, P09). Papers stay in the rail.
 - Existing URLs keep working: `/projects/{id}` (Overview/Case), `/evidence`, `/draft`, deep links `?finding=`, `?claim=`, `?block=`.
-- No new dependencies. No research content in localStorage. No provider call on any path except the existing explicit Generate.
+- No new dependencies. No research content in browser storage (this includes the discussion starter's first prompt, which previously passed through localStorage).
+- Provider calls happen only on two explicit actions that already existed: Generate paragraph in the Write assistant, and starting or continuing a discussion under Discuss. Navigation, task selection, capture, search, folding, theme changes and saving make none.
 
 ## Not in this slice (remains P03)
 

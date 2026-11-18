@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, CircleDot, Compass, Download, FileUp, Loader2, MessagesSquare, MoreHorizontal, PenLine, Scale } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -47,6 +47,7 @@ function SaveState({ status }: { status: string }) {
 // It sits in the layout so unsaved work stays visible on every project route.
 export function WorkspaceBar() {
     const pathname = usePathname();
+    const params = useSearchParams();
     const { projectId } = useProjectWorkspace();
     const { document: doc, save, reload, dirty, status, loaded, update } = useInvestigation();
     const canEdit = useCanEdit();
@@ -58,14 +59,15 @@ export function WorkspaceBar() {
     const blocked = status === "Conflict" || status === "Save failed";
 
     // Ctrl/Cmd+S saves the investigation instead of opening the browser's save dialog.
-    const saveRef = useRef(save);
-    saveRef.current = save;
+    const canSave = canEdit && loaded && dirty && !saving;
+    const saveRef = useRef({ save, canSave });
+    saveRef.current = { save, canSave };
     useEffect(() => {
         if (!canEdit) return;
         const onKey = (event: KeyboardEvent) => {
             if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "s") {
                 event.preventDefault();
-                void saveRef.current();
+                if (saveRef.current.canSave) void saveRef.current.save();
             }
         };
         window.addEventListener("keydown", onKey);
@@ -105,6 +107,10 @@ export function WorkspaceBar() {
         }
     }
 
+    // Returning to Write from a paragraph's citation lands on that paragraph.
+    const block = params.get("block");
+    const blockQuery = block && doc.manuscript.sections.some(section => section.blocks.some(item => item.id === block)) ? `?block=${block}` : "";
+
     // Saved discussions and their history belong to the Discuss destination.
     const isActive = (path: string) => {
         if (!path) return pathname === base;
@@ -121,7 +127,7 @@ export function WorkspaceBar() {
                         return (
                             <Link
                                 key={item.key}
-                                href={base + item.path}
+                                href={base + item.path + (item.key === "write" ? blockQuery : "")}
                                 aria-current={active ? "page" : undefined}
                                 className={cn(
                                     "inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-ring",
@@ -137,7 +143,7 @@ export function WorkspaceBar() {
                 <div className="ml-auto flex min-w-0 items-center gap-2">
                     <SaveState status={canEdit || status !== "Saved" ? status : "View only"} />
                     {canEdit && (
-                        <Button size="sm" className="h-7 px-3 text-xs" disabled={!loaded || !dirty || saving} onClick={() => void save()} aria-label="Save investigation" title="Save investigation (Ctrl+S)">
+                        <Button size="sm" className="h-7 px-3 text-xs" disabled={!canSave} onClick={() => void save()} aria-label="Save investigation" title="Save investigation (Ctrl+S)">
                             Save
                         </Button>
                     )}

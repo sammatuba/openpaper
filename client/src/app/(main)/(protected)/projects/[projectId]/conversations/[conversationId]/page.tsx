@@ -58,6 +58,7 @@ function ProjectConversationPageContent() {
         refreshPaperUrl,
         setCrumb,
         collapseArtifacts,
+        pendingDiscussions,
     } = useProjectWorkspace();
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [isOwner, setIsOwner] = useState<boolean>(true);
@@ -179,20 +180,20 @@ function ProjectConversationPageContent() {
         }
 
         if (user) {
-            const pendingQuery = localStorage.getItem(`pending-query-${conversationIdFromUrl}`);
+            const pending = pendingDiscussions.current.get(conversationIdFromUrl);
+            const pendingQuery = pending?.query;
             if (pendingQuery) {
                 // Apply any @-mention scope carried over from the project page.
-                const pendingMentionsRaw = localStorage.getItem(`pending-mentions-${conversationIdFromUrl}`);
+                const pendingMentionsRaw = pending?.paperIds.length ? JSON.stringify(pending.paperIds) : null;
                 // If mentions were carried over, wait for project papers to load so
                 // their titles resolve — otherwise they persist as "Untitled paper".
-                // Keep the localStorage keys until then; this effect re-runs when
+                // Keep the pending entry until then; this effect re-runs when
                 // isPapersLoading flips to false.
                 if (pendingMentionsRaw && isPapersLoading) {
                     return;
                 }
                 setIsSessionLoading(false);
-                localStorage.removeItem(`pending-query-${conversationIdFromUrl}`);
-                localStorage.removeItem(`pending-mentions-${conversationIdFromUrl}`);
+                pendingDiscussions.current.delete(conversationIdFromUrl);
                 let pendingMentions: MentionSelection | undefined;
                 if (pendingMentionsRaw) {
                     try {

@@ -82,6 +82,7 @@ const base = process.env.OPENPAPER_BROWSER_BASE || 'http://127.0.0.1:3011';
             assert.match(streams[0].user_query,/Do reciprocal incentives amplify/);
             assert.deepEqual(streams[0].mentioned_paper_ids,['p1']);
             assert.equal(writes.filter(w=>w.path==='/api/projects/research-demo').length,0,'sessions do not overwrite the brief');
+            assert.deepEqual(await page.evaluate(()=>Object.keys(localStorage).filter(key=>key.startsWith('pending-'))),[],'the discussion prompt is handed over in memory, not browser storage');
 
             // Workspace home is reachable from a conversation on desktop and mobile.
             await returnToWorkspace();

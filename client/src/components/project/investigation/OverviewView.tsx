@@ -145,7 +145,7 @@ function NextStep({ focusQuestion, addClaim }: { focusQuestion: () => void; addC
 }
 
 export function OverviewView() {
-    const { project, papers, isProjectLoading } = useProjectWorkspace();
+    const { project, papers, isProjectLoading, projectError } = useProjectWorkspace();
     const { document: doc, update, status, loaded } = useInvestigation();
     const canEdit = useCanEdit();
     const params = useSearchParams();
@@ -183,6 +183,9 @@ export function OverviewView() {
         return <div className="mx-auto w-full max-w-4xl space-y-4 p-6"><Skeleton className="h-8 w-2/3" /><Skeleton className="h-48 w-full" /></div>;
     }
 
+    if (projectError) return <div role="alert" className="p-4 text-destructive">{projectError.message}</div>;
+    if (!project) return <div className="p-4">Project not found.</div>;
+
     const archivedCount = doc.claims.filter(claim => claim.archived).length;
     const shownClaims = doc.claims.map((claim, index) => ({ claim, index })).filter(({ claim }) => showArchived || !claim.archived || claim.id === linkedClaim);
     const hasLegacyBrief = !!(project?.description || project?.research_brief);
@@ -196,7 +199,7 @@ export function OverviewView() {
                     <p className="text-xs font-medium text-muted-foreground">
                         <span className="[overflow-wrap:anywhere]">{project?.title}</span> · {papers.length} {papers.length === 1 ? "paper" : "papers"} · {activeFindings} {activeFindings === 1 ? "finding" : "findings"} · {doc.claims.length - archivedCount} {doc.claims.length - archivedCount === 1 ? "claim" : "claims"}
                     </p>
-                    <h1 className="sr-only">The case</h1>
+                    <h1 className="sr-only">{doc.case.question.trim() || "The case: no question yet"}</h1>
                     <ProseField id="case-question" label="Question" hideLabel size="title" className="mt-2" value={doc.case.question}
                         placeholder="What disputed question should this project resolve?"
                         onChange={value => update(draft => { draft.case.question = value; })} />
