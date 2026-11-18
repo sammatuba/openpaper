@@ -2967,6 +2967,9 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as below:
                 research_review.amend_protocol(db, s.project, s.owner, new_version=2, commit=False)
             self.assertEqual(below.exception.status_code, 409)
+            with self.assertRaises(HTTPException) as zero:
+                research_review.amend_protocol(db, s.project, s.owner, new_version=0, commit=False)
+            self.assertEqual(zero.exception.status_code, 422)
             research_review.record_decision(db, s.project, s.owner, candidate, "title_abstract", 3, "included", commit=False)
             db.commit()
             self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 3)["screened"], 1)

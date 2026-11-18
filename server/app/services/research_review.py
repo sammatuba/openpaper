@@ -60,6 +60,7 @@ def create_protocol(db: Session, project_id, actor_id, *, version, mode="literat
 
 def amend_protocol(db: Session, project_id, actor_id, *, new_version, criteria=None, status="active", commit=True):
     research_access.authorize(db, project_id, actor_id, write=True)
+    if int(new_version) < 1: raise HTTPException(422, "Protocol versions start at 1")
     # The parent is read under the project lock: an amendment racing another must copy the
     # committed latest protocol, not the one it saw before waiting (R53).
     research_access.lock_project(db, project_id)
