@@ -1,6 +1,6 @@
 {
   "intent": "docs/work/INTENT-investigation-workspace.md",
-  "phase": "AI-native platform P00-P02 implemented and accepted by the owner-approved stand-in gate review (2026-11-18, accept on 8370d19d..464d8a19; Codex reviewer out of credits); battery 184 required / 568 full, zero skips; pushed and PR #3 merged into feat/native-investigation-workspace; not deployed; investigation A25 acceptance still open; P03 slice 1 (guided shell on the v1 investigation: destination bar, Overview, Evidence, Write, Discuss) implemented on feat/guided-shell, client only, local checks and three browser journeys pass, Codex review round 1 rework addressed, round 2 incomplete (out of credits), stand-in review accept with findings addressed; pushed at fc39aa29; client image built (digest sha256:8283db3b57cd7e8246f738be1ab84009cb1695bd92b51b8f752d5867268b7a82, tag guided-); not deployed",
+  "phase": "AI-native platform P00-P02 implemented and accepted by the owner-approved stand-in gate review (2026-11-18, accept on 8370d19d..464d8a19; Codex reviewer out of credits); battery 184 required / 568 full, zero skips; pushed and PR #3 merged into feat/native-investigation-workspace; client deployed 2026-11-18 as openpaper-00017-lax at 100% (server and caddy images unchanged), public smoke passed, authenticated UI not exercised; investigation A25 acceptance still open; P03 slice 1 (guided shell on the v1 investigation: destination bar, Overview, Evidence, Write, Discuss) implemented on feat/guided-shell, client only, local checks and three browser journeys pass, Codex review round 1 rework addressed, round 2 incomplete (out of credits), stand-in review accept with findings addressed; pushed at fc39aa29; client image built (digest sha256:8283db3b57cd7e8246f738be1ab84009cb1695bd92b51b8f752d5867268b7a82, tag guided-); client deployed 2026-11-18 as openpaper-00017-lax at 100% (server and caddy images unchanged), public smoke passed, authenticated UI not exercised",
   "branch": "feat/guided-shell",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,7 +8,7 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Owner to run or authorise the staged client deploy of feat/guided-shell: create a no-traffic revision of service openpaper with the client image at the recorded digest (server and caddy unchanged), smoke it, then move traffic from openpaper-00014-vjm. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
+  "next_action": "Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
   "blocked_on": [
     "No current operator browser/session exposed for authenticated production UI acceptance."
   ],
@@ -488,9 +488,13 @@
   "guided_shell": {
     "intent": "docs/work/INTENT-guided-shell-slice-1.md",
     "verification": "docs/work/VERIFICATION-guided-shell-slice-1.md",
-    "status": "implemented, reviewed (stand-in accept), pushed at fc39aa29; client image built; staged deploy awaiting owner",
+    "status": "deployed (client only); public smoke passed; authenticated UI not exercised",
     "client_image": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/client@sha256:8283db3b57cd7e8246f738be1ab84009cb1695bd92b51b8f752d5867268b7a82",
     "cloud_build": "502daac4-5348-4f8d-ae04-3abc862e569b",
-    "rollback_revision": "openpaper-00014-vjm"
+    "rollback_revision": "openpaper-00014-vjm",
+    "web_revision": "openpaper-00017-lax",
+    "traffic_percent": 100,
+    "source_commit": "fc39aa290938cf23d8e4e0f2469979c4506e31cd",
+    "smoke": "Staged URL then both public hosts: /api/health 200, / 200, /login 200, /projects 200, new /projects/{id}/discuss route 200, unauthenticated investigation 401, unauthenticated MCP POST 401"
   }
 }

@@ -1,6 +1,6 @@
 # VERIFICATION: Guided shell, slice 1 (P03a)
 
-Date: 2026-11-18. Intent: [INTENT-guided-shell-slice-1.md](INTENT-guided-shell-slice-1.md). Branch `feat/guided-shell`, based on `1c6e1f9f`. Client only; no server, schema or API change. Not pushed, not deployed.
+Date: 2026-11-18. Intent: [INTENT-guided-shell-slice-1.md](INTENT-guided-shell-slice-1.md). Branch `feat/guided-shell`, based on `1c6e1f9f`. Client only; no server, schema or API change. Pushed and deployed; see Deployment below.
 
 ## What changed
 
@@ -65,10 +65,16 @@ The Codex reviewer ran out of workspace credits before a verdict (`.meos/reviews
 
 After these: `tsc --noEmit`, eslint (0 errors), production build and all three browser journeys pass at both widths, first run each.
 
+## Deployment (2026-11-18, owner instruction)
+
+Client container only. Cloud Build `502daac4-5348-4f8d-ae04-3abc862e569b` from `fc39aa29`, image `client@sha256:8283db3b57cd7e8246f738be1ab84009cb1695bd92b51b8f752d5867268b7a82` (its tag is `guided-` with no commit suffix because of a quoting slip; the digest is the reference). Staged without traffic as `openpaper-00017-lax`, smoke-checked, then moved to 100%; staging tag removed. Server and Caddy image digests are unchanged from the previous revision. No migration ran. Rollback: `gcloud run services update-traffic openpaper --region asia-southeast1 --to-revisions openpaper-00014-vjm=100`.
+
+Smoke on the staged URL and then on `papers.sammatuba.workers.dev` and the `run.app` host: `/api/health` 200, `/` 200, `/login` 200, `/projects` 200, the new `/projects/{id}/discuss` route 200, unauthenticated investigation 401, unauthenticated MCP POST 401. The signed-in interface on real data was not exercised.
+
 ## Not executed
 
 - Server suites: no server file changed, so they were not rerun.
-- Authenticated production acceptance and deployment: no operator session; nothing deployed.
+- Authenticated production acceptance: no operator session.
 - Firefox/Safari: only Chromium was run. `ProseField` has a scripted height fallback for browsers without `field-sizing`, untested.
 - Independent review (`./meos review`): not run.
 - Unfamiliar-user first-value exercise (C03): needs a person.
