@@ -118,18 +118,24 @@ def apply_proposal(db: Session, project_id, actor_id, proposal_id, *, commit=Tru
             proposal.change_sequence = research_access.advance_change_sequence(db, project_id)
             if commit: db.commit()
             raise HTTPException(409, "Proposal target revisions changed; returned to review")
-    applied = {}
+    # The edit set applies all-or-nothing (C08). Validate EVERY edit before the first mutation, so
+    # a schema failure in a later edit cannot leave an earlier one flushed in this session, where
+    # the next unrelated commit would persist it under a still-approved proposal (R52).
     for step in edits:
-        entity_id = UUID(step["entity_id"])
-        entity = entities.get(entity_id)
+        entity = entities.get(UUID(step["entity_id"]))
         try: research_entities.validate_payload(entity.type, step["payload"])
         except ValueError as error: raise HTTPException(422, f"Proposal edit violates {entity.type} schema: {error}") from error
-        result = research_entities.revise_entity(db, project_id, actor_id, entity_id,
-                                                 proposal.targets[str(entity_id)], step["payload"],
-                                                 origin=proposal.origin, provenance={key: value for key, value in proposal.payload.items()
-                                                                                     if key in ("client_identity", "content_sha256", "declared_model", "request_id", "message_id")},
-                                                 commit=False)
-        applied[str(entity_id)] = result
+    applied = {}
+    provenance = {key: value for key, value in proposal.payload.items()
+                  if key in ("client_identity", "content_sha256", "declared_model", "request_id", "message_id")}
+    # Any failure past validation (generation flip, provenance rule, concurrent change) rolls the
+    # savepoint back, so no partial edit stays pending in the caller's transaction either.
+    with db.begin_nested():
+        for step in edits:
+            entity_id = UUID(step["entity_id"])
+            applied[str(entity_id)] = research_entities.revise_entity(
+                db, project_id, actor_id, entity_id, proposal.targets[str(entity_id)], step["payload"],
+                origin=proposal.origin, provenance=provenance, commit=False)
     receipt = {"applied": applied, "proposal_sha256": proposal.payload_sha256,
                "approver_id": approval["approver_id"], "applied_at": datetime.now(timezone.utc).isoformat()}
     proposal.state = "applied"; proposal.applied_receipt = receipt

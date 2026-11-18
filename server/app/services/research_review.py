@@ -16,9 +16,11 @@ never from a stored picture. Rules enforced here:
   report_split reverses the mapping.
 - Adjudication is only recorded on a genuine disagreement, where the decisions of
   reports currently merged into the candidate count toward the conflict.
+- Historic snapshots are immutable: every versioned write targets the open snapshot (a
+  version at or above the highest version any decision or mapping event carries). The full
+  rule table, and what it makes impossible, is docs/work/RULES-review-versioning.md.
 """
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from uuid import UUID, uuid4
 from fastapi import HTTPException
 from sqlalchemy import func
@@ -34,6 +36,14 @@ def create_protocol(db: Session, project_id, actor_id, *, version, mode="literat
     research_access.authorize(db, project_id, actor_id, write=True)
     exists = db.query(ReviewProtocol).filter(ReviewProtocol.project_id == project_id, ReviewProtocol.version == version).first()
     if exists: raise HTTPException(409, "Protocol version already exists")
+    # A protocol row governs every snapshot from its version up to the next row. Inserting one at
+    # or below a version that already carries review records would silently change the screening
+    # mode those records were decided under, so a new protocol must open a new snapshot.
+    research_access.lock_project(db, project_id)
+    high_water = _snapshot_high_water(db, project_id)
+    if high_water and int(version) <= high_water:
+        raise HTTPException(409, f"Protocol version {version} would re-govern closed snapshots: review records exist at "
+                                 f"version {high_water}. Create version {high_water + 1} or later")
     row = ReviewProtocol(id=protocol_id or uuid4(), project_id=project_id, version=version, mode=mode,
                          unit_of_analysis=unit_of_analysis, count_policy=count_policy or {}, criteria=criteria or [],
                          screening_modes=screening_modes or {}, status=status, parent_version_id=parent_version_id)
@@ -64,6 +74,7 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
     """Record one occurrence→candidate mapping: exactly one retained representative,
     every other mapped occurrence an inspectable removal. Sets must be disjoint."""
     research_access.authorize(db, project_id, actor_id, write=True)
+    _require_open_snapshot(db, project_id, protocol_version)
     # Lock the candidate row before reading its mappings: two concurrent FIRST mappings onto the
     # same candidate lock disjoint occurrence rows and would otherwise both read an empty history
     # and both pass the single-representative guard. The candidate lock serializes them so the loser
@@ -148,61 +159,43 @@ def _protocol_for(db: Session, project_id, protocol_version):
     return protocol
 
 
-def _reject_backdated_decision_conflicts(db: Session, project_id, candidate, stage, protocol_version, decision, role, actor_id):
-    """A decision must not invalidate a merge's recorded conflict picture at any affected snapshot
-    (R50/R51). A merge folds reports into a representative whose own decision governs counts; an
-    unflagged disagreement silently vanishes. Simulate the new decision (an unpersisted `extra` row,
-    no DB mutation) at every affected boundary — protocol, decision and merge/split versions at or
-    after V — and reject when it introduces a screening conflict the merge left unflagged. Two
-    directions are checked: a report merged away must agree with its representative, and a
-    representative must agree with the reports merged into it. Merges that already flagged the stage
-    (pending adjudication) and agreeing decisions are unaffected."""
-    report_id = str(candidate.report_id)
-    boundaries = {protocol_version}
-    boundaries.update(p.version for p in db.query(ReviewProtocol).filter(
-        ReviewProtocol.project_id == project_id, ReviewProtocol.version >= protocol_version).all())
-    boundaries.update(d.protocol_version for d in db.query(ReviewDecision).join(
+_VERSIONED_EVENT_KINDS = ("occurrence_map", "report_merge", "report_split", "study_link")
+
+
+def _snapshot_high_water(db: Session, project_id):
+    """The highest protocol version any review RECORD of this project carries: decisions and
+    versioned mapping events. Zero when nothing is recorded. Protocol rows do not count: an
+    amended protocol with nothing recorded under it yet has not closed the previous snapshot."""
+    decisions = db.query(func.max(ReviewDecision.protocol_version)).join(
         ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(
-        ReviewCandidate.project_id == project_id, ReviewDecision.protocol_version >= protocol_version).all())
-    boundaries.update(int((e.payload or {}).get("protocol_version", 1))
-                      for e in db.query(ReviewMappingEvent).filter(
-                          ReviewMappingEvent.project_id == project_id,
-                          ReviewMappingEvent.kind.in_(("report_merge", "report_split"))).all()
-                      if int((e.payload or {}).get("protocol_version", 1)) >= protocol_version)
-    max_seq = db.query(func.max(ReviewDecision.event_sequence)).scalar() or 0
-    simulated = SimpleNamespace(stage=stage, protocol_version=protocol_version, decision=decision,
-                                role=role, actor_id=actor_id, event_sequence=max_seq + 1)
-    for version in sorted(boundaries):
-        merges, conflict_stages, incoming = _current_merges(db, project_id, version)
-        representative = _resolve_representative(merges, report_id)
-        later_protocol = _protocol_for(db, project_id, version)
-        if representative != report_id:
-            # The report is merged away at this snapshot: its decision must agree with the
-            # representative unless the merge already flagged the stage.
-            if stage in (conflict_stages.get(representative) or {}):
-                continue
-            source_decision = _effective(db, candidate.report_id, stage, version, later_protocol, extra=simulated)
-            target_decision = _effective(db, UUID(representative), stage, version, later_protocol)
-            if _decisions_conflict(source_decision, target_decision):
-                raise HTTPException(409, "Backdated decision would introduce a conflict in a later merge snapshot; decide on the current representative or resolve the merge first")
-        else:
-            # The report is the representative at this snapshot: reports merged into it must agree
-            # with its (simulated) decision unless the merge already flagged the stage (R51).
-            if stage in (conflict_stages.get(report_id) or {}):
-                continue
-            sources = incoming.get(report_id) or set()
-            if not sources:
-                continue
-            target_decision = _effective(db, candidate.report_id, stage, version, later_protocol, extra=simulated)
-            for source_report in sources:
-                source_decision = _effective(db, UUID(source_report), stage, version, later_protocol)
-                if _decisions_conflict(source_decision, target_decision):
-                    raise HTTPException(409, "Backdated decision would introduce a conflict in a later merge snapshot; decide on the current representative or resolve the merge first")
+        ReviewCandidate.project_id == project_id).scalar() or 0
+    events = db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == project_id,
+                                                 ReviewMappingEvent.kind.in_(_VERSIONED_EVENT_KINDS)).all()
+    mapped = max((int((event.payload or {}).get("protocol_version", 1)) for event in events), default=0)
+    return max(int(decisions), mapped)
+
+
+def _require_open_snapshot(db: Session, project_id, protocol_version):
+    """Historic snapshots are immutable (strategy 6.1: "historic flow snapshots retain their
+    original sets"; a later change "cannot rewrite historical counts or final decisions").
+
+    A snapshot closes as soon as any review record exists at a later protocol version. Every
+    versioned review write — mapping, decision, study link, merge, split — must target the open
+    snapshot: its version must be at or above the project's high-water mark. This one rule replaces
+    the per-write simulations of "every later affected snapshot" (R48-R52): with no backdated
+    writes there is no later snapshot a write could invalidate. Writers are serialized on the
+    project root row first, so two writers cannot each pass the check against a stale mark."""
+    research_access.lock_project(db, project_id)
+    high_water = _snapshot_high_water(db, project_id)
+    if int(protocol_version) < high_water:
+        raise HTTPException(409, f"Protocol snapshot {protocol_version} is closed: review records exist at version "
+                                 f"{high_water}. Historic snapshots are immutable; record at version {high_water} or later")
 
 
 def record_decision(db: Session, project_id, actor_id, candidate_id, stage, protocol_version, decision, *,
                     role="primary", reason="", cited_text=None, criterion_judgments=None, decision_id=None, commit=True):
     research_access.authorize(db, project_id, actor_id, write=True)
+    _require_open_snapshot(db, project_id, protocol_version)
     candidate = db.query(ReviewCandidate).filter(ReviewCandidate.id == candidate_id, ReviewCandidate.project_id == project_id).first()
     if not candidate: raise HTTPException(404, "Review candidate not found")
     # Lock the candidate's report row so a concurrent merge serializes with this decision:
@@ -225,7 +218,10 @@ def record_decision(db: Session, project_id, actor_id, candidate_id, stage, prot
     prior = db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_id,
                                             ReviewDecision.stage == stage).all()
     if role == "adjudication":
-        if not _has_conflict(db, project_id, candidate, stage, protocol):
+        # The disagreement is looked up at the REQUESTED snapshot, not at the version of the
+        # protocol row that governs it: with only protocol v1, a merge and opposing decisions
+        # recorded at v2 are a v2 conflict and must be adjudicable at v2 (R52).
+        if not _has_conflict(db, project_id, candidate, stage, protocol_version):
             raise HTTPException(409, "Adjudication is only recorded on a genuine disagreement")
     elif (protocol.screening_modes or {}).get(stage, "solo") == "dual":
         mine = [d for d in prior if str(d.actor_id) == str(actor_id)
@@ -233,7 +229,10 @@ def record_decision(db: Session, project_id, actor_id, candidate_id, stage, prot
         if mine: raise HTTPException(409, "Reviewer already recorded a decision for this stage and protocol version")
     if stage == "fulltext" and candidate.selected_version_id is None and decision == "included":
         raise HTTPException(409, "Cannot include a report whose selected version was never retrieved")
-    _reject_backdated_decision_conflicts(db, project_id, candidate, stage, protocol_version, decision, role, actor_id)
+    # No merge-conflict simulation here. The snapshot is open, so this decision cannot predate a
+    # merge; it is recorded on the live representative and governs the merged candidate from this
+    # version on, as an amendment cohort does in compute_flow_counts. A merge compares PRIOR
+    # decisions only, at the moment it is recorded.
     row = ReviewDecision(id=decision_id or uuid4(), candidate_id=candidate_id, stage=stage,
                          protocol_version=protocol_version, actor_id=actor_id, decision=decision,
                          role=role, reason=reason, cited_text=cited_text,
@@ -359,11 +358,11 @@ def _candidate_of_report(db: Session, project_id, report_id):
     return row.id if row else None
 
 
-def _has_conflict(db: Session, project_id, candidate, stage, protocol):
+def _has_conflict(db: Session, project_id, candidate, stage, protocol_version):
     """Genuine disagreement among this candidate's decisions and the decisions of every
     report that feeds into it through the current merge chain, at this or an inherited
-    conflicting stage."""
-    merges, conflict_stages, incoming = _current_merges(db, project_id, protocol.version)
+    conflicting stage, as of the requested snapshot version."""
+    merges, conflict_stages, incoming = _current_merges(db, project_id, protocol_version)
     report = str(candidate.report_id)
     merged_sources = set(incoming.get(report, set()))
     merged_sources |= (conflict_stages.get(report) or {}).get(stage, set())
@@ -381,7 +380,7 @@ def _has_conflict(db: Session, project_id, candidate, stage, protocol):
     # (consistent with count derivation) — decisions from different cohorts never combine,
     # and each actor's effective latest submission supersedes earlier ones (R14/R15).
     rows = [row for row in by_candidate.get(str(candidate.id), [])
-            if row.stage == stage and row.role != "adjudication" and row.protocol_version <= protocol.version]
+            if row.stage == stage and row.role != "adjudication" and row.protocol_version <= protocol_version]
     if not rows: return False
     top = max(int(row.protocol_version) for row in rows)
     cohort = [row for row in rows if int(row.protocol_version) == top]
@@ -426,6 +425,7 @@ def visible_decisions(db: Session, project_id, actor_id, protocol_version):
 
 def link_study(db: Session, project_id, actor_id, report_id, study_id, rationale, *, linkage_state="confirmed", protocol_version=1, commit=True):
     research_access.authorize(db, project_id, actor_id, write=True)
+    _require_open_snapshot(db, project_id, protocol_version)
     report = db.query(ReviewReport).filter(ReviewReport.id == report_id, ReviewReport.project_id == project_id).first()
     study = db.query(ReviewStudy).filter(ReviewStudy.id == study_id, ReviewStudy.project_id == project_id).first()
     if not report or not study: raise HTTPException(422, "Report and study must belong to this project")
@@ -453,6 +453,7 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
     state on the merged candidate until a named adjudicator decides. Both rows are locked
     in id order, the target must be an unmerged representative, and cycles are rejected."""
     research_access.authorize(db, project_id, actor_id, write=True)
+    _require_open_snapshot(db, project_id, protocol_version)
     if source_report_id == target_report_id: raise HTTPException(422, "Merge requires two distinct project reports")
     # Deterministic lock order (ascending id) so concurrent merges cannot deadlock; a
     # locking read re-observes the latest committed state, so a racing opposite merge loses.
@@ -476,35 +477,20 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
             raise HTTPException(422, f"{role.capitalize()} candidate does not exist in the requested protocol snapshot")
         if role == "target" and not candidate.retained:
             raise HTTPException(422, "Merge target must be a retained candidate")
-    # Cycle validation must hold at every affected snapshot, not just the requested one: a
-    # backdated merge can close a cycle with edges recorded at later versions (R50: A→B at v3,
-    # split A at v4, B→A backdated to v1 leaves A↔B both merged at v3, collapsing the count).
-    # Check the resulting graph at each snapshot the new edge enters.
-    cycle_versions = {protocol_version}
-    cycle_versions.update(p.version for p in db.query(ReviewProtocol).filter(
-        ReviewProtocol.project_id == project_id, ReviewProtocol.version >= protocol_version).all())
-    cycle_versions.update(int((e.payload or {}).get("protocol_version", 1))
-                          for e in db.query(ReviewMappingEvent).filter(
-                              ReviewMappingEvent.project_id == project_id,
-                              ReviewMappingEvent.kind.in_(("report_merge", "report_split"))).all())
-    for snapshot in sorted(v for v in cycle_versions if v >= protocol_version):
-        merges, _conflicts, _incoming = _current_merges(db, project_id, snapshot)
-        # A cycle exists iff the target already reaches the source: adding source→target then
-        # closes the loop. Same-direction reachability (source already resolves to target) is a
-        # redundant edge, not a cycle, and must be accepted (R51).
-        visited = set()
-        cursor = str(target.id)
-        while cursor in merges and cursor not in visited:
-            visited.add(cursor)
-            cursor = merges[cursor]
-            if cursor == str(source.id):
-                raise HTTPException(409, "Merge would create a cycle between reports at an affected snapshot")
-    protocol = _protocol_for(db, project_id, protocol_version)
-    # Conflicts are evaluated against the target's representative at each snapshot: the target
-    # may itself be folded into a later representative at some snapshots, so comparing against
-    # the target's own (possibly absent) decision would hide a real disagreement (R51: A→B
-    # backdated below B→C must compare A against C, the component representative).
+    # The snapshot is open (no record exists at a later version), so the merge graph at this
+    # version is the only graph the new edge enters. A cycle exists iff the target already
+    # reaches the source; a same-direction edge is redundant, not a cycle.
     merges_at_merge, _conflicts_at_merge, _incoming = _current_merges(db, project_id, protocol_version)
+    visited = set()
+    cursor = str(target.id)
+    while cursor in merges_at_merge and cursor not in visited:
+        visited.add(cursor)
+        cursor = merges_at_merge[cursor]
+        if cursor == str(source.id):
+            raise HTTPException(409, "Merge would create a cycle between reports")
+    protocol = _protocol_for(db, project_id, protocol_version)
+    # Conflicts are evaluated against the target's current representative: comparing against
+    # the target's own (possibly absent) decision would hide a real disagreement.
     target_rep = _resolve_representative(merges_at_merge, str(target.id))
     conflicts, stages = [], []
     for stage in ("title_abstract", "fulltext"):
@@ -517,35 +503,8 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
             conflicts.append({"stage": stage, "source": source_decision[0] or "unresolved",
                               "target": target_decision[0] or "unresolved"})
             stages.append(stage)
-    # A merge affects every snapshot from its protocol version onward. Detecting conflicts only
-    # at the merge version misses disagreements that emerge in later snapshots (more decisions),
-    # silently discarding a later included/excluded conflict. Reject a backdated merge that would
-    # drop a conflict visible only in a later affected snapshot; merge at the current version (or
-    # resolve first) so the conflict is recorded and forces adjudication (R48). The boundary set
-    # includes decision versions and merge/split event versions, not just protocol rows: decisions
-    # may exist at a version with no exact protocol row (via _protocol_for's fallback), and the
-    # representative can change at a mapping event (R50/R51).
-    later_versions = {p.version for p in db.query(ReviewProtocol).filter(
-        ReviewProtocol.project_id == project_id, ReviewProtocol.version > protocol_version).all()}
-    later_versions.update(d.protocol_version for d in db.query(ReviewDecision).join(
-        ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(
-        ReviewCandidate.project_id == project_id, ReviewDecision.protocol_version > protocol_version).all())
-    later_versions.update(int((e.payload or {}).get("protocol_version", 1))
-                          for e in db.query(ReviewMappingEvent).filter(
-                              ReviewMappingEvent.project_id == project_id,
-                              ReviewMappingEvent.kind.in_(("report_merge", "report_split"))).all()
-                          if int((e.payload or {}).get("protocol_version", 1)) > protocol_version)
-    for version in sorted(later_versions):
-        later_protocol = _protocol_for(db, project_id, version)
-        merges_s, conflict_stages_s, _incoming = _current_merges(db, project_id, version)
-        target_rep_s = _resolve_representative(merges_s, str(target.id))
-        for stage in ("title_abstract", "fulltext"):
-            if stage in stages: continue  # this merge already flags the stage at every snapshot
-            if stage in (conflict_stages_s.get(target_rep_s) or {}): continue  # component already pending
-            source_decision = _effective(db, source.id, stage, version, later_protocol)
-            target_decision = _effective(db, UUID(target_rep_s), stage, version, later_protocol)
-            if _decisions_conflict(source_decision, target_decision):
-                raise HTTPException(409, "Backdated merge would discard a conflicting decision in a later protocol snapshot; merge at the current version or resolve the conflict first")
+    # No later-snapshot scan: the open-snapshot rule guarantees no decision, merge or split exists
+    # above this version, so the conflicts recorded here are the complete picture.
     source.identity_state = "merged"; source.merged_into = target.id
     db.add(ReviewMappingEvent(id=uuid4(), project_id=project_id, kind="report_merge",
                               payload={"source": str(source.id), "target": str(target.id), "rationale": rationale,
@@ -561,6 +520,7 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
 def split_report(db: Session, project_id, actor_id, source_report_id, rationale, *, protocol_version, commit=True):
     """Reverse a merge: the source report returns to its own candidate and its decisions."""
     research_access.authorize(db, project_id, actor_id, write=True)
+    _require_open_snapshot(db, project_id, protocol_version)
     # Lock and refresh the report so a retained session re-reads the committed identity state:
     # another session may have merged it since this instance was cached (R50, mirrors R39).
     source = db.query(ReviewReport).filter(ReviewReport.id == source_report_id, ReviewReport.project_id == project_id).with_for_update().first()
@@ -577,16 +537,13 @@ def split_report(db: Session, project_id, actor_id, source_report_id, rationale,
     return {"change_sequence": change_sequence}
 
 
-def _effective(db: Session, report_id, stage, protocol_version, protocol, extra=None):
+def _effective(db: Session, report_id, stage, protocol_version, protocol):
     """Effective final decision for a report/stage: adjudication wins; otherwise dual stages
     need decisions from two distinct reviewers that agree; solo stages decide on one. Returns
-    (decision|None, state). `extra` is an optional simulated decision row (not yet persisted)
-    unioned into the cohort, used to validate a backdated decision against later merges (R50)."""
+    (decision|None, state)."""
     rows = list(db.query(ReviewDecision).join(ReviewCandidate, ReviewCandidate.id == ReviewDecision.candidate_id).filter(
         ReviewCandidate.report_id == report_id, ReviewDecision.stage == stage,
         ReviewDecision.protocol_version <= protocol_version).order_by(ReviewDecision.protocol_version.desc()).all())
-    if extra is not None and extra.stage == stage and int(extra.protocol_version) <= protocol_version:
-        rows.append(extra)
     by_version = {}
     for row in rows: by_version.setdefault(row.protocol_version, []).append(row)
     for version in sorted(by_version, reverse=True):

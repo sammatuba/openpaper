@@ -167,20 +167,21 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             db.add(non_retained_candidate); db.commit()
             with self.assertRaises(HTTPException) as non_retained_map:
                 research_review.map_occurrences(db, project, owner, non_retained_candidate.id,
-                                                UUID("22000000-0000-4000-8000-000000000004"), [])
+                                                UUID("22000000-0000-4000-8000-000000000004"), [], protocol_version=2)
             self.assertEqual(non_retained_map.exception.status_code, 422)
-            # A mapping cannot place an occurrence or candidate into an earlier snapshot
-            # than the acquisition set that introduced it.
+            # The v1 snapshot closed when the first v2 record was written: a mapping cannot place
+            # an occurrence or a candidate back into it (rule 2, RULES-review-versioning.md). The
+            # acquisition guards (422) are pinned on an open snapshot in
+            # test_acquisition_guards_on_the_open_snapshot.
             with self.assertRaises(HTTPException) as premature:
                 research_review.map_occurrences(db, project, owner, UUID("66000000-0000-4000-8000-000000000002"),
                                                 later_occurrence.id, [], protocol_version=1)
-            self.assertEqual(premature.exception.status_code, 422)
-            # The candidate guard itself: a v1 occurrence mapped onto the v2 candidate.
+            self.assertEqual(premature.exception.status_code, 409)
             with self.assertRaises(HTTPException) as premature_candidate:
                 research_review.map_occurrences(db, project, owner, later_candidate.id,
                                                 UUID("22000000-0000-4000-8000-000000000004"), [],
                                                 protocol_version=1)
-            self.assertEqual(premature_candidate.exception.status_code, 422)
+            self.assertEqual(premature_candidate.exception.status_code, 409)
             db.commit()
             research_review.link_study(db, project, owner, UUID("33000000-0000-4000-8000-000000000003"),
                                        UUID("55000000-0000-4000-8000-000000000002"),
@@ -297,14 +298,20 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             db.add_all([ReviewOccurrence(id=occurrence_1, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1"),
                         ReviewOccurrence(id=occurrence_2, project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2")])
             db.commit()
-            research_review.map_occurrences(db, s.project, s.owner, candidate_a, occurrence_1, [], protocol_version=2)
             research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_2, [], protocol_version=1)
-            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 2, "included")
             research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "included")
-            # B backdates a claim on A's representative O1 (recorded at v2) into the v1 snapshot.
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, occurrence_1, [], protocol_version=2)
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 2, "included")
+            # B claims A's representative O1 on the open snapshot: ownership refuses it.
+            with self.assertRaises(HTTPException) as claimed:
+                research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_1, [occurrence_2], protocol_version=2)
+            self.assertEqual(claimed.exception.status_code, 409)
+            self.assertIn("already belongs", claimed.exception.detail)
+            # The same claim backdated into v1 is refused before ownership is even read.
             with self.assertRaises(HTTPException) as backdated:
                 research_review.map_occurrences(db, s.project, s.owner, candidate_b, occurrence_1, [occurrence_2], protocol_version=1)
             self.assertEqual(backdated.exception.status_code, 409)
+            self.assertIn("closed", backdated.exception.detail)
             self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
                                                                  ReviewMappingEvent.kind == "occurrence_map").count(), 2)
             v2 = research_review.flow_counts(db, s.project, s.owner, 2)
@@ -782,13 +789,20 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 1, "included")
             result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: unflagged", protocol_version=2)
             self.assertFalse(result["requires_adjudication"])
-            with self.assertRaises(HTTPException) as backdated:
-                research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "excluded")
-            self.assertEqual(backdated.exception.status_code, 409)
+            v1_before = research_review.flow_counts(db, s.project, s.owner, 1)
+            # Backdated into v1, either value is refused: the snapshot closed at the v2 merge.
+            for value in ("excluded", "included"):
+                with self.assertRaises(HTTPException) as backdated:
+                    research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, value)
+                self.assertEqual(backdated.exception.status_code, 409)
+                self.assertIn("closed", backdated.exception.detail)
             self.assertEqual(db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_b).count(), 0)
-            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "included")
+            # On the open snapshot the representative's decision is a decision about the merged
+            # candidate and governs from v2 on (rule 6); the v1 snapshot is untouched.
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 2, "excluded")
             v2 = research_review.flow_counts(db, s.project, s.owner, 2)
-            self.assertEqual((v2["screened"], v2["title_abstract_excluded"], v2["pending_adjudication"]), (1, 0, 0))
+            self.assertEqual((v2["screened"], v2["title_abstract_excluded"], v2["pending_adjudication"]), (1, 1, 0))
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), v1_before)
 
     async def test_backdated_decision_guard_covers_later_decision_boundaries(self):
         # R51 finding 2: exclude B at v3, merge A→B at v2 unflagged, then include A at v1. At the
@@ -806,12 +820,20 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             db.add_all([ReviewCandidate(id=candidate_a, project_id=s.project, report_id=report_a.id),
                         ReviewCandidate(id=candidate_b, project_id=s.project, report_id=report_b.id)]); db.commit()
             research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 3, "excluded")
-            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: unflagged", protocol_version=2)
-            self.assertFalse(result["requires_adjudication"])
+            # The v3 decision closed v2 and v1: neither the merge below it nor the decision below
+            # that can be recorded, so no later boundary is left to scan (rules 1 and 2).
+            with self.assertRaises(HTTPException) as backdated_merge:
+                research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: unflagged", protocol_version=2)
+            self.assertEqual(backdated_merge.exception.status_code, 409)
             with self.assertRaises(HTTPException) as backdated:
                 research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 1, "included")
             self.assertEqual(backdated.exception.status_code, 409)
             self.assertEqual(db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_a).count(), 0)
+            self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
+                                                                 ReviewMappingEvent.kind == "report_merge").count(), 0)
+            # The same merge on the open snapshot records the conflict-free picture as it stands.
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: unflagged", protocol_version=3)
+            self.assertFalse(result["requires_adjudication"])
             v3 = research_review.flow_counts(db, s.project, s.owner, 3)
             self.assertEqual((v3["screened"], v3["title_abstract_excluded"], v3["pending_adjudication"]), (1, 1, 0))
 
@@ -857,7 +879,12 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                         ReviewCandidate(id=uuid4(), project_id=s.project, report_id=report_b.id)]); db.commit()
             research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: A into B at v3", protocol_version=3)
             research_review.split_report(db, s.project, s.owner, report_a.id, "Fixture: split A", protocol_version=4)
-            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: backdated same direction", protocol_version=1)
+            # Backdated below the split, the re-merge is refused; a same-direction edge over an
+            # existing later edge can no longer be constructed at all.
+            with self.assertRaises(HTTPException) as backdated:
+                research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: backdated same direction", protocol_version=1)
+            self.assertEqual(backdated.exception.status_code, 409)
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: re-merge after split", protocol_version=4)
             self.assertFalse(result["requires_adjudication"])
             self.assertEqual(db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project,
                                                                  ReviewMappingEvent.kind == "report_merge").count(), 2)
@@ -973,8 +1000,14 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             research_review.record_decision(db, s.project, reviewer_2, candidate.id, "fulltext", 1, "excluded")
             visible = research_review.visible_decisions(db, s.project, reviewer_2, 1)
             self.assertEqual(len([d for d in visible if d.candidate_id == candidate.id and d.stage == "fulltext"]), 2)
-            # A v2 decision does not exist in the v1 snapshot (historical read regression).
+            # Disagreement exists at v1, so the named adjudicator may decide. An amended protocol
+            # with nothing recorded under it yet has not closed v1.
             research_review.amend_protocol(db, s.project, s.owner, new_version=2, commit=False)
+            db.commit()
+            research_review.record_decision(db, s.project, s.owner, candidate.id, "fulltext", 1, "included", role="adjudication")
+            counts_v1_final = research_review.flow_counts(db, s.project, s.owner, 1)
+            self.assertEqual(counts_v1_final["included_reports"], 1)
+            # A v2 decision does not exist in the v1 snapshot (historical read regression).
             db.commit()
             research_review.record_decision(db, s.project, reviewer_1, candidate.id, "fulltext", 2, "included")
             historical = research_review.visible_decisions(db, s.project, reviewer_2, 1)
@@ -994,16 +1027,19 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             db.add(v2_candidate); db.commit()
             with self.assertRaises(HTTPException) as predate:
                 research_review.record_decision(db, s.project, s.owner, v2_candidate.id, "title_abstract", 1, "included")
-            self.assertEqual(predate.exception.status_code, 422)
+            self.assertEqual(predate.exception.status_code, 409)  # v1 closed at the first v2 decision
             # The lone v2 submission is dual-hidden from the peer but visible to its author.
             self.assertEqual(len([d for d in research_review.visible_decisions(db, s.project, reviewer_2, 2)
                                   if d.protocol_version == 2]), 0)
             self.assertEqual(len([d for d in research_review.visible_decisions(db, s.project, reviewer_1, 2)
                                   if d.protocol_version == 2]), 1)
-            # Disagreement exists, so the named adjudicator may now decide.
-            research_review.record_decision(db, s.project, s.owner, candidate.id, "fulltext", 1, "included", role="adjudication")
-            counts = research_review.flow_counts(db, s.project, s.owner, 1)
-            self.assertEqual(counts["included_reports"], 1)
+            # The closed v1 snapshot cannot be re-adjudicated, and its counts did not move.
+            with self.assertRaises(HTTPException) as closed:
+                research_review.record_decision(db, s.project, s.owner, candidate.id, "fulltext", 1, "excluded", role="adjudication")
+            self.assertEqual(closed.exception.status_code, 409)
+            db.rollback()  # a refused write holds the project root lock until its transaction ends
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), counts_v1_final)
+            db.rollback()
             # A solo reviewer superseding their own submission does not fabricate a
             # disagreement for adjudication (effective decisions only).
             with self.Session() as db:
@@ -1015,12 +1051,13 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                                              selected_version_id=version2.id)
                 db.add(candidate2); db.commit()
                 # Solo stage permits repeated submissions by the same reviewer.
-                research_review.record_decision(db, s.project, reviewer_1, candidate2.id, "title_abstract", 1, "excluded")
-                research_review.record_decision(db, s.project, reviewer_1, candidate2.id, "title_abstract", 1, "included")
+                research_review.record_decision(db, s.project, reviewer_1, candidate2.id, "title_abstract", 2, "excluded")
+                research_review.record_decision(db, s.project, reviewer_1, candidate2.id, "title_abstract", 2, "included")
                 with self.assertRaises(HTTPException) as fabricated:
-                    research_review.record_decision(db, s.project, s.owner, candidate2.id, "title_abstract", 1,
+                    research_review.record_decision(db, s.project, s.owner, candidate2.id, "title_abstract", 2,
                                                     "excluded", role="adjudication")
                 self.assertEqual(fabricated.exception.status_code, 409)
+                self.assertIn("genuine disagreement", fabricated.exception.detail)
 
     # ---------- C10: conversion ----------
 
@@ -2389,6 +2426,197 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 conn.execute(self.text("INSERT INTO review_occurrences (id,project_id,provider,search_ref,external_hit_id) VALUES (:a,:p,'fixture','q','hit-1')"), {"a": uuid4(), "p": s.project})
             nested.rollback()
             self.assertIn("uq_review_occurrence_hit", str(duplicate.exception))
+
+
+    # ---------- RULES-review-versioning.md: one test per rule ----------
+    def _two_reports(self, db, s, count=2, **candidate):
+        reports = [ReviewReport(id=uuid4(), project_id=s.project) for _ in range(count)]
+        db.add_all(reports); db.commit()
+        candidates = [uuid4() for _ in reports]
+        db.add_all([ReviewCandidate(id=cid, project_id=s.project, report_id=report.id, **candidate)
+                    for cid, report in zip(candidates, reports)])
+        db.commit()
+        return reports, candidates
+
+    async def test_closed_snapshot_refuses_every_versioned_write(self):
+        # Rules 1-3: one v2 record closes v1 for all five writers, and no protocol row may be
+        # inserted at or below a version that already carries records.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            (report_a, report_b, report_c), (candidate_a, _b, _c) = self._two_reports(db, s, 3)
+            occurrence = ReviewOccurrence(id=uuid4(), project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1")
+            study = ReviewStudy(id=uuid4(), project_id=s.project, description="Fixture study")
+            db.add_all([occurrence, study]); db.commit()
+            research_review.merge_reports(db, s.project, s.owner, report_c.id, report_b.id, "Fixture: v1 merge", protocol_version=1)
+            self.assertEqual(research_review._snapshot_high_water(db, s.project), 1)
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 2, "included")  # no v2 protocol row
+            self.assertEqual(research_review._snapshot_high_water(db, s.project), 2)
+            before = (db.query(ReviewDecision).count(), db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project).count())
+            writes = {
+                "decision": lambda: research_review.record_decision(db, s.project, s.owner, candidate_a, "fulltext", 1, "excluded"),
+                "mapping": lambda: research_review.map_occurrences(db, s.project, s.owner, candidate_a, occurrence.id, [], protocol_version=1),
+                "link": lambda: research_review.link_study(db, s.project, s.owner, report_a.id, study.id, "Fixture", protocol_version=1),
+                "merge": lambda: research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture", protocol_version=1),
+                "split": lambda: research_review.split_report(db, s.project, s.owner, report_c.id, "Fixture", protocol_version=1),
+            }
+            for name, write in writes.items():
+                with self.assertRaises(HTTPException, msg=name) as closed:
+                    write()
+                self.assertEqual(closed.exception.status_code, 409, name)
+                self.assertIn("closed", closed.exception.detail, name)
+                db.rollback()
+            for version in (1, 2):  # 1 exists already (duplicate); 2 would re-govern the v2 decision
+                with self.assertRaises(HTTPException) as regovern:
+                    research_review.create_protocol(db, s.project, s.owner, version=version, screening_modes={"title_abstract": "dual"})
+                self.assertEqual(regovern.exception.status_code, 409)
+                db.rollback()
+            self.assertEqual((db.query(ReviewDecision).count(),
+                              db.query(ReviewMappingEvent).filter(ReviewMappingEvent.project_id == s.project).count()), before)
+            self.assertEqual(db.query(ReviewProtocol).filter(ReviewProtocol.project_id == s.project).count(), 1)
+            # The open snapshot accepts all of them, and a protocol above the mark is accepted.
+            research_review.map_occurrences(db, s.project, s.owner, candidate_a, occurrence.id, [], protocol_version=2)
+            research_review.link_study(db, s.project, s.owner, report_a.id, study.id, "Fixture", protocol_version=2)
+            research_review.split_report(db, s.project, s.owner, report_c.id, "Fixture", protocol_version=2)
+            research_review.create_protocol(db, s.project, s.owner, version=3, screening_modes={})
+
+    async def test_acquisition_guards_on_the_open_snapshot(self):
+        # A record cannot enter a snapshot older than the acquisition that introduced its
+        # occurrence or candidate (R13/R14). Pinned on an open snapshot, where rule 2 is silent.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            (_report,), (candidate,) = self._two_reports(db, s, 1)
+            (_later_report,), (later_candidate,) = self._two_reports(db, s, 1, protocol_version=3)
+            early = ReviewOccurrence(id=uuid4(), project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1")
+            later = ReviewOccurrence(id=uuid4(), project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-2", protocol_version=3)
+            db.add_all([early, later]); db.commit()
+            attempts = (lambda: research_review.map_occurrences(db, s.project, s.owner, candidate, later.id, [], protocol_version=2),
+                        lambda: research_review.map_occurrences(db, s.project, s.owner, later_candidate, early.id, [], protocol_version=2),
+                        lambda: research_review.record_decision(db, s.project, s.owner, later_candidate, "title_abstract", 2, "included"))
+            for attempt in attempts:
+                with self.assertRaises(HTTPException) as premature:
+                    attempt()
+                self.assertEqual(premature.exception.status_code, 422)
+                db.rollback()
+            self.assertEqual(research_review._snapshot_high_water(db, s.project), 0)  # refusals recorded nothing
+
+    async def test_concurrent_writers_cannot_backdate_past_each_other(self):
+        # Rule 4: a v2 write holds the project root lock until it commits. A racing v1 write
+        # waits on that lock and then reads the committed mark, so it is refused; without the
+        # lock both would pass against the stale mark and v1 would change after v2 exists.
+        import time
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            _reports, (candidate_a, candidate_b) = self._two_reports(db, s)
+        winner = self.Session()
+        try:
+            research_review.record_decision(winner, s.project, s.owner, candidate_a, "title_abstract", 2, "included", commit=False)
+            def backdated():
+                with self.Session() as db:
+                    try:
+                        research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 1, "included")
+                        return 200
+                    except HTTPException as error:
+                        return error.status_code
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(backdated)
+                time.sleep(0.5)
+                self.assertFalse(future.done())  # blocked on the project root lock
+                winner.commit()
+                self.assertEqual(future.result(timeout=10), 409)
+        finally:
+            winner.close()
+        with self.Session() as db:
+            self.assertEqual(db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_b).count(), 0)
+
+    async def test_adjudication_uses_the_requested_snapshot(self):
+        # R52 finding 2 / rule 7: only protocol v1 exists; opposing decisions and the merge are
+        # recorded at v2. The conflict lives at v2 and must be adjudicable at v2. Looking it up
+        # at the governing protocol row's version (1) finds no merge and returns 409.
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={}, commit=False)
+            db.commit()
+            (report_a, report_b), (candidate_a, candidate_b) = self._two_reports(db, s)
+            research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", 2, "included")
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 2, "excluded")
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: conflicting", protocol_version=2)
+            self.assertTrue(result["requires_adjudication"])
+            pending = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual(pending["pending_adjudication"], 1)
+            research_review.record_decision(db, s.project, s.owner, candidate_b, "title_abstract", 2, "included", role="adjudication")
+            resolved = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((resolved["pending_adjudication"], resolved["title_abstract_excluded"]), (0, 0))
+
+    async def test_amendment_cohort_after_unflagged_merge_is_ordinary_review(self):
+        # R52 finding 3 / rule 6: unanimous dual v1 reviews, an unflagged merge, then a v2
+        # amendment cohort on the representative. The first v2 reviewer leaves the cohort
+        # incomplete (pending), which is not a retroactive disagreement; the second completes it.
+        s = self.seed()
+        reviewer_1, reviewer_2 = uuid4(), uuid4()
+        with self.engine.begin() as conn:
+            for uid in (reviewer_1, reviewer_2):
+                conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": uid, "e": str(uid) + "@test.invalid"})
+                conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": uid})
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={"title_abstract": "dual"}, commit=False)
+            db.commit()
+            (report_a, report_b), (candidate_a, candidate_b) = self._two_reports(db, s)
+            for candidate in (candidate_a, candidate_b):
+                for reviewer in (reviewer_1, reviewer_2):
+                    research_review.record_decision(db, s.project, reviewer, candidate, "title_abstract", 1, "included")
+            result = research_review.merge_reports(db, s.project, s.owner, report_a.id, report_b.id, "Fixture: unanimous", protocol_version=1)
+            self.assertFalse(result["requires_adjudication"])
+            v1 = research_review.flow_counts(db, s.project, s.owner, 1)
+            research_review.amend_protocol(db, s.project, s.owner, new_version=2)
+            research_review.record_decision(db, s.project, reviewer_1, candidate_b, "title_abstract", 2, "excluded")
+            self.assertEqual(db.query(ReviewDecision).filter(ReviewDecision.candidate_id == candidate_b,
+                                                             ReviewDecision.protocol_version == 2).count(), 1)
+            half = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((half["title_abstract_excluded"], half["pending_adjudication"]), (0, 1))
+            research_review.record_decision(db, s.project, reviewer_2, candidate_b, "title_abstract", 2, "excluded")
+            done = research_review.flow_counts(db, s.project, s.owner, 2)
+            self.assertEqual((done["screened"], done["title_abstract_excluded"], done["pending_adjudication"]), (1, 1, 0))
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 1), v1)
+
+    async def test_failed_batch_apply_leaves_no_partial_edit(self):
+        # R52 finding 1 / rule 8: the second edit of an approved batch violates its schema. The
+        # apply fails 422 and the first edit must not stay flushed in the session, where the next
+        # unrelated commit would persist it. A later, valid proposal on the same targets applies.
+        s = self.seed()
+        document, _ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        first, second = uuid4(), uuid4()
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            for entity_id in (first, second):
+                research_entities.create_entity(db, s.project, s.owner, "claim", {"statement": "original"}, entity_id=entity_id)
+            targets = {str(first): 1, str(second): 1}
+            bad, _ = research_proposals.create_proposal(db, s.project, s.owner, "human", {"edits": [
+                {"entity_id": str(first), "payload": {"statement": "first changed"}},
+                {"entity_id": str(second), "payload": {"statement": ""}}]}, targets)
+            bad_id = bad.id
+            research_proposals.approve_proposal(db, s.project, s.owner, bad_id)
+            with self.assertRaises(HTTPException) as invalid:
+                research_proposals.apply_proposal(db, s.project, s.owner, bad_id)
+            self.assertEqual(invalid.exception.status_code, 422)
+            # An unrelated mutation commits on the SAME session, as a request handler would.
+            research_entities.create_entity(db, s.project, s.owner, "claim", {"statement": "unrelated"})
+        with self.Session() as db:
+            self.assertEqual([db.get(ResearchEntity, entity_id).revision for entity_id in (first, second)], [1, 1])
+            self.assertEqual(db.query(ResearchEntityRevision).filter(ResearchEntityRevision.entity_id.in_((first, second))).count(), 2)
+            self.assertEqual(db.get(ResearchProposal, bad_id).state, "approved")
+            good, _ = research_proposals.create_proposal(db, s.project, s.owner, "human", {"edits": [
+                {"entity_id": str(first), "payload": {"statement": "first changed"}},
+                {"entity_id": str(second), "payload": {"statement": "second changed"}}]}, targets)
+            research_proposals.approve_proposal(db, s.project, s.owner, good.id)
+            self.assertFalse(research_proposals.apply_proposal(db, s.project, s.owner, good.id)["replayed"])
+            self.assertEqual([db.get(ResearchEntity, entity_id).revision for entity_id in (first, second)], [2, 2])
 
 
 def _convert_in_session(test, project, owner):

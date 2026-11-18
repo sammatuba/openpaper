@@ -30,6 +30,18 @@ def authorize(db: Session, project_id, actor_id, *, write=False, lock=False):
     return project
 
 
+def lock_project(db, project_id):
+    """Serialize research writers that must read project-wide state before writing: take the
+    project root row lock for the rest of the transaction, creating the root first so the very
+    first writer has a row to lock. advance_change_sequence later updates the same row, so the
+    lock order is root first for every caller of this function."""
+    from sqlalchemy import text
+    parameters = {"p": str(project_id)}
+    db.execute(text("INSERT INTO research_projects (project_id, storage_generation, change_sequence) "
+                    "VALUES (:p, 'v1', 0) ON CONFLICT (project_id) DO NOTHING"), parameters)
+    db.execute(text("SELECT 1 FROM research_projects WHERE project_id = :p FOR UPDATE"), parameters)
+
+
 def advance_change_sequence(db, project_id):
     """Every committed research mutation advances the project's monotonic change
     sequence inside its own transaction (contract 1). The increment is a single
