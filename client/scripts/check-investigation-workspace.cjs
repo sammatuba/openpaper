@@ -180,22 +180,36 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
   assert.equal(await workspace.getByLabel('Paragraph',{exact:true}).first().inputValue(),'Unsaved paragraph survives a conflict.');failSave=false;
   await page.evaluate(()=>{const a=document.createElement('a');a.href='/projects';a.id='leave-project-test';a.textContent='Leave project test';document.body.append(a);});
   page.once('dialog',dialog=>dialog.dismiss());await page.locator('#leave-project-test').click();assert.match(page.url(),new RegExp('/projects/'+projectId+'/draft'));
-  await workspace.getByRole('button',{name:'Open folded preview',exact:true}).click();
-  await workspace.locator('.native-surface').waitFor();
-  assert.equal(await page.locator('iframe').count(),0,'New draft preview is native');
-  const mount=await workspace.locator('.native-surface').elementHandle();await workspace.getByLabel('Folded document preview',{exact:true}).scrollIntoViewIfNeeded();
+  const openPreview=async()=>{await workspace.getByRole('button',{name:'Open folded preview',exact:true}).click();const region=workspace.getByRole('region',{name:'Folded document preview',exact:true});await region.waitFor();return region;};
+  const storedKeys=()=>page.evaluate(()=>Object.keys(localStorage).filter(key=>key!=='darkMode').sort().join(',')+'|'+Object.keys(sessionStorage).sort().join(','));
+  const storedBefore=await storedKeys();
+  // Every request to the app counts except the reader's own code chunk and the destination
+  // bar's prefetch of the page already open (its Write link, outside the reader). The
+  // app-wide analytics beacon batches earlier page views on its own timer and is not the reader's.
+  const requested=[];const watch=request=>{const url=new URL(request.url());if(url.origin===new URL(base).origin&&!url.pathname.startsWith('/_next/static/')&&!(url.pathname===new URL(page.url()).pathname&&url.searchParams.has('_rsc')))requested.push(request.method()+' '+request.url());};page.on('request',watch);
+  const preview=await openPreview();
+  assert.equal(await page.locator('iframe').count(),0,'The folded preview is part of the page');
+  const mount=await preview.elementHandle();await preview.scrollIntoViewIfNeeded();
+  await preview.getByRole('radio',{name:'Topic',exact:true}).click();
+  await preview.getByRole('radio',{name:'Full',exact:true}).click();
+  await preview.getByRole('link',{name:'Finding: '+saved.findings[0].label,exact:true}).first().waitFor();await page.waitForTimeout(600);
+  page.off('request',watch);assert.deepEqual(requested,[],'Opening and folding the preview makes no request');
+  assert.equal(await preview.locator('input,textarea,[contenteditable]').count(),0,'The preview has no editing control');
+  await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`draft-fold-${width}.png`),fullPage:true});
   await page.evaluate(()=>{localStorage.setItem('darkMode','dark');document.documentElement.classList.add('dark');});
-  await page.waitForFunction(()=>document.querySelector('[aria-label="Folded document preview"] div.relative')?.firstElementChild?.shadowRoot?.querySelector('.native-surface')?.dataset.theme==='dark');
+  await page.waitForFunction(()=>document.documentElement.classList.contains('dark'));
   assert.equal(await workspace.getByLabel('Paragraph',{exact:true}).first().inputValue(),'Unsaved paragraph survives a conflict.');
-  assert.equal(await mount.evaluate(el=>el.isConnected),true,'Theme change preserves the native mount');
+  assert.equal(await mount.evaluate(el=>el.isConnected),true,'Theme change preserves the preview');
+  assert.equal(await preview.getAttribute('data-level'),'full','Theme change keeps the reading level');
+  assert.equal(await storedKeys(),storedBefore,'The preview stores nothing in the browser');
   assert.equal(providerCalls,2,'Folding, theme changes and saves cause no model calls');
-  const nativeText=await workspace.locator('.native-surface .doc').innerText();
-  assert.match(nativeText,/AI-authored prose/,'Native preview labels assistant authorship');
-  assert.match(nativeText,/Human-authored prose/,'Native preview labels manual prose');
-  assert.match(nativeText,/Exact source quotation — captured version/,'Native preview labels captured quotation');
-  assert.ok(nativeText.includes(fixture.sources[0].quote),'Native quotation preserves exact captured wording');
-  await workspace.getByLabel('Folded document preview',{exact:true}).scrollIntoViewIfNeeded();await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`draft-native-dark-${width}.png`),fullPage:true});
-  const nativeFinding=workspace.locator('.native-surface').getByRole('link',{name:'Finding '+saved.findings[0].id,exact:true}).first();
+  const nativeText=await preview.innerText();
+  assert.match(nativeText,/AI-authored prose/,'Preview labels assistant authorship');
+  assert.match(nativeText,/Human-authored prose/,'Preview labels manual prose');
+  assert.match(nativeText,/Exact source quotation — captured version/,'Preview labels captured quotation');
+  assert.ok(nativeText.includes(fixture.sources[0].quote),'Quotation preserves exact captured wording');
+  await preview.scrollIntoViewIfNeeded();await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`draft-native-dark-${width}.png`),fullPage:true});
+  const nativeFinding=preview.getByRole('link',{name:'Finding: '+saved.findings[0].label,exact:true}).first();
   await nativeFinding.click();
   await page.waitForURL(url=>url.pathname.endsWith('/evidence')&&url.searchParams.get('finding')===saved.findings[0].id);
   assert.equal(await workspace.locator('#finding-'+saved.findings[0].id).locator('blockquote').innerText(),fixture.sources[0].quote);
@@ -208,14 +222,14 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
   await noOverflow('Populated overview');
   for(const theme of ['dark','light']){
    await page.evaluate(theme=>{localStorage.setItem('darkMode',theme);document.documentElement.classList.toggle('dark',theme==='dark');},theme);const suffix=theme==='dark'?'-dark':'';
-   await nav.getByRole('link',{name:'Overview',exact:true}).click();await workspace.getByLabel('Claim statement').first().waitFor();await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`overview${suffix}-${width}.png`),fullPage:true});
-   await nav.getByRole('link',{name:'Evidence',exact:true}).click();await workspace.getByRole('heading',{name:'Evidence',exact:true}).waitFor();await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`evidence${suffix}-${width}.png`),fullPage:true});
+   await nav.getByRole('link',{name:'Overview',exact:true}).click();await workspace.getByLabel('Claim statement').first().waitFor();{const region=await openPreview();assert.match(await region.innerText(),/provisional answer/i,'Overview preview shows the case');}await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`overview${suffix}-${width}.png`),fullPage:true});
+   await nav.getByRole('link',{name:'Evidence',exact:true}).click();await workspace.getByRole('heading',{name:'Evidence',exact:true}).waitFor();{const region=await openPreview();await region.getByRole('heading',{name:saved.findings[0].label,exact:true}).waitFor();}await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`evidence${suffix}-${width}.png`),fullPage:true});
    await nav.getByRole('link',{name:'Write',exact:true}).click();await workspace.getByLabel('Paragraph',{exact:true}).first().waitFor();await noOverflow('Write');await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`write${suffix}-${width}.png`),fullPage:true});
   }
   sourceChanged=true;await page.reload();await workspace.getByText('Evidence changed — review needed',{exact:false}).first().waitFor();assert.equal(await workspace.getByLabel('Paragraph',{exact:true}).first().inputValue(),'Unsaved paragraph survives a conflict.');await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`draft-source-changed-${width}.png`),fullPage:true});
-  project.role='viewer';await page.goto(`${base}/projects/${projectId}/evidence`);await workspace.getByRole('heading',{name:'Evidence',exact:true}).waitFor();if(!(await workspace.getByLabel('Observed result',{exact:true}).first().isVisible().catch(()=>false)))await workspace.locator('article[id^="finding-"]').first().locator('button[aria-expanded]').first().click();assert.equal(await workspace.getByLabel('Observed result',{exact:true}).first().getAttribute('readonly'),'');assert.equal(await page.getByRole('button',{name:'Save investigation',exact:true}).count(),0,'Viewers are not offered Save');await workspace.getByLabel('Select for comparison').first().check();await workspace.getByText('Selected comparison',{exact:true}).waitFor();await workspace.getByRole('button',{name:'Open PDF source',exact:true}).first().click();await page.locator('.page[data-page-number="1"] canvas').first().waitFor();await page.getByRole('button',{name:'Close reader',exact:true}).click();assert.equal(await workspace.getByRole('button',{name:'Open PDF source',exact:true}).first().isEnabled(),true);
+  project.role='viewer';await page.goto(`${base}/projects/${projectId}/evidence`);await workspace.getByRole('heading',{name:'Evidence',exact:true}).waitFor();if(!(await workspace.getByLabel('Observed result',{exact:true}).first().isVisible().catch(()=>false)))await workspace.locator('article[id^="finding-"]').first().locator('button[aria-expanded]').first().click();assert.equal(await workspace.getByLabel('Observed result',{exact:true}).first().getAttribute('readonly'),'');assert.equal(await page.getByRole('button',{name:'Save investigation',exact:true}).count(),0,'Viewers are not offered Save');{const region=await openPreview();await region.getByRole('radio',{name:'Full',exact:true}).click();assert.equal(await region.getAttribute('data-level'),'full','Viewers can fold the preview');assert.equal(await region.locator('input,textarea,[contenteditable]').count(),0);await workspace.getByRole('button',{name:'Close folded preview',exact:true}).click();}await workspace.getByLabel('Select for comparison').first().check();await workspace.getByText('Selected comparison',{exact:true}).waitFor();await workspace.getByRole('button',{name:'Open PDF source',exact:true}).first().click();await page.locator('.page[data-page-number="1"] canvas').first().waitFor();await page.getByRole('button',{name:'Close reader',exact:true}).click();assert.equal(await workspace.getByRole('button',{name:'Open PDF source',exact:true}).first().isEnabled(),true);
   project.role='admin';failProject=true;await page.goto(`${base}/projects/${projectId}`);await page.getByRole('main').getByRole('alert').filter({hasText:/./}).first().waitFor();assert.equal(await page.getByLabel('Question',{exact:true}).count(),0,'A failed project request does not render a read-only case');failProject=false;
   assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);await page.close();
- }console.log('Production desktop/mobile manual/assistant insertion-discard, reload/conflict, native AI/human/quotation attribution, native finding callback with unsaved prose, viewer PDF, brief-only initialization and theme preservation passed.');}
+ }console.log('Production desktop/mobile manual/assistant insertion-discard, reload/conflict, folded previews on Overview, Evidence and Write without requests or storage, AI/human/quotation attribution, finding link with unsaved prose, viewer preview and PDF, brief-only initialization and theme preservation passed.');}
  finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -52,12 +52,14 @@ Generate action is a new explicit request. Manual work remains available.
 
 ## Reader and portability
 
-Open folded preview uses the native upstream Textfold engine and five levels.
-Keyboard1–5, wheel/pinch zoom, local unfolding and the Topic map operate inside
-that reader. Input fields retain their keyboard behavior. Theme changes preserve
-the editor and reader instance. Local excerpts and AI-provided content keep their
-provenance. Reader preferences/annotations are local to the user/project/version;
-Export local reader annotations is explicit and never shares them automatically.
+Open folded preview shows the current view, including unsaved edits, in
+OpenPaper's folded reader at five levels: Topic, Takeaway, Key, Brief and Full.
+Keys 1–5 select a level while focus is inside the reader; input fields keep their
+keyboard behavior. Under a paragraph, Show source sentences and Show full text
+open that paragraph only, and Fold back closes it. In the Write preview each
+paragraph carries its attribution and links to the findings it cites. The reader
+stores nothing in the browser and has no annotations; folding makes no request.
+Theme changes keep the editor, the preview and its level.
 
 Saved bundle, Markdown and BibTeX exports recheck source access. Markdown marks
 uncited, stale and AI-authored prose; BibTeX uses only known bibliography and

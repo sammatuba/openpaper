@@ -1,11 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
 import { ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { CheckCircle2, CircleDot, FileQuestion, FileWarning, FileX, Layers, XCircle } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { investigationPreview } from "@/lib/investigation-preview";
 import type { Relation } from "@/lib/investigation";
@@ -13,10 +11,7 @@ import { Button } from "@/components/ui/button";
 import { useProjectWorkspace } from "@/components/project/ProjectWorkspaceProvider";
 import { useInvestigation } from "@/components/project/InvestigationProvider";
 
-const NativeTextfold = dynamic(
-    () => import("@/components/textfold/NativeTextfold").then(module => module.NativeTextfold),
-    { ssr: false },
-);
+const FoldedReader = dynamic(() => import("@/components/fold/FoldedReader").then(module => module.FoldedReader));
 
 export const newId = () => crypto.randomUUID();
 
@@ -167,8 +162,6 @@ export function ViewFrame({ children, wide }: { children: ReactNode; wide?: bool
 export function FoldedPreview({ view }: { view: "case" | "evidence" | "draft" }) {
     const { projectId } = useProjectWorkspace();
     const { document: doc } = useInvestigation();
-    const { user } = useAuth();
-    const router = useRouter();
     const [open, setOpen] = useState(false);
     const folded = useMemo(() => investigationPreview(doc, view, projectId), [doc, projectId, view]);
 
@@ -178,17 +171,11 @@ export function FoldedPreview({ view }: { view: "case" | "evidence" | "draft" })
                 <Layers aria-hidden className="h-4 w-4" />
                 {open ? "Close folded preview" : "Open folded preview"}
             </Button>
-            {open && user?.id && (
-                <NativeTextfold
+            {open && (
+                <FoldedReader
                     document={folded}
-                    identity={`${user.id}:${projectId}:case`}
-                    userId={user.id}
-                    onOpenSource={id => {
-                        if (doc.findings.some(finding => finding.id === id)) {
-                            setOpen(false);
-                            router.push(`/projects/${projectId}/evidence?finding=${id}`);
-                        }
-                    }}
+                    label="Folded document preview"
+                    findingHref={id => doc.findings.some(finding => finding.id === id) ? `/projects/${projectId}/evidence?finding=${id}` : null}
                 />
             )}
         </div>

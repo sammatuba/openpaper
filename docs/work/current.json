@@ -8,7 +8,7 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
+  "next_action": "Native folded reader is implemented on feat/native-fold-reader (local, not pushed, not deployed): owner to look at it and decide on push, PR and deploy; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
   "blocked_on": [
     "No current operator browser/session exposed for authenticated production UI acceptance."
   ],
@@ -496,5 +496,12 @@
     "traffic_percent": 100,
     "source_commit": "fc39aa290938cf23d8e4e0f2469979c4506e31cd",
     "smoke": "Staged URL then both public hosts: /api/health 200, / 200, /login 200, /projects 200, new /projects/{id}/discuss route 200, unauthenticated investigation 401, unauthenticated MCP POST 401"
+  },
+  "native_fold_reader": {
+    "status": "implemented 2026-11-18 on feat/native-fold-reader, staged, not committed; local checks and three browser journeys pass; Codex review rounds 1 and 2 rework addressed; round 3 Codex out of credits, stand-in review rework addressed and re-reviewed accept (stand-in, not Codex parity); not pushed, not deployed",
+    "strategy": "docs/work/STRATEGY-native-fold-reader.md",
+    "intent": "docs/work/INTENT-native-fold-reader.md",
+    "supersedes": "STRATEGY-ai-native-research-platform.md invariant 8 and C11 wording; HANDOFF-investigation-workspace.md instruction to keep the upstream engine",
+    "verification": "docs/work/VERIFICATION-native-fold-reader.md"
   }
 }

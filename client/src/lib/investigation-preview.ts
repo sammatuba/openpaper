@@ -1,4 +1,4 @@
-import {foldMarkdown,projectResearchBrief,researchQuestion} from './textfold';
+import {foldBlock,foldMarkdown,projectResearchBrief,researchQuestion} from './textfold';
 import type {Project} from './schema';
 import type {Investigation,Block} from './investigation';
 
@@ -25,9 +25,12 @@ export function investigationPreview(doc:Investigation,view:'case'|'evidence'|'d
  for(const section of doc.manuscript.sections){
   const units=section.blocks.flatMap(block=>{
    const attribution=block.kind==='source_quote'?'Exact source quotation — captured version':block.provenance.kind==='assistant'?'AI-authored prose — human review required':block.provenance.kind==='imported'?'Imported prose — unverified origin':block.kind==='gap'?'Evidence gap':'Human-authored prose';
-   const links=block.finding_ids.map(fid=>`[Finding ${fid}](/projects/${projectId}/evidence?finding=${fid})`).join(' ');
-   const fragment=foldMarkdown(`${attribution}.\n\n${block.kind==='source_quote'?quotation(doc,block):block.text}\n\n${links}`,section.title,block.id);
-   return fragment.sections.flatMap(s=>s.units).map((unit,index)=>({...unit,id:block.id+':'+index,provenance:{...block.provenance},finding_ids:block.finding_ids}));
+   // Attribution and findings travel as fields of the paragraph, never as prose.
+   // A cited finding that no longer exists stays visible as an unavailable citation.
+   const findings=block.finding_ids.map(fid=>{const finding=doc.findings.find(f=>f.id===fid);return {id:fid,label:finding?finding.label||'Untitled finding':'unavailable ('+fid+')'};});
+   // A block's own headings are its text, not manuscript sections; an empty block still shows what it cites.
+   const paragraphs=foldBlock(block.kind==='source_quote'?quotation(doc,block):block.text,block.id);
+   return paragraphs.map((unit,index)=>({...unit,provenance:{...block.provenance},finding_ids:block.finding_ids,attribution:index===0?attribution:'',findings:index===paragraphs.length-1?findings:[]}));
   });
   result.sections.push({id:section.id,title:section.title,depth:1,takeaway:section.title,topic:section.title,units});
  }

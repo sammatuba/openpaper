@@ -3,15 +3,14 @@
 import { useMemo, useState } from 'react';
 import { BookOpen, CircleHelp, Pencil } from 'lucide-react';
 import type { Project } from '@/lib/schema';
-import { projectResearchBrief, researchQuestion, RESEARCH_FRAMEWORK } from '@/lib/textfold';
-import { TextFoldReader } from '@/components/textfold/TextFoldReader';
+import { projectResearchBrief, RESEARCH_FRAMEWORK } from '@/lib/textfold';
+import { FoldedReader } from '@/components/fold/FoldedReader';
 import { Button } from '@/components/ui/button';
 import { EditProjectDialog } from './EditProjectDialog';
 
 export function ProjectResearchOverview({ project, canEdit, embedded = false }: { project: Project; canEdit: boolean; embedded?: boolean }) {
     const [editing, setEditing] = useState(false);
     const { document: doc, invalid } = useMemo(() => projectResearchBrief(project), [project]);
-    const question = researchQuestion(doc) || doc.sections[0]?.takeaway || project.title;
     const covered = RESEARCH_FRAMEWORK.map(item => ({ ...item, section: doc.sections.find(s => item.match.test(s.title) && s.units.some(u => u.full.trim())) }));
     const missing = covered.filter(item => !item.section);
     const hasContent = doc.sections.some(s => s.units.length > 0);
@@ -34,7 +33,7 @@ export function ProjectResearchOverview({ project, canEdit, embedded = false }: 
                     {!item.section && <span className="mt-2 block text-xs text-muted-foreground">Not yet assessed in this brief</span>}
                 </div>)}
             </div>
-            <TextFoldReader key={`${project.id}-${JSON.stringify(doc)}`} document={doc} question={question} />
+            <FoldedReader key={project.id} document={doc} label="Folded research brief" exportable />
         </> : <div className="rounded-xl border border-dashed p-6">
             <CircleHelp className="mb-3 h-5 w-5 text-muted-foreground" />
             <h2 className="mb-2 font-medium">Start with the uncertainty</h2>

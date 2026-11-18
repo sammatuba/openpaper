@@ -83,11 +83,11 @@ export function EditProjectDialog({ open, onOpenChange }: { open: boolean; onOpe
                     {!description.includes('\n') && /\s#{1,6}\s/.test(description) && <Button type="button" variant="outline" size="sm" className="text-xs" disabled={saving} onClick={() => editSource(normalizeProjectMarkdown(description))}>Separate inline headings · review before saving</Button>}
                 </div>
                 <div className="rounded-lg border p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">Textfold reading levels</p>
+                    <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">Reading levels</p>
                         <Button type="button" variant="outline" size="sm" className="gap-1.5 text-xs" disabled={saving} onClick={() => fileInput.current?.click()}><FileUp className="h-3.5 w-3.5" />Import Textfold JSON</Button>
                         <input ref={fileInput} type="file" accept=".json,application/json" className="sr-only" aria-label="Import Textfold JSON file" disabled={saving} onChange={e => void importFile(e.target.files?.[0])} />
                     </div>
-                    <p className="mt-2 text-xs leading-5 text-muted-foreground">{imported ? `${imported.title} · ${imported.sections.length} sections · ${imported.provenance.ai_generated ? 'AI-written summaries' : 'Provided excerpts'}. These levels will be saved with the project.` : 'The brief folds locally using its own sentences. Import a Textfold export to retain its generated summaries and sentence anchors.'}</p>
+                    <p className="mt-2 text-xs leading-5 text-muted-foreground">{imported ? `${imported.title} · ${imported.sections.length} sections · ${imported.provenance.ai_generated ? 'AI-written summaries' : 'Provided excerpts'}. These levels will be saved with the project.` : 'The brief folds locally using its own sentences. Import a Textfold export to retain its generated summaries and sentence anchors.'} Reading levels and the file format come from <a className="underline" href="https://github.com/chenxiachan/textfold" target="_blank" rel="noreferrer">TextFold by Xia Chen</a>.</p>
                     {imported && <Button type="button" size="sm" variant="ghost" className="mt-2 h-auto px-0 text-xs" disabled={saving} onClick={() => { setImported(null); setDiscarded(true); }}>Use local excerpts instead</Button>}
                     {discarded && <p className="mt-2 text-xs text-muted-foreground">Saved reading levels will be replaced by local excerpts when you save. You can import new levels after editing.</p>}
                 </div>

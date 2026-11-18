@@ -51,7 +51,7 @@ The existing authenticated acceptance is a prerequisite to claiming that the cur
 5. Every read, mutation, tool call, export and artifact transfer checks current authorization. Private notes are not shared by association.
 6. Conflicts preserve the losing editor's work. Retrying a request never silently repeats an expensive or externally visible operation.
 7. Local notebook execution and uploading local material require separate, specific consent. Pairing a device grants neither blanket filesystem access nor blanket execution approval.
-8. The existing native Textfold engine, source fidelity, five levels, attribution, keyboard isolation and cleanup are retained. The canvas supplements it; it is not an excuse to replace it with an imitation.
+8. The existing native Textfold engine, source fidelity, five levels, attribution, keyboard isolation and cleanup are retained. The canvas supplements it; it is not an excuse to replace it with an imitation. **Superseded 2026-11-18 by [STRATEGY-native-fold-reader.md](STRATEGY-native-fold-reader.md): the upstream engine is replaced by OpenPaper's own reader; five levels, source fidelity, attribution and keyboard isolation still hold.**
 9. No migration silently invents evidence, drops authored content, promotes imported citations to verified status, or resets provenance.
 10. Human reasoning, comparison and manual drafting remain useful with AI disabled and with the local notebook companion disconnected.
 
@@ -737,7 +737,7 @@ Links are starting points, not a requirement to put every new capability in thes
 | [Current workspace](../../client/src/components/project/InvestigationWorkspace.tsx#L79) | Structured textarea drafting today; rich editor is a real new implementation, not a cosmetic restyle. |
 | [Draft service](../../server/app/services/investigation_drafting.py#L111) | Preserve durable claim, single-attempt provider boundary and failed/uncertain states. |
 | [Export service](../../server/app/services/investigation_export.py#L18) | Preserve access redaction, imported-source distrust and portable exports. |
-| [Native reader](../../client/src/lib/textfold-native/index.ts#L28) | Derived preview; not a manuscript editing or shared-annotation store. |
+| [Folded reader](../../client/src/components/fold/FoldedReader.tsx) (replaced the embedded engine 2026-11-18) | Derived preview; not a manuscript editing or shared-annotation store. |
 | [MCP server](../../server/app/mcp/server.py#L50) and [research context](../../server/app/mcp/research.py#L137) | Existing paper/project tools do not expose investigation, board, manuscript, review or notebook state. |
 | [Source endpoint](../../server/app/api/projects/project_investigation_api.py#L49) | Indexed-only search and exact line inspection; no guaranteed PDF page mapping. |
 | [Compute helper](../../server/app/helpers/compute_agent.py#L299) | E2B table computation is distinct from local Jupyter; verify actual isolation and retry costs before extension. |
@@ -997,7 +997,7 @@ All checks below start **pending**. Mapping to a package does not mean it passed
 | C08 | Same-record concurrent edits cannot overwrite silently; disjoint edits can succeed; cross-record actions roll back atomically. | P02/P03 |
 | C09 | Autosave acknowledgment, failed save, offline state, reload conflict and recovery preserve authored text without implicit sensitive localStorage. | P03/P05 |
 | C10 | V1 conversion preserves IDs/text/quotes/origins/pins, aborts on changed revision and leaves a single authoritative write path. | P02 |
-| C11 | Native Textfold fidelity, two-instance isolation, 20-remount cleanup, theme and keyboard regressions remain passing. | P03/P05/P09 |
+| C11 | Native Textfold fidelity, two-instance isolation, 20-remount cleanup, theme and keyboard regressions remain passing. (Reworded 2026-11-18: folded reader five levels, source fidelity, attribution, theme and keyboard regressions remain passing; instance isolation and remount cleanup no longer apply to an ordinary component.) | P03/P05/P09 |
 | C12 | Arbitrary canvas placement, groups, connectors, mixed media, undo, templates and drag alternatives work—not only a generated hierarchy. | P09 |
 | C13 | Media preview cannot execute untrusted content or expose restricted bytes; changed/unavailable remote video remains an unverified locator. Link-only references cannot become verified evidence, and snapshot anchors state exactly what was verified. | P02/P09/P12 |
 | C14 | Identifier/import/dedup tests distinguish exact duplicates, aliases and revised studies; readiness/coverage and failures are visible. | P04 |

@@ -63,6 +63,10 @@ Contributions are welcome! To get a local development environment running:
 
 Found a bug or have a feature idea? [Open an issue](https://github.com/khoj-ai/openpaper/issues).
 
+## Acknowledgements
+
+The five folded reading levels and the `textfold/doc` document format used by project briefs originate from [TextFold](https://github.com/chenxiachan/textfold) by Xia Chen (Apache-2.0). Open Paper implements the format with its own reader.
+
 ## License
 
 Open Paper is licensed under the [AGPL-3.0](./LICENSE).

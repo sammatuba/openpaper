@@ -15,6 +15,13 @@ const eslintConfig = [
         rules: {
             "react-hooks/exhaustive-deps": "off"
         }
+    },
+    {
+        // Node check scripts are CommonJS by convention.
+        files: ["scripts/**/*.cjs"],
+        rules: {
+            "@typescript-eslint/no-require-imports": "off"
+        }
     }
 ];
 

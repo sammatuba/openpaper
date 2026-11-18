@@ -99,24 +99,22 @@ const base = process.env.OPENPAPER_BROWSER_BASE || 'http://127.0.0.1:3011';
             await main.locator('#research-session textarea').fill('What remains unknown?');
             assert.equal(await main.getByRole('button',{name:'Start discussion',exact:true}).isEnabled(),true);
 
-            // The existing native brief remains accessible from the task workspace.
+            // The working brief remains accessible from the task workspace.
             await main.getByRole('button',{name:'Read or update the brief',exact:true}).click();
             await page.locator('[data-reader-ready="true"]').waitFor();
-            const readerFrame = page.frames().find(frame => frame !== page.mainFrame());
-            assert.equal(await readerFrame.evaluate(() => document.documentElement.dataset.theme), width === 1440 ? 'dark' : 'light', 'reader follows OpenPaper theme');
-            const reader = page.frameLocator('iframe[title="Textfold research reader"]');
-            await page.locator('iframe').scrollIntoViewIfNeeded();
-            await reader.locator('.typebtn').click();
-            await reader.locator('.typemenu [data-step="1"]').click();
-            await readerFrame.waitForFunction(expected => document.documentElement.dataset.theme === expected, width === 1440 ? 'dark' : 'light');
-            await reader.locator('.typebtn').click();
+            const reader = main.getByRole('region',{name:'Folded research brief',exact:true});
+            assert.equal(await page.locator('iframe').count(),0,'the brief reader is part of the page');
+            await reader.getByRole('radio',{name:'Key',exact:true}).click();
+            const paper = () => reader.evaluate(element => getComputedStyle(element.firstElementChild).backgroundColor);
             if (width === 1440) {
+                const dark = await paper();
                 await page.evaluate(() => document.documentElement.classList.remove('dark'));
-                await page.waitForFunction(() => document.querySelector('iframe')?.contentDocument?.documentElement?.dataset.theme === 'light');
+                await page.waitForFunction(() => !document.documentElement.classList.contains('dark'));
+                assert.notEqual(await paper(), dark, 'reader follows OpenPaper theme');
                 await page.evaluate(() => document.documentElement.classList.add('dark'));
-                await page.waitForFunction(() => document.querySelector('iframe')?.contentDocument?.documentElement?.dataset.theme === 'dark');
-                await page.locator('[data-reader-ready="true"]').waitFor();
+                assert.equal(await paper(), dark);
             }
+            assert.equal(await reader.getAttribute('data-level'),'key','a theme change keeps the reading level');
             await main.getByRole('button',{name:'Edit brief',exact:true}).waitFor();
             await home();
             role='viewer'; await home();

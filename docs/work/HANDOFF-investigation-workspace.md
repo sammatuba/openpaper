@@ -27,6 +27,7 @@ The previous session's product intuition is captured in
 [STRATEGY-investigation-workspace.md](STRATEGY-investigation-workspace.md).
 The intent/plan are now the implementation contracts; do not reopen the basic
 direction or replace the actual Textfold engine with a superficial imitation.
+(Superseded 2026-11-18 by [STRATEGY-native-fold-reader.md](STRATEGY-native-fold-reader.md).)
 
 ## Exact starting state
 

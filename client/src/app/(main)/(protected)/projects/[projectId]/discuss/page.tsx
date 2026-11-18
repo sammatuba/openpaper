@@ -180,7 +180,7 @@ function ProjectPage() {
                 setBriefOpen(event.currentTarget.open);
                 if (event.currentTarget.open) setBriefOpened(true);
             }}>
-                <summary className="cursor-pointer text-sm font-semibold">Research brief & mind map<span className="mt-1 block pl-4 text-xs font-normal leading-5 text-muted-foreground">Read at different levels of detail, inspect sources, and update the working synthesis.</span></summary>
+                <summary className="cursor-pointer text-sm font-semibold">Research brief<span className="mt-1 block pl-4 text-xs font-normal leading-5 text-muted-foreground">Read at different levels of detail, inspect sources, and update the working synthesis.</span></summary>
                 {briefOpened && <div className="mt-6"><ProjectResearchOverview project={project} canEdit={project.role === ProjectRole.Admin} embedded /></div>}
             </details>
             <details className="text-sm">

@@ -5,7 +5,7 @@ import { toMarkdown } from 'mdast-util-to-markdown';
 import type { Definition, Nodes } from 'mdast';
 import type { FoldLevel, Project, TextFoldDocument, TextFoldSection, TextFoldUnit } from './schema';
 
-// Native reader of the public Textfold v0 format; no standalone server needed.
+// The public Textfold v0 document format (TextFold by Xia Chen), read and written natively.
 // https://github.com/chenxiachan/textfold/blob/main/docs/format.md
 export const FOLD_LEVELS: FoldLevel[] = ['topic', 'takeaway', 'key', 'brief', 'full'];
 const text = z.string().max(100_000);
@@ -148,6 +148,16 @@ function markdownBlocks(content: string): string[] {
     return blocks;
 }
 
+/**
+ * Fold one authored block (a manuscript paragraph, a quotation) into paragraphs.
+ * Headings inside it stay part of its text, and an empty block still yields one
+ * paragraph so that whatever is attached to the block has somewhere to show.
+ */
+export function foldBlock(source: string, blockId: string): TextFoldUnit[] {
+    const blocks = markdownBlocks(source.replace(/\r\n/g, '\n').trim());
+    return (blocks.length ? blocks : ['']).map((block, i) => makeUnit(block, `${blockId}:${i}`, ''));
+}
+
 export function foldMarkdown(source: string, title: string, documentId: string): TextFoldDocument {
     const sections: TextFoldSection[] = [];
     let current: TextFoldSection | null = null;
@@ -182,7 +192,7 @@ export function foldMarkdown(source: string, title: string, documentId: string):
     return { format: 'textfold/doc', version: 0, id: documentId, title, lang: 'en',
         levels: [...FOLD_LEVELS], written: [],
         source: { kind: 'markdown', label: 'Project description' }, source_text: source,
-        provenance: { made_with: 'OpenPaper native Textfold reader', ai_generated: false, local: true },
+        provenance: { made_with: 'OpenPaper', ai_generated: false, local: true },
         sections, links: [] };
 }
 

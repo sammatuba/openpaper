@@ -1,4 +1,4 @@
-# Research briefs and native Textfold reading
+# Research briefs and folded reading
 
 Project home opens on a research workspace: the question recorded in the brief,
 recent discussions, and tasks with concrete outputs. Start with **Compare the
@@ -17,21 +17,22 @@ in your research environment; bring the results back into the evidence compariso
 Resume discussions from the workspace or project navigation. Artifacts are
 available from the header and open on request unless you saved an open preference.
 
-Open **Research brief & mind map** for Textfold. Explain why the answer matters,
+Open **Research brief** for the folded reader. Explain why the answer matters,
 what evidence points each way, how disagreements might be reconciled, and which
 experiment would decide between the explanations. The landscape/novelty section
 compares the closest existing work and records actual source coverage and search
 dates; missing sections remain writing gaps.
 
 Use **Edit brief → Use research framework** for the scaffold. Existing descriptions
-remain intact. Markdown headings become branches of the map; opening a branch
-unfolds its text. A one-line description containing inline headings offers an
+remain intact. Markdown headings become the reader's sections. A one-line description containing inline headings offers an
 explicit repair action in the editor; review the result before saving.
 
-The five reading levels are Topic, Takeaway, Key, Brief and Full. The reader's
-1–5 keys use Textfold's ordering (1 Full, 5 Topic) while focus is inside the reader.
-The −/+ buttons move one step; each section can unfold independently. Source
-buttons reveal the original paragraph and the sentences supporting its fold.
+The five reading levels are Topic, Takeaway, Key, Brief and Full. Keys 1–5
+select them in that order (1 Topic, 5 Full) while focus is inside the reader;
+the arrow keys move one step on the level control. Under each paragraph, **Show
+source sentences** opens that paragraph to the sentences its summary rests on,
+**Show full text** opens the original paragraph, and **Fold back** returns it to
+the document level. Tables, code, lists and quotations show their full text at Brief.
 Original Markdown is retained for descriptions; source hyperlinks work across
 folds, including Markdown reference links.
 
@@ -66,18 +67,15 @@ citations, experimental setup differences, a search date and explicit coverage
 limits. An authorized client of the existing create/PATCH project API can
 optionally supply a validated `research_brief` document alongside `description`.
 
-The reader now reuses Textfold's actual browser engine at commit
-`92ad625ab6887bf0060374c1fd86a558513baed2`, packaged under
-`client/public/vendor/textfold/` with Apache-2.0 LICENSE, NOTICE, asset hashes and
-one documented optional-takeaway patch. Its word morphs, pinch/scroll zoom,
-paragraph expansion, Topic map and display settings come from upstream. A small
-OpenPaper adapter maps saved briefs to its internal token document; the engine
-runs locally inside an isolated app frame, without a separate Textfold service.
-The map starts at the project's uncertainty. Highlights/reader notes are local
-to this browser and namespaced by the signed-in user, document and source-version hash; project chat
-stays in OpenPaper's composer. Unconnected Textfold model actions are hidden.
-The standalone model bridge and PDF engine are not installed. Papers and chat
-messages retain their existing readers.
+The reader is OpenPaper's own component (`client/src/components/fold/FoldedReader.tsx`,
+level logic in `client/src/lib/fold-view.ts`). It renders the saved document in
+the page with the app's Markdown renderer: no frame, no browser storage, no
+request and no model call. The five reading levels and the `textfold/doc` format
+originate from [TextFold](https://github.com/chenxiachan/textfold) by Xia Chen
+(Apache-2.0); OpenPaper implements the format and ships none of TextFold's code.
+Until 2026-11-18 OpenPaper embedded TextFold's reader; its word morphs, gesture
+zoom, map canvas, display settings and browser-local highlights were not carried
+over. See `docs/work/STRATEGY-native-fold-reader.md`.
 
 Deployment requires migration `project_research_brief_01` before the updated web
 service. The implementation session did not deploy or change production data.
