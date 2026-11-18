@@ -26,6 +26,10 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
     def setUpClass(cls):
         from tests.test_mcp_postgres import MCPPostgresTests
         MCPPostgresTests.setUpClass.__func__(cls)
+        # The application SessionLocal does not autoflush; these tests run on the same setting, so
+        # a service that leaves a write unflushed fails here as it would in a request (R54).
+        from sqlalchemy.orm import sessionmaker
+        cls.Session = sessionmaker(bind=cls.engine, autoflush=False)
         from sqlalchemy import event
         @event.listens_for(cls.engine, "connect")
         def utf8(connection, record): connection.set_client_encoding("UTF8")
@@ -2891,6 +2895,44 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((v2["title_abstract_excluded"], v2["pending_adjudication"]), (1, 0))
             v1 = research_review.flow_counts(db, other.project, other.owner, 1)
             self.assertEqual((v1["title_abstract_excluded"], v1["pending_adjudication"]), (0, 0))
+
+    async def test_uncommitted_writes_are_visible_to_the_next_call(self):
+        # R54: every service flushes before returning, so a caller composing several commit=False
+        # calls in one transaction (on a session that does not autoflush, as the application's
+        # does not) reads its own writes back. Unflushed, the next call's locking read or refresh
+        # missed or discarded them: approve-then-apply answered "pending", a second revision left
+        # the entity head behind its history and unrevisable.
+        s = self.seed()
+        first, second = self._two_claims(s)
+        with self.Session() as db:
+            proposal, _ = research_proposals.create_proposal(
+                db, s.project, s.owner, "human",
+                {"edits": [{"entity_id": str(first), "payload": {"statement": "changed"}}]}, {str(first): 1}, commit=False)
+            proposal_id = proposal.id
+            research_proposals.approve_proposal(db, s.project, s.owner, proposal_id, commit=False)
+            self.assertFalse(research_proposals.apply_proposal(db, s.project, s.owner, proposal_id, commit=False)["replayed"])
+            research_entities.revise_entity(db, s.project, s.owner, second, 1, {"statement": "second"}, commit=False)
+            research_entities.revise_entity(db, s.project, s.owner, second, 2, {"statement": "third"}, commit=False)
+            research_review.create_protocol(db, s.project, s.owner, version=1, commit=False)
+            with self.assertRaises(HTTPException) as duplicate:
+                research_review.create_protocol(db, s.project, s.owner, version=1, commit=False)
+            self.assertEqual(duplicate.exception.status_code, 409)
+            db.commit()
+        with self.Session() as db:
+            self.assertEqual([db.get(ResearchEntity, entity_id).revision for entity_id in (first, second)], [2, 3])
+            self.assertEqual(sorted(row.revision for row in db.query(ResearchEntityRevision).filter(
+                ResearchEntityRevision.entity_id == second).all()), [1, 2, 3])
+            self.assertEqual(db.get(ResearchProposal, proposal_id).state, "applied")
+            _reports, (candidate, _other) = self._two_reports(db, s)
+            research_review.amend_protocol(db, s.project, s.owner, new_version=3, commit=False)
+            # An amendment extends the chain: it cannot be placed below the latest protocol,
+            # even while nothing is recorded above version 1.
+            with self.assertRaises(HTTPException) as below:
+                research_review.amend_protocol(db, s.project, s.owner, new_version=2, commit=False)
+            self.assertEqual(below.exception.status_code, 409)
+            research_review.record_decision(db, s.project, s.owner, candidate, "title_abstract", 3, "included", commit=False)
+            db.commit()
+            self.assertEqual(research_review.flow_counts(db, s.project, s.owner, 3)["screened"], 1)
 
 
 def _convert_in_session(test, project, owner):

@@ -122,6 +122,7 @@ def create_entity(db: Session, project_id, actor_id, entity_type: str, payload: 
     db.flush()  # parent row must exist before its revision row in the same transaction
     db.add(ResearchEntityRevision(id=uuid4(), entity_id=entity.id, revision=1, payload=typed, origin=origin, provenance=provenance, actor_id=actor_id))
     sequence = _bump(db, project_id)
+    db.flush()  # commit=False callers read this back in the same transaction (R54)
     if commit: db.commit()
     return {"entity_id": str(entity.id), "revision": 1, "change_sequence": sequence}
 
@@ -187,6 +188,7 @@ def revise_entity(db: Session, project_id, actor_id, entity_id, expected_revisio
     db.add(ResearchEntityRevision(id=uuid4(), entity_id=entity.id, revision=revision, payload=typed, origin=origin,
                                   provenance=provenance, actor_id=actor_id, derived_from=derived))
     sequence = _bump(db, project_id)
+    db.flush()  # commit=False callers read this back in the same transaction (R54)
     if commit: db.commit()
     return {"entity_id": str(entity.id), "revision": revision, "change_sequence": sequence}
 
@@ -209,6 +211,7 @@ def create_relation(db: Session, project_id, actor_id, relation_type: str, sourc
                                 source_id=source.id, target_id=target.id, rationale=rationale.strip())
     db.add(relation)
     sequence = _bump(db, project_id)
+    db.flush()  # commit=False callers read this back in the same transaction (R54)
     if commit: db.commit()
     return {"relation_id": str(relation.id), "change_sequence": sequence}
 

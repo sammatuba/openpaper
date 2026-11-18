@@ -43,11 +43,13 @@ said to continue. It is the owner's to reverse. Reversing it means counting prot
 | 2 | **Every versioned review write targets the open snapshot.** `map_occurrences`, `record_decision`, `link_study`, `merge_reports` and `split_report` refuse (409) a `protocol_version` below the high-water mark and refuse (422) a version below 1. A version above the mark is allowed and becomes the new mark. | `_require_open_snapshot` |
 | 3 | **A protocol governs before anything is recorded, and a new protocol opens a new snapshot.** Every versioned write needs a protocol row at or below its version (404 otherwise), so the first protocol always precedes the first record. `create_protocol` refuses (409) a version at or below the high-water mark, because the row would change the screening mode that existing records were decided under, and refuses (422) a version below 1. | `_require_open_snapshot`, `create_protocol` |
 | 4 | **Review writers on one project are serialized, in one lock order.** Order: project row, then research root row, then row locks (candidate, report, occurrence, in their existing order). Conversion and the legacy save take the project row `FOR UPDATE`; every other research writer takes it `FOR KEY SHARE` in `authorize(write=True)`. Review writers then take the root row before reading the high-water mark, the duplicate check or the amendment parent, so no writer decides against state another writer is about to change. | `research_access.authorize`, `research_access.lock_project` |
-| 5 | **A merge compares outcomes once, when it is recorded.** Source versus the target's current representative, per stage, using the rule 9 outcome of each side. Differing decided values, or either side undecided for a recorded reason (unresolved merge conflict, disagreement, incomplete dual pair), are recorded on the merge event and force adjudication. | `merge_reports` |
+| 5 | **A merge compares outcomes once, when it is recorded.** Source versus the target's current representative, per stage, using the rule 9 outcome of each side. Differing decided values, or either side undecided for a recorded reason (unresolved merge conflict, disagreement, incomplete dual pair), are recorded on the merge event and force adjudication. A side with no decision at all is not a conflict: merging a decided source into an undecided target is not flagged, and the merged candidate then shows as unscreened until someone decides on it (the source's decision stays on the source and returns on a split). | `merge_reports` |
 | 6 | **A decision made after a merge is a decision about the merged candidate.** It is recorded on the live representative (a merged-away candidate refuses, 409) and governs from its version on, exactly as an amendment cohort does. It is not compared with decisions of reports merged in earlier. An incomplete dual cohort leaves the candidate pending; that is not a conflict. | `record_decision` |
 | 7 | **Adjudication is recorded only on an open disagreement at the requested snapshot.** Open means the rule 9 outcome at that version is pending for the reason "merge conflict" or "disagreement". A resolved conflict, a conflict superseded by a later agreeing cohort, and an incomplete dual pair are not adjudicable (409). The snapshot is the requested version, not the version of the protocol row that governs it. | `record_decision` |
 | 8 | **A proposal's edit set applies all-or-nothing, together with its state and receipt.** Before the first mutation: the approval is checked whole (expiry, approver, payload hash, bound targets), the edit envelope is checked whole (each edit an object with a string id and an object payload, each id a bound target, each target edited once), and every payload is validated. The revisions, the `applied` state and the receipt are written in one savepoint, so a failure leaves none of them and a replay in the same transaction sees all of them. Target ids are stored in canonical UUID spelling. | `apply_proposal`, `_bound_edits`, `_canonical_targets` |
 | 9 | **One derivation gives a candidate's outcome per stage.** Counts, merge conflict detection and adjudication eligibility all read it. Among records at or below the snapshot version: (a) an adjudication stands when it was recorded after every conflicting merge attached to the candidate and no screening decision is newer than it (higher version, or same version and later in recorded order); a standing adjudication decides the stage. (b) Otherwise a conflicting merge with no resolving adjudication leaves the stage pending. (c) Otherwise the screening cohort of the latest version governs under the stage's mode, each reviewer's latest submission counting once: a solo stage decides on one agreed value, a dual stage needs two distinct reviewers who agree. | `_derive_decisions`, `_merge_state` |
+| 10 | **A service call's writes are visible to the next call in the same transaction.** Every research service flushes before it returns, with or without `commit`, so a caller composing `commit=False` calls on a session that does not autoflush (the application's setting) reads its own writes back. | every `commit=False` exit; the PostgreSQL research tests run on non-autoflushing sessions |
+| 11 | **An amendment sits above the latest protocol.** `amend_protocol` copies the latest protocol, so it refuses (409) a version at or below it. A protocol between two existing ones is created with `create_protocol`, stating its own criteria. | `amend_protocol` |
 
 ## What rules 1 to 3 make impossible
 
@@ -64,13 +66,19 @@ snapshot closed.
 ## Consequences worth knowing
 
 - With protocols 1 and 3 and nothing recorded above version 1, a record at version 1 or 2 is
-  still allowed, and a protocol 2 may still be inserted. The first record at version 3 ends both.
+  still allowed, and a protocol 2 may still be created with `create_protocol` (not by amendment,
+  rule 11). The first record at version 3 ends both.
 - A version 1 disagreement can be adjudicated at version 1 after a version 2 amendment, until
   the first version 2 record exists. After that it is adjudicated at version 2.
-- A resolved conflict cannot be adjudicated a second time. To change the outcome, record a new
-  screening decision (rule 9a then lets the cohort govern) or amend the protocol.
-- A screening decision recorded after an adjudication at the same version supersedes it. This
-  now holds with or without a merge; before round 53 it held only for merged candidates.
+- A resolved conflict cannot be adjudicated a second time while the adjudication stands.
+- A screening decision recorded after an adjudication at the same version supersedes it (rule
+  9a), and the cohort governs again. This now holds with or without a merge; before round 53 it
+  held only for merged candidates. The effect depends on the cohort. Where the cohort then agrees
+  (a solo reviewer changing their decision), the new value decides the stage. Where the cohort
+  still disagrees (a dual stage: reviewer 1 included, reviewer 2 excluded, adjudicated; a third
+  reviewer then records anything, even agreeing with the adjudicator), the stage returns to
+  pending and needs a new adjudication. **Open owner decision (round 54):** keep this, or make an
+  adjudication final within its version, superseded only by a cohort at a higher version.
 
 ## Known limits
 

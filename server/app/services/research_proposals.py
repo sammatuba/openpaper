@@ -97,6 +97,7 @@ def create_proposal(db: Session, project_id, actor_id, origin: str, payload: dic
     # expiry) draw their own sequences, and replay must recover THIS original (R32).
     proposal.receipt = {"change_sequence": proposal.change_sequence}
     receipt = {"replayed": False, "change_sequence": proposal.change_sequence}
+    db.flush()  # commit=False callers read this back in the same transaction (R54)
     if commit: db.commit()
     return proposal, receipt
 
@@ -114,6 +115,7 @@ def approve_proposal(db: Session, project_id, actor_id, proposal_id, *, expires_
                          "expires_at": (now + timedelta(seconds=expires_in_seconds)).isoformat(),
                          "bound_payload_sha256": proposal.payload_sha256, "bound_targets": proposal.targets}
     proposal.change_sequence = research_access.advance_change_sequence(db, project_id)
+    db.flush()  # commit=False callers read this back in the same transaction (R54)
     if commit: db.commit()
     return proposal
 

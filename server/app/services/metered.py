@@ -30,6 +30,7 @@ def register_price_table(db: Session, prices: dict, *, version=None, commit=True
         raise HTTPException(409, "Price table version already exists")
     row = MeteredPriceTable(version=version, prices=prices)
     db.add(row)
+    db.flush()  # commit=False callers read this back in the same transaction (R54)
     if commit: db.commit()
     return row
 
@@ -122,6 +123,7 @@ def reserve(db: Session, project_id, actor_id, operation_type: str, estimate: di
     row.change_sequence = research_access.advance_change_sequence(db, project_id)
     row.reservation = {**reservation, "receipt": {"change_sequence": row.change_sequence}}
     receipt = {"replayed": False, "estimated_cost": cost, "change_sequence": row.change_sequence}
+    db.flush()  # commit=False callers read this back in the same transaction (R54)
     if commit: db.commit()
     return row, receipt
 

@@ -53,6 +53,7 @@ def create_protocol(db: Session, project_id, actor_id, *, version, mode="literat
                          screening_modes=screening_modes or {}, status=status, parent_version_id=parent_version_id)
     db.add(row)
     row.change_sequence = research_access.advance_change_sequence(db, project_id)
+    db.flush()  # commit=False callers read this back in the same transaction (R54)
     if commit: db.commit()
     return row
 
@@ -64,6 +65,9 @@ def amend_protocol(db: Session, project_id, actor_id, *, new_version, criteria=N
     research_access.lock_project(db, project_id)
     current = db.query(ReviewProtocol).filter(ReviewProtocol.project_id == project_id).order_by(ReviewProtocol.version.desc()).first()
     if not current: raise HTTPException(404, "No review protocol to amend")
+    # An amendment extends the chain: it copies the latest protocol, so it must sit above it (R54).
+    if int(new_version) <= int(current.version):
+        raise HTTPException(409, f"An amendment must be above the latest protocol (version {current.version})")
     amended = create_protocol(db, project_id, actor_id, version=new_version, mode=current.mode,
                               unit_of_analysis=current.unit_of_analysis, count_policy=current.count_policy,
                               criteria=current.criteria if criteria is None else criteria,
@@ -155,6 +159,7 @@ def map_occurrences(db: Session, project_id, actor_id, candidate_id, retained_oc
                                        "protocol_version": protocol_version}, actor_id=actor_id))
     db.flush()  # draw the durable sequence anchor at call order
     receipt = {"change_sequence": research_access.advance_change_sequence(db, project_id)}
+    db.flush()  # commit=False callers read this back in the same transaction (R54)
     if commit: db.commit()
     return receipt
 
@@ -253,6 +258,7 @@ def record_decision(db: Session, project_id, actor_id, candidate_id, stage, prot
     db.add(row)
     db.flush()  # draw the durable sequence anchor at call order
     row.change_sequence = research_access.advance_change_sequence(db, project_id)
+    db.flush()  # commit=False callers read this back in the same transaction (R54)
     if commit: db.commit()
     return row
 
@@ -471,6 +477,7 @@ def link_study(db: Session, project_id, actor_id, report_id, study_id, rationale
                                        "protocol_version": protocol_version}, actor_id=actor_id))
     db.flush()  # draw the durable sequence anchor at call order
     change_sequence = research_access.advance_change_sequence(db, project_id)
+    db.flush()  # commit=False callers read this back in the same transaction (R54)
     if commit: db.commit()
     return {"change_sequence": change_sequence}
 
@@ -538,6 +545,7 @@ def merge_reports(db: Session, project_id, actor_id, source_report_id, target_re
                                        "protocol_version": protocol_version}, actor_id=actor_id))
     db.flush()  # draw the durable sequence anchor at call order
     change_sequence = research_access.advance_change_sequence(db, project_id)
+    db.flush()  # commit=False callers read this back in the same transaction (R54)
     if commit: db.commit()
     return {"conflicting_decisions": conflicts, "conflicting_stages": stages,
             "requires_adjudication": bool(conflicts), "change_sequence": change_sequence}
@@ -559,6 +567,7 @@ def split_report(db: Session, project_id, actor_id, source_report_id, rationale,
                                        "protocol_version": protocol_version}, actor_id=actor_id))
     db.flush()  # draw the durable sequence anchor at call order
     change_sequence = research_access.advance_change_sequence(db, project_id)
+    db.flush()  # commit=False callers read this back in the same transaction (R54)
     if commit: db.commit()
     return {"change_sequence": change_sequence}
 
