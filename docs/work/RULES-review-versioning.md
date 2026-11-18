@@ -1,6 +1,8 @@
 # Rules: review records across protocol versions
 
-Date: 2026-11-18. Scope: `server/app/services/research_review.py` and `research_proposals.py`.
+Date: 2026-11-18 (revised the same day after review round 53). Scope:
+`server/app/services/research_review.py`, `research_proposals.py` and the lock order in
+`research_access.py`.
 Source: strategy §6.1 ("historic flow snapshots retain their original sets"; a later change
 "cannot rewrite historical counts or final decisions"), contract §1.
 
@@ -16,28 +18,59 @@ third finding was a regression caused by round 51's guard. The cause was an unst
 code allowed a write at any earlier protocol version, so every write had to re-prove every
 invariant at every later version. Rule 1 removes that freedom.
 
+Round 53 found the first version of this page disagreeing with the code about rule 1, and
+three computations of a candidate's outcome disagreeing with each other. Rule 1 is now stated
+as the code enforces it, and rule 9 leaves one computation.
+
+## Decision recorded for rule 1
+
+Round 53 escalated one question: does **creating a later protocol** close the earlier snapshot,
+or does **the first decision or mapping recorded at the later version** close it? This page
+adopts the second. Reason: amending a protocol is preparation; reviewers finish outstanding work
+(for example, adjudicating a version 1 disagreement) under the version it arose in until the
+first record under the new version exists. The alternative would make an amendment an
+irreversible cut-over with no way to finish open work at the old version.
+
+Status: adopted on the implementer's recommendation; the owner was shown the recommendation and
+said to continue. It is the owner's to reverse. Reversing it means counting protocol rows in
+`_snapshot_high_water` and changing the two tests named under rule 1.
+
 ## Rules
 
 | # | Rule | Enforced by |
 |---|---|---|
-| 1 | **A snapshot closes when any review record exists at a later version.** Records that count: protocol rows, decisions, and mapping events of kind `occurrence_map`, `report_merge`, `report_split`, `study_link`. The highest version among them is the project's high-water mark. | `_snapshot_high_water` |
-| 2 | **Every versioned review write targets the open snapshot.** `map_occurrences`, `record_decision`, `link_study`, `merge_reports` and `split_report` refuse (409) a `protocol_version` below the high-water mark. A version above it is allowed and becomes the new mark. | `_require_open_snapshot` |
-| 3 | **A new protocol opens a new snapshot.** `create_protocol` refuses (409) a version at or below the high-water mark once any record exists, because the row would change the screening mode that existing records were decided under. | `create_protocol` |
-| 4 | **Review writers on one project are serialized.** Each takes the project root row lock before reading the high-water mark, so two writers cannot both pass rule 2 against a stale mark. Row-level locks taken afterwards (candidate, report, occurrence) keep their existing order. | `research_access.lock_project` |
-| 5 | **A merge compares prior decisions only, once, when it is recorded.** Source versus the target's current representative, per stage. Differing decided values, or an unresolved state on either side (`adjudication`, `pending_dual`), are recorded on the merge event and force adjudication. | `merge_reports` |
-| 6 | **A decision made after a merge is a decision about the merged candidate.** It is recorded on the live representative (a merged-away candidate refuses, 409) and governs from its version on, exactly as an amendment cohort does in `compute_flow_counts`. It is not compared with decisions of reports merged in earlier. An incomplete dual cohort leaves the candidate pending; that is not a conflict. | `record_decision` |
-| 7 | **Adjudication is looked up at the requested snapshot version**, not at the version of the protocol row that governs it. | `_has_conflict` |
-| 8 | **A proposal's edit set applies all-or-nothing.** Every edit is validated before the first mutation, and the mutations run inside a savepoint, so a failed apply leaves no edit flushed in the caller's session. | `apply_proposal` |
+| 1 | **A snapshot closes when a review record exists at a later version.** Records that count: decisions, and mapping events of kind `occurrence_map`, `report_merge`, `report_split`, `study_link`. The highest version among them is the project's high-water mark. Protocol rows do not count. Versions start at 1, so a mark of 0 only ever means "nothing recorded". | `_snapshot_high_water`; tests `test_independent_review_privacy` (version 1 adjudication after a version 2 amendment), `test_acquisition_guards_on_the_open_snapshot` (mark 0 with protocol 1 present) |
+| 2 | **Every versioned review write targets the open snapshot.** `map_occurrences`, `record_decision`, `link_study`, `merge_reports` and `split_report` refuse (409) a `protocol_version` below the high-water mark and refuse (422) a version below 1. A version above the mark is allowed and becomes the new mark. | `_require_open_snapshot` |
+| 3 | **A protocol governs before anything is recorded, and a new protocol opens a new snapshot.** Every versioned write needs a protocol row at or below its version (404 otherwise), so the first protocol always precedes the first record. `create_protocol` refuses (409) a version at or below the high-water mark, because the row would change the screening mode that existing records were decided under, and refuses (422) a version below 1. | `_require_open_snapshot`, `create_protocol` |
+| 4 | **Review writers on one project are serialized, in one lock order.** Order: project row, then research root row, then row locks (candidate, report, occurrence, in their existing order). Conversion and the legacy save take the project row `FOR UPDATE`; every other research writer takes it `FOR KEY SHARE` in `authorize(write=True)`. Review writers then take the root row before reading the high-water mark, the duplicate check or the amendment parent, so no writer decides against state another writer is about to change. | `research_access.authorize`, `research_access.lock_project` |
+| 5 | **A merge compares outcomes once, when it is recorded.** Source versus the target's current representative, per stage, using the rule 9 outcome of each side. Differing decided values, or either side undecided for a recorded reason (unresolved merge conflict, disagreement, incomplete dual pair), are recorded on the merge event and force adjudication. | `merge_reports` |
+| 6 | **A decision made after a merge is a decision about the merged candidate.** It is recorded on the live representative (a merged-away candidate refuses, 409) and governs from its version on, exactly as an amendment cohort does. It is not compared with decisions of reports merged in earlier. An incomplete dual cohort leaves the candidate pending; that is not a conflict. | `record_decision` |
+| 7 | **Adjudication is recorded only on an open disagreement at the requested snapshot.** Open means the rule 9 outcome at that version is pending for the reason "merge conflict" or "disagreement". A resolved conflict, a conflict superseded by a later agreeing cohort, and an incomplete dual pair are not adjudicable (409). The snapshot is the requested version, not the version of the protocol row that governs it. | `record_decision` |
+| 8 | **A proposal's edit set applies all-or-nothing, together with its state and receipt.** Before the first mutation: the approval is checked whole (expiry, approver, payload hash, bound targets), the edit envelope is checked whole (each edit an object with a string id and an object payload, each id a bound target, each target edited once), and every payload is validated. The revisions, the `applied` state and the receipt are written in one savepoint, so a failure leaves none of them and a replay in the same transaction sees all of them. Target ids are stored in canonical UUID spelling. | `apply_proposal`, `_bound_edits`, `_canonical_targets` |
+| 9 | **One derivation gives a candidate's outcome per stage.** Counts, merge conflict detection and adjudication eligibility all read it. Among records at or below the snapshot version: (a) an adjudication stands when it was recorded after every conflicting merge attached to the candidate and no screening decision is newer than it (higher version, or same version and later in recorded order); a standing adjudication decides the stage. (b) Otherwise a conflicting merge with no resolving adjudication leaves the stage pending. (c) Otherwise the screening cohort of the latest version governs under the stage's mode, each reviewer's latest submission counting once: a solo stage decides on one agreed value, a dual stage needs two distinct reviewers who agree. | `_derive_decisions`, `_merge_state` |
 
-## What rule 1 and rule 2 make impossible
+## What rules 1 to 3 make impossible
 
 - A decision recorded below an existing merge's version (rounds 50 and 51).
 - A merge recorded below existing decisions, merges or splits (rounds 48, 50 and 51).
 - A remap recorded below a later mapping of the same candidate (round 49).
 - A cycle that only exists at a later snapshot (round 50).
+- A record that exists before any protocol and then blocks the protocol meant to govern it
+  (round 53).
 
 The tests that used to assert the per-case outcome of these writes now assert one outcome: 409,
 snapshot closed.
+
+## Consequences worth knowing
+
+- With protocols 1 and 3 and nothing recorded above version 1, a record at version 1 or 2 is
+  still allowed, and a protocol 2 may still be inserted. The first record at version 3 ends both.
+- A version 1 disagreement can be adjudicated at version 1 after a version 2 amendment, until
+  the first version 2 record exists. After that it is adjudicated at version 2.
+- A resolved conflict cannot be adjudicated a second time. To change the outcome, record a new
+  screening decision (rule 9a then lets the cohort govern) or amend the protocol.
+- A screening decision recorded after an adjudication at the same version supersedes it. This
+  now holds with or without a merge; before round 53 it held only for merged candidates.
 
 ## Known limits
 
@@ -46,4 +79,8 @@ snapshot closed.
   protocol is the highest row at or below the version (`_protocol_for`).
 - `link_study` on an existing linkage updates its state and rationale in place; only the first
   linkage is versioned. The update is still refused on a closed snapshot.
-- PostgreSQL concurrency for rule 4 is covered by one two-session test, not by a stress run.
+- Rule 4 is covered by two-session tests (a backdated writer, two protocol creators, two
+  amendments, a writer queued behind a project-row holder), not by a stress run. No PostgreSQL
+  deadlock was reproduced before the lock order changed; the change follows from the order.
+- Proposal envelopes are checked at apply, not at creation, because creation accepts payloads
+  that carry no edit set. Only the targets are checked and normalized at creation.

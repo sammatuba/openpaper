@@ -2293,12 +2293,13 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 link_report = ReviewReport(id=uuid4(), project_id=fresh_project)
                 link_study_row = ReviewStudy(id=uuid4(), project_id=fresh_project, description="Fixture study")
                 db.add_all([link_report, link_study_row]); db.commit()
+                research_review.create_protocol(db, fresh_project, s.owner, version=1)  # draws 6
                 receipt = research_review.link_study(db, fresh_project, s.owner, link_report.id,
                                                      link_study_row.id, "Fixture linkage")
             with self.Session() as db:
-                self.assertEqual(receipt["change_sequence"], 6)  # conversion flip + intervening advance
+                self.assertEqual(receipt["change_sequence"], 7)  # conversion flip + protocol + this link
                 root = db.get(ResearchProject, fresh_project)
-                self.assertEqual(root.change_sequence, 6)
+                self.assertEqual(root.change_sequence, 7)
             # Proposal and metered mutations advance the sequence and persist receipts
             # (R31/R32): creation, approval, replay recovery, and rollback. Root reads use
             # raw SQL: the identity map caches stale values after raw-SQL advances.
@@ -2617,6 +2618,279 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             research_proposals.approve_proposal(db, s.project, s.owner, good.id)
             self.assertFalse(research_proposals.apply_proposal(db, s.project, s.owner, good.id)["replayed"])
             self.assertEqual([db.get(ResearchEntity, entity_id).revision for entity_id in (first, second)], [2, 2])
+
+    # ---------- R53: one apply unit, edit envelopes, protocol establishment, lock order, one derivation ----------
+
+    def _two_claims(self, s):
+        document, _ids = self._v1_document(uuid4())
+        self._write_v1_row(s.project, document)
+        first, second = uuid4(), uuid4()
+        with self.Session() as db:
+            research_convert.convert_project(db, s.project, s.owner)
+            for entity_id in (first, second):
+                research_entities.create_entity(db, s.project, s.owner, "claim", {"statement": "original"}, entity_id=entity_id)
+        return first, second
+
+    def _approved(self, db, s, edits, targets):
+        proposal, _ = research_proposals.create_proposal(db, s.project, s.owner, "human", {"edits": edits}, targets)
+        research_proposals.approve_proposal(db, s.project, s.owner, proposal.id)
+        return proposal.id
+
+    async def test_apply_is_one_unit_with_its_state_and_receipt(self):
+        # R53 finding 1 / rule 8. Three ways the edits used to outlive a failed or repeated apply:
+        # a failure in the second revision, a failure while building the receipt, and a replay
+        # inside the caller's own transaction on a session that does not autoflush.
+        from unittest.mock import patch
+        s = self.seed()
+        first, second = self._two_claims(s)
+        targets = {str(first): 1, str(second): 1}
+        edits = [{"entity_id": str(first), "payload": {"statement": "first changed"}},
+                 {"entity_id": str(second), "payload": {"statement": "second changed"}}]
+        real_revise = research_entities.revise_entity
+
+        def second_revision_fails(db, project_id, actor_id, entity_id, *args, **kwargs):
+            if entity_id == second: raise HTTPException(422, "Synthetic failure in the second revision")
+            return real_revise(db, project_id, actor_id, entity_id, *args, **kwargs)
+
+        def untouched():
+            with self.Session() as db:
+                return [db.get(ResearchEntity, entity_id).revision for entity_id in (first, second)]
+
+        with self.Session() as db:
+            failing = self._approved(db, s, edits, targets)
+            with patch.object(research_entities, "revise_entity", side_effect=second_revision_fails):
+                with self.assertRaises(HTTPException) as failed:
+                    research_proposals.apply_proposal(db, s.project, s.owner, failing)
+            self.assertEqual(failed.exception.status_code, 422)
+            # An unrelated mutation commits on the SAME session, as a request handler would.
+            research_entities.create_entity(db, s.project, s.owner, "claim", {"statement": "unrelated"})
+        self.assertEqual(untouched(), [1, 1])
+        with self.Session() as db:
+            row = db.get(ResearchProposal, failing)
+            self.assertEqual((row.state, row.applied_receipt), ("approved", None))
+            # A stored approval that lost its approver is refused before any edit is written.
+            unbound = self._approved(db, s, edits, targets)
+            row = db.get(ResearchProposal, unbound)
+            row.approval = {key: value for key, value in row.approval.items() if key != "approver_id"}
+            db.commit()
+            with self.assertRaises(HTTPException) as refused:
+                research_proposals.apply_proposal(db, s.project, s.owner, unbound)
+            self.assertEqual(refused.exception.status_code, 409)
+            research_entities.create_entity(db, s.project, s.owner, "claim", {"statement": "unrelated again"})
+        self.assertEqual(untouched(), [1, 1])
+        with self.Session(autoflush=False) as db:
+            good = self._approved(db, s, edits, targets)
+            applied = research_proposals.apply_proposal(db, s.project, s.owner, good, commit=False)
+            self.assertFalse(applied["replayed"])
+            replay = research_proposals.apply_proposal(db, s.project, s.owner, good, commit=False)
+            self.assertTrue(replay["replayed"])
+            self.assertEqual(replay["receipt"], applied["receipt"])
+            db.commit()
+        self.assertEqual(untouched(), [2, 2])
+        with self.Session() as db:
+            row = db.get(ResearchProposal, good)
+            self.assertEqual((row.state, row.applied_receipt), ("applied", applied["receipt"]))
+
+    async def test_malformed_edit_envelopes_are_client_errors(self):
+        # R53 finding 7: every malformed envelope is a 422 at apply, never an unhandled exception;
+        # target ids are bound in canonical spelling, and one target is edited at most once.
+        s = self.seed()
+        first, second = self._two_claims(s)
+        change = {"statement": "changed"}
+        envelopes = [
+            [{"entity_id": str(first)}],                                   # no payload
+            [{"entity_id": str(first), "payload": "not an object"}],
+            ["not an object"],
+            [{"entity_id": [str(first)], "payload": change}],              # id is not a string
+            [{"entity_id": "not-a-uuid", "payload": change}],
+            [{"entity_id": str(second), "payload": change}],               # not a bound target
+            [{"entity_id": str(first), "payload": change},
+             {"entity_id": first.hex, "payload": {"statement": "changed twice"}}],  # one target, two edits
+        ]
+        with self.Session() as db:
+            for edits in envelopes:
+                proposal = self._approved(db, s, edits, {str(first): 1})
+                with self.assertRaises(HTTPException, msg=repr(edits)) as refused:
+                    research_proposals.apply_proposal(db, s.project, s.owner, proposal)
+                self.assertEqual(refused.exception.status_code, 422, repr(edits))
+                db.rollback()
+            for targets in ({"not-a-uuid": 1}, {str(first): 1, first.hex: 1}, {str(first): True}, {str(first): 0}):
+                with self.assertRaises(HTTPException, msg=repr(targets)) as refused:
+                    research_proposals.create_proposal(db, s.project, s.owner, "human", {"edits": []}, targets)
+                self.assertEqual(refused.exception.status_code, 422, repr(targets))
+                db.rollback()
+            self.assertEqual(db.get(ResearchEntity, first).revision, 1)
+            # A compact, upper-case spelling accepted at creation binds the same record at apply.
+            compact = self._approved(db, s, [{"entity_id": first.hex.upper(), "payload": change}], {first.hex: 1})
+            self.assertEqual(db.get(ResearchProposal, compact).targets, {str(first): 1})
+            self.assertFalse(research_proposals.apply_proposal(db, s.project, s.owner, compact)["replayed"])
+            self.assertEqual(db.get(ResearchEntity, first).revision, 2)
+
+    async def test_a_protocol_governs_before_the_first_versioned_write(self):
+        # R53 finding 3 / rule 3: a mapping or linkage recorded before any protocol used to set the
+        # mark and then block the protocol meant to govern it. Every versioned write now needs a
+        # governing protocol, and versions start at 1, so a mark of zero only ever means "empty".
+        s = self.seed()
+        with self.Session() as db:
+            (report_a, report_b), (candidate_a, _b) = self._two_reports(db, s)
+            occurrence = ReviewOccurrence(id=uuid4(), project_id=s.project, provider="fixture", search_ref="s", external_hit_id="hit-1")
+            study = ReviewStudy(id=uuid4(), project_id=s.project, description="Fixture study")
+            db.add_all([occurrence, study]); db.commit()
+            report_a_id, report_b_id, occurrence_id, study_id = report_a.id, report_b.id, occurrence.id, study.id
+            writes = {
+                "map": lambda version: research_review.map_occurrences(db, s.project, s.owner, candidate_a, occurrence_id, [], protocol_version=version),
+                "link": lambda version: research_review.link_study(db, s.project, s.owner, report_a_id, study_id, "Fixture", protocol_version=version),
+                "decide": lambda version: research_review.record_decision(db, s.project, s.owner, candidate_a, "title_abstract", version, "included"),
+                "merge": lambda version: research_review.merge_reports(db, s.project, s.owner, report_a_id, report_b_id, "Fixture", protocol_version=version),
+                "split": lambda version: research_review.split_report(db, s.project, s.owner, report_a_id, "Fixture", protocol_version=version),
+            }
+            for name, write in writes.items():
+                with self.assertRaises(HTTPException, msg=name) as ungoverned:
+                    write(1)
+                self.assertEqual(ungoverned.exception.status_code, 404, name)
+                db.rollback()
+            self.assertEqual(research_review._snapshot_high_water(db, s.project), 0)
+            for version in (0, -1):
+                with self.assertRaises(HTTPException) as below_one:
+                    research_review.create_protocol(db, s.project, s.owner, version=version)
+                self.assertEqual(below_one.exception.status_code, 422)
+                db.rollback()
+            research_review.create_protocol(db, s.project, s.owner, version=1)
+            for name, write in writes.items():
+                with self.assertRaises(HTTPException, msg=name) as zero:
+                    write(0)
+                self.assertEqual(zero.exception.status_code, 422, name)
+                db.rollback()
+            writes["link"](1); writes["map"](1); writes["decide"](1)
+            self.assertEqual(research_review._snapshot_high_water(db, s.project), 1)
+
+    async def test_protocol_writers_read_under_the_project_lock(self):
+        # R53 finding 4 / rule 4: the duplicate check and the amendment parent are read after the
+        # project lock. Two creators of one version get a 409, not a uniqueness error; an
+        # amendment racing another copies the committed latest protocol, not the one it saw first.
+        import time
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, criteria=[{"id": "c1"}])
+
+        def attempt(call):
+            with self.Session() as db:
+                try: return call(db)
+                except HTTPException as error: return error.status_code
+
+        def race(first_move, second_move):
+            winner = self.Session()
+            try:
+                held = first_move(winner)
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(attempt, second_move)
+                    time.sleep(0.5)
+                    self.assertFalse(future.done())  # waiting on the project root lock
+                    winner.commit()
+                    return held, future.result(timeout=10)
+            finally:
+                winner.close()
+
+        _held, duplicate = race(
+            lambda db: research_review.create_protocol(db, s.project, s.owner, version=2, criteria=[{"id": "c2"}], commit=False).id,
+            lambda db: research_review.create_protocol(db, s.project, s.owner, version=2).id)
+        self.assertEqual(duplicate, 409)
+
+        def follow(db):
+            row = research_review.amend_protocol(db, s.project, s.owner, new_version=4)
+            return row.parent_version_id, row.criteria
+        third, followed = race(
+            lambda db: research_review.amend_protocol(db, s.project, s.owner, new_version=3, criteria=[{"id": "c3"}], commit=False).id,
+            follow)
+        self.assertEqual(followed, (third, [{"id": "c3"}]))
+
+    async def test_review_writers_queue_behind_a_project_lock_holder(self):
+        # R53 finding 5 / rule 4: conversion and the legacy save lock the project row, then the
+        # research root. A review writer used to take the root first and the project row later
+        # (through a foreign-key insert), so the two could each wait on the other. Writers now take
+        # the project row first: one facing a holder waits there, holding no root lock.
+        import time
+        s = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1)
+            (report_a, _b), (_a, _b2) = self._two_reports(db, s)
+            study = ReviewStudy(id=uuid4(), project_id=s.project, description="Fixture study")
+            db.add(study); db.commit()
+            report_id, study_id = report_a.id, study.id
+
+        def writer():
+            with self.Session() as db:
+                return research_review.link_study(db, s.project, s.owner, report_id, study_id, "Fixture")["change_sequence"]
+
+        holder = self.Session()
+        try:
+            research_access.authorize(holder, s.project, s.owner, write=True, lock=True)  # as conversion does
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(writer)
+                time.sleep(0.5)
+                self.assertFalse(future.done())  # waiting on the project row
+                holder.execute(self.text("SELECT 1 FROM research_projects WHERE project_id = :p FOR UPDATE NOWAIT"), {"p": s.project})
+                holder.commit()
+                self.assertGreater(future.result(timeout=10), 0)
+        finally:
+            holder.close()
+
+    async def test_merge_adjudication_and_counts_read_one_derivation(self):
+        # R53 finding 6 / rule 9: the merge receipt, the adjudication guard and the flow counts
+        # used three different computations of a candidate's outcome. They now read one.
+        s = self.seed()
+        stage = "title_abstract"
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={})
+            reports, candidates = self._two_reports(db, s, 5)
+            a, b, c, d, e = [report.id for report in reports]
+            candidate_a, candidate_b, _c, candidate_d, candidate_e = candidates
+            decide = lambda candidate, value, **extra: research_review.record_decision(
+                db, s.project, s.owner, candidate, stage, 1, value, **extra)
+            merge = lambda source, target: research_review.merge_reports(
+                db, s.project, s.owner, source, target, "Fixture", protocol_version=1)
+            counts = lambda: research_review.flow_counts(db, s.project, s.owner, 1)
+            decide(candidate_a, "included"); decide(candidate_b, "excluded")
+            self.assertTrue(merge(a, b)["requires_adjudication"])
+            # A conflict an earlier merge left pending is carried by a later merge on either side.
+            self.assertTrue(merge(c, b)["requires_adjudication"])   # pending on the target
+            self.assertTrue(merge(b, d)["requires_adjudication"])   # pending on the source
+            self.assertEqual((counts()["pending_adjudication"], counts()["screened"]), (1, 0))
+            decide(candidate_d, "included", role="adjudication")
+            self.assertEqual((counts()["pending_adjudication"], counts()["title_abstract_excluded"], counts()["screened"]), (0, 0, 1))
+            # A resolved conflict is not adjudicable again.
+            with self.assertRaises(HTTPException) as settled:
+                decide(candidate_d, "excluded", role="adjudication")
+            self.assertEqual(settled.exception.status_code, 409)
+            db.rollback()
+            # A later screening decision at the same version supersedes the adjudication: the counts
+            # show the candidate excluded, and a merge compares that outcome, not the adjudication.
+            decide(candidate_d, "excluded")
+            self.assertEqual((counts()["pending_adjudication"], counts()["title_abstract_excluded"]), (0, 1))
+            decide(candidate_e, "included")
+            result = merge(e, d)
+            self.assertEqual(result["conflicting_decisions"], [{"stage": stage, "source": "included", "target": "excluded"}])
+        other = self.seed()
+        with self.Session() as db:
+            research_review.create_protocol(db, other.project, other.owner, version=1, screening_modes={})
+            (a, b), (candidate_a, candidate_b) = self._two_reports(db, other)
+            a, b = a.id, b.id
+            research_review.record_decision(db, other.project, other.owner, candidate_a, stage, 1, "included")
+            research_review.record_decision(db, other.project, other.owner, candidate_b, stage, 1, "excluded")
+            research_review.merge_reports(db, other.project, other.owner, a, b, "Fixture", protocol_version=1)
+            research_review.record_decision(db, other.project, other.owner, candidate_b, stage, 1, "included", role="adjudication")
+            research_review.amend_protocol(db, other.project, other.owner, new_version=2)
+            research_review.record_decision(db, other.project, other.owner, candidate_b, stage, 2, "excluded")
+            # The v2 cohort agrees with itself and governs. The merge once flagged this stage, but
+            # nothing is in dispute now, so an opposing adjudication is refused.
+            with self.assertRaises(HTTPException) as superseded:
+                research_review.record_decision(db, other.project, other.owner, candidate_b, stage, 2, "included", role="adjudication")
+            self.assertEqual(superseded.exception.status_code, 409)
+            db.rollback()
+            v2 = research_review.flow_counts(db, other.project, other.owner, 2)
+            self.assertEqual((v2["title_abstract_excluded"], v2["pending_adjudication"]), (1, 0))
+            v1 = research_review.flow_counts(db, other.project, other.owner, 1)
+            self.assertEqual((v1["title_abstract_excluded"], v1["pending_adjudication"]), (0, 0))
 
 
 def _convert_in_session(test, project, owner):

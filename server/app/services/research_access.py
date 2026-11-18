@@ -14,7 +14,12 @@ from app.database.models import Project, ProjectRole
 
 def authorize(db: Session, project_id, actor_id, *, write=False, lock=False):
     query = db.query(Project).filter(Project.id == project_id)
+    # Lock order is project row first, research root second, for every research writer. Conversion
+    # and the legacy save take the project row FOR UPDATE (lock=True) before the root. Every other
+    # writer takes it FOR KEY SHARE here: the same lock its foreign-key inserts need later, taken
+    # before it can hold the root, so it queues behind a conversion instead of deadlocking with it.
     if lock: query = query.with_for_update()
+    elif write: query = query.with_for_update(read=True, key_share=True)
     project = query.first()
     if not project: raise HTTPException(404, "Project not found")
     roles = db.query(ProjectRole).filter(ProjectRole.project_id == project_id, ProjectRole.user_id == actor_id)
@@ -33,8 +38,8 @@ def authorize(db: Session, project_id, actor_id, *, write=False, lock=False):
 def lock_project(db, project_id):
     """Serialize research writers that must read project-wide state before writing: take the
     project root row lock for the rest of the transaction, creating the root first so the very
-    first writer has a row to lock. advance_change_sequence later updates the same row, so the
-    lock order is root first for every caller of this function."""
+    first writer has a row to lock. Call it after authorize(write=True), which already holds the
+    project row lock that orders this writer against conversion and the legacy save."""
     from sqlalchemy import text
     parameters = {"p": str(project_id)}
     db.execute(text("INSERT INTO research_projects (project_id, storage_generation, change_sequence) "
