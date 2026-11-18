@@ -417,8 +417,9 @@ class CountArithmeticTests(unittest.TestCase):
                                       review["candidates"], list(review["decisions"]) + [resolution, second, first],
                                       links, 2, screening_modes=screening_modes)
         self.assertEqual(swapped, decided)
-        # A v1 cohort disagreeing after the resolution (same-version, later submissions)
-        # stays pending and the resolution does not remain included.
+        # A v1 cohort disagreeing after the resolution (same-version, later submissions) changes
+        # nothing: an adjudication is final within its version (rule 9a, owner decision
+        # 2026-11-18; before it, this cohort returned the candidate to pending).
         disagreeing = [{"candidate_id": candidate_b, "stage": "fulltext", "protocol_version": 1,
                         "actor_id": owner, "decision": "excluded", "role": "primary",
                         "created_at": "2026-02-03T00:00:00Z"},
@@ -428,8 +429,8 @@ class CountArithmeticTests(unittest.TestCase):
         pending_state = compute_flow_counts(review["occurrences"], list(review["mapping_events"]) + [merge],
                                             review["candidates"], list(review["decisions"]) + [resolution] + disagreeing,
                                             links, 1, screening_modes=screening_modes)
-        self.assertEqual(pending_state["pending_adjudication"], 1)
-        self.assertEqual(pending_state["included_reports"], 1)  # only C; B is pending, not included
+        self.assertEqual(pending_state["pending_adjudication"], 0)
+        self.assertEqual(pending_state["included_reports"], 2)  # C, and B by its standing adjudication
 
     def test_durable_ordering_beats_timestamps_and_uuid_order(self):
         # R19: equal timestamps and arbitrary UUIDs never change outcomes — the shared

@@ -2867,13 +2867,13 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
                 decide(candidate_d, "excluded", role="adjudication")
             self.assertEqual(settled.exception.status_code, 409)
             db.rollback()
-            # A later screening decision at the same version supersedes the adjudication: the counts
-            # show the candidate excluded, and a merge compares that outcome, not the adjudication.
+            # The adjudication is final within its version: a later screening decision at the same
+            # version changes neither the counts nor the outcome a merge compares.
             decide(candidate_d, "excluded")
-            self.assertEqual((counts()["pending_adjudication"], counts()["title_abstract_excluded"]), (0, 1))
-            decide(candidate_e, "included")
+            self.assertEqual((counts()["pending_adjudication"], counts()["title_abstract_excluded"], counts()["screened"]), (0, 0, 1))
+            decide(candidate_e, "excluded")
             result = merge(e, d)
-            self.assertEqual(result["conflicting_decisions"], [{"stage": stage, "source": "included", "target": "excluded"}])
+            self.assertEqual(result["conflicting_decisions"], [{"stage": stage, "source": "excluded", "target": "included"}])
         other = self.seed()
         with self.Session() as db:
             research_review.create_protocol(db, other.project, other.owner, version=1, screening_modes={})
@@ -2895,6 +2895,43 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((v2["title_abstract_excluded"], v2["pending_adjudication"]), (1, 0))
             v1 = research_review.flow_counts(db, other.project, other.owner, 1)
             self.assertEqual((v1["title_abstract_excluded"], v1["pending_adjudication"]), (0, 0))
+
+    async def test_adjudication_is_final_within_its_version(self):
+        # Rule 9a (owner decision, 2026-11-18). Dual stage: two reviewers disagree and the owner
+        # adjudicates. A third reviewer recording at the same version, agreeing or not, leaves the
+        # stage decided. Only a cohort under a later protocol version replaces the adjudication.
+        s = self.seed()
+        reviewers = [uuid4() for _ in range(4)]
+        with self.engine.begin() as conn:
+            for uid in reviewers:
+                conn.execute(self.text("INSERT INTO users (id,email,auth_provider,provider_user_id,is_active,is_blocked,is_email_verified) VALUES (:u,:e,'google',:e,true,false,true)"), {"u": uid, "e": str(uid) + "@test.invalid"})
+                conn.execute(self.text("INSERT INTO project_role (id,project_id,user_id,role) VALUES (:id,:p,:u,'editor')"), {"id": uuid4(), "p": s.project, "u": uid})
+        stage = "title_abstract"
+        with self.Session() as db:
+            research_review.create_protocol(db, s.project, s.owner, version=1, screening_modes={stage: "dual"})
+            _reports, (candidate, _other) = self._two_reports(db, s)
+            state = lambda version: tuple(research_review.flow_counts(db, s.project, s.owner, version)[key]
+                                          for key in ("screened", "title_abstract_excluded", "pending_adjudication"))
+            research_review.record_decision(db, s.project, reviewers[0], candidate, stage, 1, "included")
+            research_review.record_decision(db, s.project, reviewers[1], candidate, stage, 1, "excluded")
+            self.assertEqual(state(1), (0, 0, 1))
+            research_review.record_decision(db, s.project, s.owner, candidate, stage, 1, "included", role="adjudication")
+            self.assertEqual(state(1), (1, 0, 0))
+            research_review.record_decision(db, s.project, reviewers[2], candidate, stage, 1, "included")
+            self.assertEqual(state(1), (1, 0, 0))
+            research_review.record_decision(db, s.project, reviewers[3], candidate, stage, 1, "excluded")
+            self.assertEqual(state(1), (1, 0, 0))
+            with self.assertRaises(HTTPException) as settled:
+                research_review.record_decision(db, s.project, s.owner, candidate, stage, 1, "excluded", role="adjudication")
+            self.assertEqual(settled.exception.status_code, 409)
+            db.rollback()
+            # A later protocol version reopens review: its cohort governs once complete.
+            research_review.amend_protocol(db, s.project, s.owner, new_version=2)
+            self.assertEqual(state(2), (1, 0, 0))
+            research_review.record_decision(db, s.project, reviewers[0], candidate, stage, 2, "excluded")
+            self.assertEqual(state(2), (0, 0, 1))
+            research_review.record_decision(db, s.project, reviewers[1], candidate, stage, 2, "excluded")
+            self.assertEqual(state(2), (1, 1, 0))
 
     async def test_uncommitted_writes_are_visible_to_the_next_call(self):
         # R54: every service flushes before returning, so a caller composing several commit=False

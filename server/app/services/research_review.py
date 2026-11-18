@@ -310,8 +310,9 @@ def _derive_decisions(candidate_ids, decisions, conflict_stages, report_of_candi
 
     Per candidate and stage, among records at or below the snapshot version:
     - An adjudication STANDS when it resolves after every conflicting merge attached to the
-      candidate (R21/R22) and no screening decision is newer than it (higher version, or the same
-      version and later in durable order). A standing adjudication decides the stage.
+      candidate (R21/R22) and no screening decision exists at a higher protocol version. A
+      standing adjudication decides the stage: it is final within its version (owner decision,
+      2026-11-18), whatever is recorded at that version afterwards.
     - Otherwise a conflicting merge with no resolving adjudication leaves the stage pending.
     - Otherwise the screening cohort of the latest version governs under the stage's mode, each
       actor's latest submission counting once (R13/R17/R19): a solo stage decides on one agreed
@@ -320,7 +321,7 @@ def _derive_decisions(candidate_ids, decisions, conflict_stages, report_of_candi
     for decision in decisions:
         if int(field(decision, "protocol_version")) <= protocol_version:
             by_key.setdefault((str(field(decision, "candidate_id")), field(decision, "stage")), []).append(decision)
-    order = lambda decision: (int(field(decision, "protocol_version")), _event_order(decision))
+    version = lambda decision: int(field(decision, "protocol_version"))
     effective, pending = {}, {}
     for candidate_id in candidate_ids:
         flagged = conflict_stages.get(report_of_candidate.get(candidate_id, "")) or {}
@@ -333,7 +334,7 @@ def _derive_decisions(candidate_ids, decisions, conflict_stages, report_of_candi
                         and all(_resolves_after(row, merge) for merge in merges)]
             resolution = _latest_decision(standing) if standing else None
             newest = _latest_decision(screening) if screening else None
-            if resolution is not None and (newest is None or order(resolution) >= order(newest)):
+            if resolution is not None and (newest is None or version(resolution) >= version(newest)):
                 effective[key] = field(resolution, "decision")
                 continue
             if merges and resolution is None:
