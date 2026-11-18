@@ -1,3 +1,11 @@
 "use client";
-import { InvestigationWorkspace } from "@/components/project/InvestigationWorkspace";
-export default function Page(){return <div className="min-h-0 flex-1 overflow-y-auto"><InvestigationWorkspace view="evidence"/></div>;}
+
+import { EvidenceView } from "@/components/project/investigation/EvidenceView";
+
+export default function Page() {
+    return (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+            <EvidenceView />
+        </div>
+    );
+}

@@ -40,11 +40,11 @@ const base = process.env.OPENPAPER_BROWSER_BASE || 'http://127.0.0.1:3011';
                 }
                 return route.fulfill({status,headers,contentType:'application/json',body:JSON.stringify(body)});
             });
-            const home=async()=>{await page.goto(`${base}/projects/research-demo`);await page.getByRole('heading',{name:project.title,exact:true}).waitFor();};
+            const home=async()=>{await page.goto(`${base}/projects/research-demo/discuss`);await page.getByRole('heading',{name:project.title,exact:true}).waitFor();};
             const main=page.getByRole('main').last();
             const returnToWorkspace=async()=>{
                 if(width<768) await page.getByRole('button',{name:'Open project navigation',exact:true}).click();
-                await page.getByRole('link',{name:'Research workspace',exact:true}).click();
+                await (width<768?page.getByRole('dialog'):page.getByRole('complementary')).getByRole('link',{name:'Start a discussion',exact:true}).click();
                 await main.getByRole('heading',{name:'What do you want to work on?'}).waitFor();
                 assert.equal(await page.getByRole('dialog').count(),0,'mobile navigation closes after navigation');
             };

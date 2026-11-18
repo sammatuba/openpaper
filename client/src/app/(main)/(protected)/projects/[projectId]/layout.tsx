@@ -11,6 +11,7 @@ import { ProjectRail } from "@/components/project/ProjectRail";
 import { ReaderPanel } from "@/components/project/ReaderPanel";
 import { ArtifactsPanel } from "@/components/project/ArtifactsPanel";
 import { InvestigationProvider } from "@/components/project/InvestigationProvider";
+import { WorkspaceBar } from "@/components/project/investigation/WorkspaceBar";
 import { AddPapersSheet } from "@/components/project/AddPapersSheet";
 import PdfUploadTracker from "@/components/PdfUploadTracker";
 
@@ -32,6 +33,7 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
                     </aside>
                 )}
                 <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                    <WorkspaceBar />
                     {uploadJobs.length > 0 && (
                         <div className="shrink-0 px-4 pt-3">
                             <PdfUploadTracker initialJobs={uploadJobs} onComplete={refetchPapers} />

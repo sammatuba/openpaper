@@ -62,7 +62,7 @@ https://example.org/source?q=&amp;copy; "Literal &amp;amp;"`;
             else if (url.pathname === '/api/projects/artifacts/research-demo') body = {artifacts:[]};
             return route.fulfill({status,headers,contentType:'application/json',body:JSON.stringify(body)});
         });
-        await page.goto(`${base}/projects/research-demo`);
+        await page.goto(`${base}/projects/research-demo/discuss`);
         await page.getByRole('heading', {name:project.title,exact:true}).waitFor().catch(async error => {
             console.error('Initial browser state:', page.url(), await page.locator('body').innerText(), {errors,reads});
             throw error;

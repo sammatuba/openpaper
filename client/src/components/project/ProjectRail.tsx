@@ -6,7 +6,6 @@ import { useParams, usePathname } from "next/navigation";
 import {
     ExternalLink,
     FileText,
-    LayoutDashboard,
     MessageCircle,
     MoreHorizontal,
     Plus,
@@ -128,7 +127,7 @@ function PaperRow({ paper, onNavigate }: { paper: PaperItem; onNavigate?: () => 
     );
 }
 
-// Keep the research home distinct from the source library and discussions.
+// Sources and saved discussions. Destinations live in the workspace bar.
 export function ProjectRail({ onNavigate }: ProjectRailProps) {
     const pathname = usePathname();
     const params = useParams();
@@ -161,11 +160,6 @@ export function ProjectRail({ onNavigate }: ProjectRailProps) {
 
     return (
         <div className="flex h-full w-64 shrink-0 flex-col bg-muted/20">
-            <Link href={`/projects/${projectId}`} onClick={onNavigate}
-                aria-current={pathname === `/projects/${projectId}` ? "page" : undefined}
-                className={cn("mx-2 mt-2 flex items-center gap-2 rounded-md px-2 py-2 text-sm font-medium hover:bg-accent", pathname === `/projects/${projectId}` && "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300")}>
-                <LayoutDashboard aria-hidden className="h-4 w-4" />Research workspace
-            </Link>
             {/* Papers */}
             <div className="flex min-h-0 flex-1 flex-col pt-2">
                 <SectionHeading label="Papers" count={papers.length}>
@@ -232,11 +226,11 @@ export function ProjectRail({ onNavigate }: ProjectRailProps) {
                     {/* The home has explicit task selection and a free-form question. */}
                     {!isViewer && (
                         <Link
-                            href={`/projects/${projectId}#research-session`}
+                            href={`/projects/${projectId}/discuss#research-session`}
                             onClick={onNavigate}
                             className={cn(
                                 "flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors",
-                                pathname === `/projects/${projectId}`
+                                pathname === `/projects/${projectId}/discuss`
                                     ? "bg-blue-50 dark:bg-blue-900/30"
                                     : "hover:bg-accent",
                             )}
@@ -244,14 +238,14 @@ export function ProjectRail({ onNavigate }: ProjectRailProps) {
                             <Plus
                                 className={cn(
                                     "h-3.5 w-3.5 shrink-0",
-                                    pathname === `/projects/${projectId}` ? "text-blue-500" : "text-muted-foreground/70",
+                                    pathname === `/projects/${projectId}/discuss` ? "text-blue-500" : "text-muted-foreground/70",
                                 )}
                                 aria-hidden
                             />
                             <span
                                 className={cn(
                                     "truncate text-xs",
-                                    pathname === `/projects/${projectId}`
+                                    pathname === `/projects/${projectId}/discuss`
                                         ? "font-medium text-blue-700 dark:text-blue-300"
                                         : "text-foreground",
                                 )}
