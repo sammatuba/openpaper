@@ -1,6 +1,6 @@
 {
   "intent": "docs/work/INTENT-investigation-workspace.md",
-  "phase": "AI-native platform P00-P02 implemented and accepted by the owner-approved stand-in gate review (2026-11-18, accept on 8370d19d..464d8a19; Codex reviewer out of credits); battery 184 required / 568 full, zero skips; pushed and PR #3 merged into feat/native-investigation-workspace; client deployed 2026-11-18 as openpaper-00017-lax at 100% (server and caddy images unchanged), public smoke passed, authenticated UI not exercised; investigation A25 acceptance still open; P03 slice 1 (guided shell on the v1 investigation: destination bar, Overview, Evidence, Write, Discuss) implemented on feat/guided-shell, client only, local checks and three browser journeys pass, Codex review round 1 rework addressed, round 2 incomplete (out of credits), stand-in review accept with findings addressed; pushed at fc39aa29; client image built (digest sha256:8283db3b57cd7e8246f738be1ab84009cb1695bd92b51b8f752d5867268b7a82, tag guided-); client deployed 2026-11-18 as openpaper-00017-lax at 100% (server and caddy images unchanged), public smoke passed, authenticated UI not exercised",
+  "phase": "AI-native platform P00-P02 implemented and accepted by the owner-approved stand-in gate review (2026-11-18, accept on 8370d19d..464d8a19; Codex reviewer out of credits); battery 184 required / 568 full, zero skips; pushed and PR #3 merged into feat/native-investigation-workspace; client deployed 2026-11-18 as openpaper-00017-lax at 100% (server and caddy images unchanged), public smoke passed, authenticated UI not exercised; investigation A25 acceptance still open; P03 slice 1 (guided shell on the v1 investigation: destination bar, Overview, Evidence, Write, Discuss) implemented on feat/guided-shell, client only, local checks and three browser journeys pass, Codex review round 1 rework addressed, round 2 incomplete (out of credits), stand-in review accept with findings addressed; pushed at fc39aa29; client image built (digest sha256:8283db3b57cd7e8246f738be1ab84009cb1695bd92b51b8f752d5867268b7a82, tag guided-); client deployed 2026-11-18 as openpaper-00017-lax at 100% (server and caddy images unchanged), public smoke passed, authenticated UI not exercised; native folded reader (embedded Textfold engine removed) committed b5d8661f on feat/native-fold-reader and client deployed 2026-11-18 as openpaper-00020-dus at 100%, public smoke passed, authenticated UI not exercised",
   "branch": "feat/guided-shell",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,7 +8,7 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Native folded reader is implemented on feat/native-fold-reader (local, not pushed, not deployed): owner to look at it and decide on push, PR and deploy; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
+  "next_action": "Operator: sign in and read a real brief in the new folded reader (Discuss, and Open folded preview on Overview, Evidence, Write). No PR is open for feat/guided-shell or feat/native-fold-reader; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
   "blocked_on": [
     "No current operator browser/session exposed for authenticated production UI acceptance."
   ],
@@ -498,10 +498,16 @@
     "smoke": "Staged URL then both public hosts: /api/health 200, / 200, /login 200, /projects 200, new /projects/{id}/discuss route 200, unauthenticated investigation 401, unauthenticated MCP POST 401"
   },
   "native_fold_reader": {
-    "status": "implemented 2026-11-18 on feat/native-fold-reader, staged, not committed; local checks and three browser journeys pass; Codex review rounds 1 and 2 rework addressed; round 3 Codex out of credits, stand-in review rework addressed and re-reviewed accept (stand-in, not Codex parity); not pushed, not deployed",
+    "status": "deployed (client only) 2026-11-18; public smoke passed; authenticated UI not exercised; Codex pass over round 3 fixes owed",
     "strategy": "docs/work/STRATEGY-native-fold-reader.md",
     "intent": "docs/work/INTENT-native-fold-reader.md",
     "supersedes": "STRATEGY-ai-native-research-platform.md invariant 8 and C11 wording; HANDOFF-investigation-workspace.md instruction to keep the upstream engine",
-    "verification": "docs/work/VERIFICATION-native-fold-reader.md"
+    "verification": "docs/work/VERIFICATION-native-fold-reader.md",
+    "source_commit": "b5d8661f",
+    "cloud_build": "5cc5ba38-abf9-4112-abc8-eafd556a2852",
+    "client_image": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/client@sha256:9c3106fc56f497bf01beb899dbafbc406aaa4e32660acce6f999db90c64755c1",
+    "web_revision": "openpaper-00020-dus",
+    "traffic_percent": 100,
+    "rollback_revision": "openpaper-00017-lax"
   }
 }

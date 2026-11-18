@@ -1,6 +1,6 @@
 # VERIFICATION: Native folded reader
 
-Date: 2026-11-18. Intent: [INTENT-native-fold-reader.md](INTENT-native-fold-reader.md). Strategy: [STRATEGY-native-fold-reader.md](STRATEGY-native-fold-reader.md). Branch `feat/native-fold-reader`, from `feat/guided-shell` at `2574ea64`. Client only. Local: not pushed, not deployed.
+Date: 2026-11-18. Intent: [INTENT-native-fold-reader.md](INTENT-native-fold-reader.md). Strategy: [STRATEGY-native-fold-reader.md](STRATEGY-native-fold-reader.md). Branch `feat/native-fold-reader`, from `feat/guided-shell` at `2574ea64`. Client only. Committed as `b5d8661f`, pushed and deployed; see Deployment.
 
 ## What changed
 
@@ -118,12 +118,18 @@ Known limits that remain:
 - With duplicate footnote labels, a paragraph that defines the label itself uses its own definition.
 - After an edit that shifts paragraphs in a locally folded brief, an opened paragraph's state stays with the position.
 
+## Deployment (2026-11-18, owner instruction)
+
+Client container only. Cloud Build `5cc5ba38-abf9-4112-abc8-eafd556a2852` from `b5d8661f`, image `client@sha256:9c3106fc56f497bf01beb899dbafbc406aaa4e32660acce6f999db90c64755c1`. Staged without traffic as `openpaper-00020-dus`, smoke-checked, then moved to 100%; staging tag removed. Server and Caddy image digests are unchanged. No migration ran. Rollback: `gcloud run services update-traffic openpaper --region asia-southeast1 --to-revisions openpaper-00017-lax=100`.
+
+Smoke on the staged URL and then on `papers.sammatuba.workers.dev` and the `run.app` host: `/api/health` 200, `/` 200, `/login` 200, `/projects` 200, `/projects/{id}/discuss` 200, `/vendor/textfold/reader.js` 404 (200 on the previous revision, so the new client is the one served), unauthenticated investigation 401, unauthenticated `POST /api/mcp` 401. The signed-in reader on real data was not exercised.
+
 ## Not executed
 
 - Firefox and Safari; only Chromium.
 - Rendering cost beyond the 200-paragraph fixture (the format allows 100 sections of 1,000 units).
 - Scroll anchoring when the level changes mid-document is implemented but not asserted by a journey.
-- Signed-in use on real data; nothing is deployed.
+- Signed-in use on real data: no operator session.
 - Server suites: no server file changed.
 
 ## Observed, not part of this change
