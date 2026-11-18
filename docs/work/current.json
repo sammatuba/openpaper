@@ -8,7 +8,7 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Owner: decide whether to promote staged revision openpaper-00023-wov (map view and Brief panel) to 100%. Operator: sign in and read a real brief in the new folded reader (Discuss, and Open folded preview on Overview, Evidence, Write). No PR is open for feat/guided-shell or feat/native-fold-reader; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
+  "next_action": "Operator: sign in and use the Brief panel and map on a real project (header Brief button; Open folded preview on Overview, Evidence, Write). Operator: sign in and read a real brief in the new folded reader (Discuss, and Open folded preview on Overview, Evidence, Write). No PR is open for feat/guided-shell or feat/native-fold-reader; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
   "blocked_on": [
     "No current operator browser/session exposed for authenticated production UI acceptance."
   ],
@@ -506,13 +506,13 @@
     "source_commit": "b5d8661f",
     "cloud_build": "5cc5ba38-abf9-4112-abc8-eafd556a2852",
     "client_image": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/client@sha256:9c3106fc56f497bf01beb899dbafbc406aaa4e32660acce6f999db90c64755c1",
-    "web_revision": "openpaper-00020-dus",
+    "web_revision": "openpaper-00023-wov",
     "traffic_percent": 100,
-    "rollback_revision": "openpaper-00017-lax",
+    "rollback_revision": "openpaper-00020-dus",
     "map_and_panel": {
       "date": "2026-11-18",
       "reason": "owner rejected the deployed text-only reader at the bottom of Discuss",
-      "status": "implemented; stand-in review rework addressed (fixes not re-reviewed, Codex pass owed); staged without traffic, staged smoke passed; not promoted",
+      "status": "deployed (client only) 2026-11-18: owner promoted openpaper-00023-wov to 100%; public smoke passed; authenticated UI not exercised; review fixes not re-reviewed, Codex pass owed",
       "files": [
         "client/src/lib/fold-map.ts",
         "client/src/components/fold/FoldMap.tsx",
@@ -522,9 +522,9 @@
       "cloud_build": "d549e5cb-daf0-4928-b805-2dc7ab6f9c58",
       "client_image": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/client@sha256:2b314659a81690ee9c3921a50947af0cb69a3651510798f31a56cbf2b4c484e8",
       "staged_revision": "openpaper-00023-wov",
-      "staged_tag": "fold",
-      "traffic_percent": 0,
-      "live_revision": "openpaper-00020-dus"
+      "traffic_percent": 100,
+      "live_revision": "openpaper-00023-wov",
+      "rollback_revision": "openpaper-00020-dus"
     }
   }
 }
