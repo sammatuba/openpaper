@@ -157,6 +157,8 @@ Independent review of `90aa2a07`: `./meos review --base 14ceceda` did not comple
 
 The fixes have not been re-reviewed.
 
+Staging: Cloud Build `d549e5cb-daf0-4928-b805-2dc7ab6f9c58` from `a3be08ca`, image `client@sha256:2b314659a81690ee9c3921a50947af0cb69a3651510798f31a56cbf2b4c484e8`, revision `openpaper-00023-wov` at 0% under tag `fold`. Smoke on the staged URL: `/api/health`, `/`, `/login`, `/projects`, `/projects/{id}/discuss` 200; unauthenticated investigation and `POST /api/mcp` 401. Production still serves `openpaper-00020-dus`. Not promoted: awaiting the owner.
+
 Not executed for this change: Firefox and Safari, signed-in real data, touch pinch zoom, a brief with many crossing argument links.
 
 Known limits: node positions are computed, not draggable; the panel's level, view and selection reset when it is closed; the map is a list of buttons to assistive technology, with Read as the fully structured view.

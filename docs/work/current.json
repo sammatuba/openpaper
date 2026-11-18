@@ -8,7 +8,7 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Owner: look at the map and the Brief panel on the staged revision and decide on promotion. Operator: sign in and read a real brief in the new folded reader (Discuss, and Open folded preview on Overview, Evidence, Write). No PR is open for feat/guided-shell or feat/native-fold-reader; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
+  "next_action": "Owner: decide whether to promote staged revision openpaper-00023-wov (map view and Brief panel) to 100%. Operator: sign in and read a real brief in the new folded reader (Discuss, and Open folded preview on Overview, Evidence, Write). No PR is open for feat/guided-shell or feat/native-fold-reader; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
   "blocked_on": [
     "No current operator browser/session exposed for authenticated production UI acceptance."
   ],
@@ -512,12 +512,19 @@
     "map_and_panel": {
       "date": "2026-11-18",
       "reason": "owner rejected the deployed text-only reader at the bottom of Discuss",
-      "status": "implemented on feat/native-fold-reader; local checks and browser journeys pass; not deployed",
+      "status": "implemented; stand-in review rework addressed (fixes not re-reviewed, Codex pass owed); staged without traffic, staged smoke passed; not promoted",
       "files": [
         "client/src/lib/fold-map.ts",
         "client/src/components/fold/FoldMap.tsx",
         "client/src/components/project/BriefPanel.tsx"
-      ]
+      ],
+      "source_commit": "a3be08ca",
+      "cloud_build": "d549e5cb-daf0-4928-b805-2dc7ab6f9c58",
+      "client_image": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/client@sha256:2b314659a81690ee9c3921a50947af0cb69a3651510798f31a56cbf2b4c484e8",
+      "staged_revision": "openpaper-00023-wov",
+      "staged_tag": "fold",
+      "traffic_percent": 0,
+      "live_revision": "openpaper-00020-dus"
     }
   }
 }
