@@ -72,7 +72,12 @@ export function DraftView() {
     // The choice is remembered so the area does not snap shut after the first
     // block is inserted.
     const firstSectionId = sections[0]?.id ?? null;
-    if (loaded && firstSectionId && blockCount === 0 && autoOpened !== firstSectionId) setAutoOpened(firstSectionId);
+    if (loaded && firstSectionId && blockCount === 0 && autoOpened !== firstSectionId) {
+        setAutoOpened(firstSectionId);
+        // Recorded as an explicit choice too, so reordering sections cannot
+        // unmount the area and discard an assistant proposal in it.
+        if (!(firstSectionId in addOpen)) setAddOpen(previous => ({ ...previous, [firstSectionId]: true }));
+    }
 
     useEffect(() => {
         const id = params.get("block");
@@ -146,7 +151,7 @@ export function DraftView() {
                 </p>
             )}
 
-            <fieldset disabled={!loaded || status === "Saving"} className="min-w-0 space-y-10">
+            <fieldset disabled={!loaded} className="min-w-0 space-y-10">
                 <ProseField
                     label="Manuscript title"
                     size="title"

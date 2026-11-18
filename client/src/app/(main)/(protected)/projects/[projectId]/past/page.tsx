@@ -37,7 +37,7 @@ export default function ProjectPastConversationsPage() {
                             Browse and manage your previous conversations for this project.
                         </p>
                     </div>
-                    <Link href={`/projects/${projectId}`}>
+                    <Link href={`/projects/${projectId}/discuss#research-session`}>
                         <Button variant="outline" size="sm">
                             <Plus className="mr-2 h-4 w-4" /> New Chat
                         </Button>

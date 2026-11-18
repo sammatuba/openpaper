@@ -57,6 +57,7 @@ export function WorkspaceBar() {
     const base = `/projects/${projectId}`;
     const saving = status === "Saving";
     const blocked = status === "Conflict" || status === "Save failed";
+    const invalid = status.startsWith("Validation failed");
 
     // Ctrl/Cmd+S saves the investigation instead of opening the browser's save dialog.
     const canSave = canEdit && loaded && dirty && !saving;
@@ -187,6 +188,14 @@ export function WorkspaceBar() {
                     />
                 </div>
             </div>
+
+            {invalid && (
+                <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t bg-yellow-50 px-3 py-2 text-sm dark:bg-yellow-950/40 md:px-4">
+                    <AlertTriangle aria-hidden className="h-4 w-4 shrink-0 text-yellow-700 dark:text-yellow-400" />
+                    <p className="min-w-0 flex-1 basis-64 leading-5 [overflow-wrap:anywhere]">Not saved. {status} Your work is still here; correct it and save again.</p>
+                    <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => downloadInvestigation(doc, false)}>Download unsaved</Button>
+                </div>
+            )}
 
             {blocked && (
                 <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t bg-yellow-50 px-3 py-2 text-sm dark:bg-yellow-950/40 md:px-4">

@@ -49,6 +49,22 @@ Screenshots in `.meos/artifacts/investigation-workspace/` (local, ignored): `ove
 
 After the corrections: `tsc --noEmit`, eslint (0 errors), production build and all three browser journeys pass at both widths, first run each.
 
+## Review round 2
+
+The Codex reviewer ran out of workspace credits before a verdict (`.meos/reviews/20261118T115550Z.md`, incomplete). A stand-in review by a fresh agent with no authoring context read the branch against the baseline and returned **accept** with seven findings, none blocking. This is a stand-in, not parity with the Codex gate: it was a read-through and executed nothing.
+
+| Finding | Disposition |
+| --- | --- |
+| Moving a claim swapped it with a hidden archived neighbour, so the move looked dead | Fixed: a move swaps with the neighbouring claim on screen; the menu items disable from visible neighbours. Not asserted by a journey |
+| A save refused by client validation showed a truncated reason | Fixed: the full reason is shown in an alert under the bar with Download unsaved. Not asserted by a journey |
+| "New Chat" on Past Conversations linked to the Overview | Fixed: links to the discussion starter |
+| Ctrl/Cmd+S disabled the fields mid-typing and dropped focus | Fixed: fields are no longer disabled while saving; the provider already keeps edits made during a save and leaves the document unsaved |
+| Reordering sections in an empty manuscript unmounted the auto-opened add panel and its assistant state | Fixed |
+| "Add a paper" flashed as the next step while papers were loading | Fixed |
+| A hard reload before a new discussion consumes its first prompt loses the prompt | Accepted: the cost of keeping research text out of browser storage; the conversation exists and the prompt can be retyped |
+
+After these: `tsc --noEmit`, eslint (0 errors), production build and all three browser journeys pass at both widths, first run each.
+
 ## Not executed
 
 - Server suites: no server file changed, so they were not rerun.

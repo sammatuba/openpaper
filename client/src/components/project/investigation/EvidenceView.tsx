@@ -294,7 +294,7 @@ export function EvidenceView() {
                 </p>
             )}
 
-            <fieldset disabled={!loaded || status === "Saving"} className="min-w-0 space-y-8">
+            <fieldset disabled={!loaded} className="min-w-0 space-y-8">
                 {loaded && noPapers && (
                     <EmptyState icon={FileText} title="Add a source first">
                         <p>Findings are captured from the extracted text of papers in this project. There are no papers here yet.</p>

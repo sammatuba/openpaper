@@ -34,7 +34,9 @@ const BACKGROUND: { key: CaseKey; label: string; hint: string; placeholder: stri
     { key: "reconciliation", label: "Reconciliation", hint: "Your reading of why the findings disagree. Interpretation, not a source result.", placeholder: "Which setup differences could explain the disagreement?" },
 ];
 
-function ClaimRow({ claim, index, total, startOpen }: { claim: Claim; index: number; total: number; startOpen: boolean }) {
+// `before` and `after` are the document indexes of the neighbouring claims on
+// screen, so a move is always visible even when archived claims are hidden.
+function ClaimRow({ claim, index, before, after, startOpen }: { claim: Claim; index: number; before?: number; after?: number; startOpen: boolean }) {
     const { projectId } = useProjectWorkspace();
     const { document: doc, update } = useInvestigation();
     const canEdit = useCanEdit();
@@ -86,8 +88,8 @@ function ClaimRow({ claim, index, total, startOpen }: { claim: Claim; index: num
                             </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                            <DropdownMenuItem disabled={index === 0} onSelect={() => swap(index - 1)}><ArrowUp className="h-4 w-4" />Move up</DropdownMenuItem>
-                            <DropdownMenuItem disabled={index === total - 1} onSelect={() => swap(index + 1)}><ArrowDown className="h-4 w-4" />Move down</DropdownMenuItem>
+                            <DropdownMenuItem disabled={before == null} onSelect={() => before != null && swap(before)}><ArrowUp className="h-4 w-4" />Move up</DropdownMenuItem>
+                            <DropdownMenuItem disabled={after == null} onSelect={() => after != null && swap(after)}><ArrowDown className="h-4 w-4" />Move down</DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => update(draft => { draft.claims[index].archived = !claim.archived; })}>
                                 {claim.archived ? <><ArchiveRestore className="h-4 w-4" />Restore</> : <><Archive className="h-4 w-4" />Archive</>}
                             </DropdownMenuItem>
@@ -102,13 +104,13 @@ function ClaimRow({ claim, index, total, startOpen }: { claim: Claim; index: num
 // The shortest path to a first drafted paragraph, derived from what the
 // project already contains. It disappears once every step has happened.
 function NextStep({ focusQuestion, addClaim }: { focusQuestion: () => void; addClaim: () => void }) {
-    const { projectId, papers, openAddPapers } = useProjectWorkspace();
+    const { projectId, papers, isPapersLoading, openAddPapers } = useProjectWorkspace();
     const { document: doc } = useInvestigation();
     const base = `/projects/${projectId}`;
     const drafted = doc.manuscript.sections.some(section => section.blocks.some(block => block.kind !== "gap"));
     const steps: { label: string; done: boolean; detail: string; action: { label: string; href?: string; run?: () => void } }[] = [
         { label: "State the question", done: !!doc.case.question.trim(), detail: "Start with the disputed question this project should resolve.", action: { label: "Write the question", run: focusQuestion } },
-        { label: "Add a paper", done: papers.length > 0, detail: "Add the closest related work and the papers whose findings conflict.", action: { label: "Add papers", run: () => openAddPapers() } },
+        { label: "Add a paper", done: papers.length > 0 || isPapersLoading, detail: "Add the closest related work and the papers whose findings conflict.", action: { label: "Add papers", run: () => openAddPapers() } },
         { label: "Capture a finding", done: doc.findings.length > 0, detail: "Select an exact passage and record what the source observed, separately from how you read it.", action: { label: "Go to Evidence", href: `${base}/evidence` } },
         doc.claims.length
             ? { label: "Link it to a claim", done: doc.relations.length > 0, detail: "Say whether a finding supports, challenges or qualifies one of your claims.", action: { label: "Link evidence", href: `${base}/evidence` } }
@@ -194,7 +196,7 @@ export function OverviewView() {
 
     return (
         <ViewFrame>
-            <fieldset disabled={!loaded || status === "Saving"} className="min-w-0 space-y-8">
+            <fieldset disabled={!loaded} className="min-w-0 space-y-8">
                 <header>
                     <p className="text-xs font-medium text-muted-foreground">
                         <span className="[overflow-wrap:anywhere]">{project?.title}</span> · {papers.length} {papers.length === 1 ? "paper" : "papers"} · {activeFindings} {activeFindings === 1 ? "finding" : "findings"} · {doc.claims.length - archivedCount} {doc.claims.length - archivedCount === 1 ? "claim" : "claims"}
@@ -232,7 +234,7 @@ export function OverviewView() {
                         {archivedCount > 0 && <Button variant="ghost" size="sm" aria-pressed={showArchived} onClick={() => setShowArchived(!showArchived)}>{showArchived ? "Hide" : "Show"} archived ({archivedCount})</Button>}
                     </SectionHeading>
                     {shownClaims.length > 0
-                        ? <ol className="divide-y">{shownClaims.map(({ claim, index }) => <ClaimRow key={claim.id} claim={claim} index={index} total={doc.claims.length} startOpen={added.current.has(claim.id) || claim.id === linkedClaim} />)}</ol>
+                        ? <ol className="divide-y">{shownClaims.map(({ claim, index }, position) => <ClaimRow key={claim.id} claim={claim} index={index} before={shownClaims[position - 1]?.index} after={shownClaims[position + 1]?.index} startOpen={added.current.has(claim.id) || claim.id === linkedClaim} />)}</ol>
                         : <p className="py-3 text-sm leading-6 text-muted-foreground">{doc.claims.length ? "Every claim is archived." : "No claims yet. A claim is a statement the evidence can support, challenge or qualify."}</p>}
                     {canEdit && <Button variant="outline" size="sm" onClick={addClaim}><Plus aria-hidden className="h-4 w-4" />Add claim</Button>}
                 </section>
