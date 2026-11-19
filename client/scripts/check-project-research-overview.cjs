@@ -124,10 +124,90 @@ https://example.org/source?q=&amp;copy; "Literal &amp;amp;"`;
         await reader.getByRole('button', {name:'Zoom in',exact:true}).click();
         assert.ok(Number(await map.getAttribute('data-zoom')) > zoomBefore);
         await reader.getByRole('button', {name:'Fit map to panel',exact:true}).click();
+        // The camera. Nothing scrolls: the map is moved by one transform.
+        const surface = map.locator('[data-map-viewport]');
+        const settled = () => page.waitForTimeout(300);
+        const zoomNow = async () => Number(await map.getAttribute('data-zoom'));
+        const inView = async node => { const v = await surface.boundingBox(), r = await node.boundingBox(); return r.x >= v.x - 1 && r.y >= v.y - 1 && r.x + r.width <= v.x + v.width + 1 && r.y + r.height <= v.y + v.height + 1; };
+        await settled();
+        assert.equal(await zoomNow(), zoomBefore, 'fit returns to the opening zoom');
+        // Zoom keeps what is under the pointer under the pointer.
+        const visibleIndex = await surface.evaluate(element => { const v = element.getBoundingClientRect(); return [...element.querySelectorAll('[data-map-node="section"]')].findIndex(node => { const r = node.getBoundingClientRect(); return r.left >= v.left && r.top >= v.top && r.left + 20 <= v.right && r.top + 20 <= v.bottom; }); });
+        assert.ok(visibleIndex >= 0, 'a section is in view when the map opens');
+        const held = sectionNodes.nth(visibleIndex);
+        const heldBefore = await held.boundingBox();
+        const pointer = { x: heldBefore.x + 10, y: heldBefore.y + 10 };
+        await page.mouse.move(pointer.x, pointer.y);
+        await page.keyboard.down('Control');
+        for (let i = 0; i < 3; i += 1) await page.mouse.wheel(0, -100);
+        await page.keyboard.up('Control');
+        await settled();
+        const heldAfter = await held.boundingBox(), grown = heldAfter.width / heldBefore.width;
+        assert.ok(grown > 1.2 && await zoomNow() > zoomBefore, 'Ctrl+wheel zooms the map');
+        assert.ok(Math.abs(pointer.x - heldAfter.x - 10 * grown) < 2 && Math.abs(pointer.y - heldAfter.y - 10 * grown) < 2, `zoom is anchored at the pointer (${JSON.stringify({heldBefore,heldAfter})})`);
+        assert.equal(await page.evaluate(() => window.visualViewport.scale), 1, 'the page itself is not zoomed');
+        // Dragging moves the map, from a node too, and the drag does not press the node.
+        await reader.getByRole('button', {name:'Fit map to panel',exact:true}).click();
+        await settled();
+        // On a narrow screen the paragraphs start beyond the right edge; focus brings one in.
+        await unitNodes.nth(1).focus();
+        await settled();
+        const draggedIndex =await surface.evaluate(element => { const v = element.getBoundingClientRect(); return [...element.querySelectorAll('[data-map-node="unit"]')].findIndex(node => { const r = node.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2; return x > v.left + 80 && x < v.right - 10 && y > v.top + 60 && y < v.bottom - 10 && node.contains(document.elementFromPoint(x, y)); }); });
+        assert.ok(draggedIndex >= 0, `a paragraph is in view to drag: ${await surface.evaluate(element => JSON.stringify([element.getBoundingClientRect(), element.children[1].style.transform, [...element.querySelectorAll('[data-map-node="unit"]')].slice(0, 3).map(node => node.getBoundingClientRect())]))}`);
+        const dragged = unitNodes.nth(draggedIndex);
+        const dragBefore = await dragged.boundingBox();
+        await page.mouse.move(dragBefore.x + dragBefore.width / 2, dragBefore.y + dragBefore.height / 2);
+        await page.mouse.down();
+        for (let i = 1; i <= 6; i += 1) await page.mouse.move(dragBefore.x + dragBefore.width / 2 - i * 10, dragBefore.y + dragBefore.height / 2 - i * 5);
+        await page.mouse.up();
+        await settled();
+        const dragAfter = await dragged.boundingBox();
+        assert.ok(Math.abs(dragAfter.x - dragBefore.x + 60) < 6 && Math.abs(dragAfter.y - dragBefore.y + 30) < 6, `the map follows the drag (${dragBefore.x},${dragBefore.y} to ${dragAfter.x},${dragAfter.y})`);
+        assert.equal(await dragged.getAttribute('aria-pressed'), 'false', 'a drag that starts on a node does not select it');
+        // A press released outside the map is over: the map does not then follow the pointer.
+        const outside = await surface.boundingBox();
+        await page.mouse.move(dragAfter.x + dragAfter.width / 2, dragAfter.y + dragAfter.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(5, 5);
+        await page.mouse.up();
+        await page.mouse.move(outside.x + outside.width / 2, outside.y + 30);
+        await page.mouse.move(outside.x + outside.width / 2 + 40, outside.y + 70);
+        await settled();
+        const hovered = await dragged.boundingBox();
+        assert.ok(Math.abs(hovered.x - dragAfter.x) < 1 && Math.abs(hovered.y - dragAfter.y) < 1, 'a press whose release was never seen does not leave the map following the pointer');
+        // Focus brings a node into view by moving the camera; the page and the panel stay put.
+        const farNode = unitNodes.last();
+        await reader.getByRole('button', {name:'Fit map to panel',exact:true}).click();
+        await settled();
+        if (!await inView(farNode)) {
+            await farNode.focus();
+            await settled();
+            assert.equal(await inView(farNode), true, 'a focused node is brought into view');
+        }
+        assert.deepEqual(await surface.evaluate(element => { const moved = []; for (let node = element; node; node = node.parentElement) if (node.scrollLeft || node.scrollTop) moved.push(node.className); return moved; }), [], 'no container was scrolled to show the node');
+        // Arrow keys walk the map; plus, minus and zero zoom and fit.
+        await farNode.focus();
+        await page.keyboard.press('ArrowUp');
+        assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-map-node')), 'unit', 'arrow keys move between nodes');
+        assert.equal(await farNode.evaluate(element => element === document.activeElement), false);
+        await page.keyboard.press('ArrowDown');
+        assert.equal(await farNode.evaluate(element => element === document.activeElement), true, 'and back');
+        await page.keyboard.press('ArrowLeft');
+        assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-map-node')), 'section', 'left goes to the section a paragraph hangs from');
+        const keyZoom = await zoomNow();
+        await page.keyboard.press('+');
+        assert.ok(await zoomNow() > keyZoom, 'plus zooms in');
+        await page.keyboard.press('-'); await page.keyboard.press('-');
+        assert.ok(await zoomNow() < keyZoom, 'minus zooms out');
+        await page.keyboard.press('0');
+        assert.equal(await zoomNow(), zoomBefore, 'zero fits');
+        await settled();
         const detail = reader.locator('[data-map-detail]');
         assert.equal(await detail.getAttribute('data-map-detail'), 'none');
         const evidenceNode = map.getByRole('button', {name:/^paragraph 1 of .*: A controlled study observed boundary crossings/});
-        await evidenceNode.click();
+        // The map does not scroll: focus brings a node into view, as Tab does for a reader.
+        const press = async node => { await node.focus(); await node.click(); };
+        await press(evidenceNode);
         assert.equal(await evidenceNode.getAttribute('aria-pressed'), 'true');
         assert.equal(await detail.getAttribute('data-map-detail'), 'unit');
         assert.equal(await detail.evaluate(element => element === document.activeElement), true, 'selecting a node moves focus to its text');
@@ -141,12 +221,12 @@ https://example.org/source?q=&amp;copy; "Literal &amp;amp;"`;
             await page.getByRole('button', {name:'Toggle artifacts panel',exact:true}).click();
             await readerReady('map');
         }
-        await sectionNodes.first().click();
+        await press(sectionNodes.first());
         await reader.locator('[data-view-option="read"]').click();
         await reader.locator('[data-view-option="map"]').click();
         assert.equal(await sectionNodes.first().getAttribute('aria-expanded'), 'false', 'folded sections survive a visit to the text');
-        await sectionNodes.first().click();
-        await evidenceNode.click();
+        await press(sectionNodes.first());
+        await press(evidenceNode);
         assert.match(await detail.innerText(), /A controlled study observed boundary crossings through inter-agent content\./);
         await detail.getByRole('button', {name:/^Show source sentences/}).click();
         await detail.getByRole('button', {name:/^Fold back/}).waitFor();

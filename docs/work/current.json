@@ -1,18 +1,18 @@
 {
   "intent": "docs/work/INTENT-investigation-workspace.md",
-  "phase": "AI-native platform P00-P02 implemented and accepted by the owner-approved stand-in gate review (2026-11-18, accept on 8370d19d..464d8a19; Codex reviewer out of credits); battery 184 required / 568 full, zero skips; pushed and PR #3 merged into feat/native-investigation-workspace; client deployed 2026-11-18 as openpaper-00017-lax at 100% (server and caddy images unchanged), public smoke passed, authenticated UI not exercised; investigation A25 acceptance still open; P03 slice 1 (guided shell on the v1 investigation: destination bar, Overview, Evidence, Write, Discuss) implemented on feat/guided-shell, client only, local checks and three browser journeys pass, Codex review round 1 rework addressed, round 2 incomplete (out of credits), stand-in review accept with findings addressed; pushed at fc39aa29; client image built (digest sha256:8283db3b57cd7e8246f738be1ab84009cb1695bd92b51b8f752d5867268b7a82, tag guided-); client deployed 2026-11-18 as openpaper-00017-lax at 100% (server and caddy images unchanged), public smoke passed, authenticated UI not exercised; native folded reader (embedded Textfold engine removed) committed b5d8661f on feat/native-fold-reader and client deployed 2026-11-18 as openpaper-00020-dus at 100%, public smoke passed, authenticated UI not exercised",
-  "branch": "feat/guided-shell",
+  "phase": "AI-native platform P00-P02 implemented and accepted by the owner-approved stand-in gate review (2026-11-18, accept on 8370d19d..464d8a19; Codex reviewer out of credits); battery 184 required / 568 full, zero skips; pushed and PR #3 merged into feat/native-investigation-workspace; client deployed 2026-11-18 as openpaper-00017-lax at 100% (server and caddy images unchanged), public smoke passed, authenticated UI not exercised; investigation A25 acceptance still open; P03 slice 1 (guided shell on the v1 investigation: destination bar, Overview, Evidence, Write, Discuss) implemented on feat/guided-shell, client only, local checks and three browser journeys pass, Codex review round 1 rework addressed, round 2 incomplete (out of credits), stand-in review accept with findings addressed; pushed at fc39aa29; client image built (digest sha256:8283db3b57cd7e8246f738be1ab84009cb1695bd92b51b8f752d5867268b7a82, tag guided-); client deployed 2026-11-18 as openpaper-00017-lax at 100% (server and caddy images unchanged), public smoke passed, authenticated UI not exercised; native folded reader (embedded Textfold engine removed) committed b5d8661f on feat/native-fold-reader and client deployed 2026-11-18 as openpaper-00020-dus at 100%, public smoke passed, authenticated UI not exercised; spatial workspace strategy approved by the owner as recommended 2026-11-19; slices 0 and 1 (baseline, camera engine in the brief map) implemented on feat/spatial-workspace, client only, uncommitted; unit tests, three browser journeys at both widths, touch check and map measurement pass (docs/work/VERIFICATION-spatial-workspace.md)",
+  "branch": "feat/spatial-workspace",
   "gcp": {
     "project": "openpaper-sammatuba",
     "number": "1061746501640",
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Operator: sign in and use the Brief panel and map on a real project (header Brief button; Open folded preview on Overview, Evidence, Write). Operator: sign in and read a real brief in the new folded reader (Discuss, and Open folded preview on Overview, Evidence, Write). No PR is open for feat/guided-shell or feat/native-fold-reader; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
+  "next_action": "Owner: review feat/spatial-workspace (uncommitted) and say whether to commit, push and open a pull request. Then spatial workspace flow slice (on-demand loading of the project layout's panels, SWR, view transitions), then the project canvas; each needs its own intent. Operator: sign in and use the Brief panel and map on a real project (header Brief button; Open folded preview on Overview, Evidence, Write). Operator: sign in and read a real brief in the new folded reader (Discuss, and Open folded preview on Overview, Evidence, Write). No PR is open for feat/guided-shell or feat/native-fold-reader; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
   "blocked_on": [
     "No current operator browser/session exposed for authenticated production UI acceptance."
   ],
-  "updated": "2026-11-18T00:00:00+00:00",
+  "updated": "2026-11-19T00:00:00+00:00",
   "done": [
     "bootstrap (project, billing, APIs, registry, SA, queue, GCS bucket+CORS+HMAC)",
     "Cloud Build 98fc719b: 5 images",
@@ -526,5 +526,11 @@
       "live_revision": "openpaper-00023-wov",
       "rollback_revision": "openpaper-00020-dus"
     }
+  },
+  "spatial_workspace": {
+    "strategy": "docs/work/STRATEGY-spatial-workspace.md",
+    "intent": "docs/work/INTENT-spatial-workspace-camera.md",
+    "verification": "docs/work/VERIFICATION-spatial-workspace.md",
+    "owner_decisions": "2026-11-19: proceed as recommended (A canvas as project home; B no hand-placed positions; C desktop first)"
   }
 }

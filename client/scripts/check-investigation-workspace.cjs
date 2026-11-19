@@ -202,7 +202,8 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
   assert.ok(await preview.locator('[data-map-node="unit"]').count()>=2,'Draft paragraphs are on the map');
   assert.ok(await preview.locator('[data-map-node="finding"]').count()>=1,'Cited findings are on the map');
   assert.ok(await preview.locator('path[data-edge="cites"]').count()>=1,'Paragraphs are joined to the findings they cite');
-  await preview.getByRole('button',{name:'Finding: '+saved.findings[0].label,exact:true}).click();
+  // The map does not scroll: focus brings a node into view, as Tab does for a reader.
+  const finding=preview.getByRole('button',{name:'Finding: '+saved.findings[0].label,exact:true});await finding.focus();await finding.click();
   await preview.getByRole('link',{name:'Open in Evidence',exact:true}).waitFor();
   await page.waitForTimeout(300);await page.screenshot({path:path.join(artifacts,`draft-map-${width}.png`)});
   await preview.locator('[data-view-option="read"]').click();
