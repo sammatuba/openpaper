@@ -133,6 +133,40 @@ class InvestigationPostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(bibtex.status_code,200,bibtex.text)
             self.assertIn('year = {2026}',bibtex.text)
 
+    async def test_save_accepts_the_tag_a_compressing_proxy_returns(self):
+        # Caddy's `encode` appends "-gzip" or "-zstd" to the ETag of any compressed answer, and a CDN may
+        # mark it weak. A browser can only send back what it received.
+        import httpx
+        from fastapi import FastAPI
+        from app.api.projects.project_investigation_api import investigation_router
+        from app.auth.dependencies import get_required_user
+        from app.database.database import get_db
+        from app.helpers.etag import issued_tag
+        self.assertEqual(issued_tag('W/"investigation:x:1-gzip"'),'"investigation:x:1"')
+        self.assertEqual(issued_tag('"investigation:x:1-zstd"'),'"investigation:x:1"')
+        self.assertEqual(issued_tag(' "investigation:x:1" '),'"investigation:x:1"')
+        self.assertEqual(issued_tag('"abc-gzipped"'),'"abc-gzipped"')
+        self.assertIsNone(issued_tag(None))
+        owner,viewer,outsider,project,paper=self.seed()
+        app=FastAPI();app.include_router(investigation_router,prefix='/api/projects')
+        app.dependency_overrides[get_required_user]=lambda:SimpleNamespace(id=owner)
+        def sessions():
+            with self.Session() as db: yield db
+        app.dependency_overrides[get_db]=sessions
+        url=f'/api/projects/{project}/investigation'
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as client:
+            first=await client.get(url);tag=first.headers['etag'];document=first.json()['document']
+            document['case']['question']='First?'
+            saved=await client.put(url,json={'document':document},headers={'If-Match':tag[:-1]+'-gzip"'})
+            self.assertEqual(saved.status_code,200,saved.text)
+            tag=saved.headers['etag'];document=saved.json()['document'];document['case']['question']='Second?'
+            again=await client.put(url,json={'document':document},headers={'If-Match':'W/'+tag[:-1]+'-zstd"'})
+            self.assertEqual(again.status_code,200,again.text)
+            # A stale tag is still refused, with or without a suffix, and nonsense is still malformed.
+            stale=await client.put(url,json={'document':document},headers={'If-Match':tag[:-1]+'-gzip"'})
+            self.assertEqual(stale.status_code,412,stale.text)
+            self.assertEqual((await client.put(url,json={'document':document},headers={'If-Match':'"nonsense-gzip"'})).status_code,400)
+
     async def test_concurrent_first_save_has_one_winner(self):
         from fastapi import HTTPException
         from app.services.investigation import save,etag
