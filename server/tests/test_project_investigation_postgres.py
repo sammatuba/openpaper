@@ -96,6 +96,43 @@ class InvestigationPostgresTests(unittest.IsolatedAsyncioTestCase):
             with self.Session() as db:
                 self.assertEqual(db.get(ProjectInvestigation,project).document['findings'][0]['source']['quote'],'Exact result α.')
 
+    async def test_dated_paper_source_read_save_and_export(self):
+        # Papers store publish_date as a timestamp. Every imported paper with a known date has one.
+        import httpx
+        from fastapi import FastAPI
+        from app.api.projects.project_investigation_api import investigation_router
+        from app.auth.dependencies import get_required_user
+        from app.database.database import get_db
+        from app.database.models import ProjectInvestigation
+        owner,viewer,outsider,project,paper=self.seed()
+        with self.engine.begin() as conn:
+            conn.execute(self.text("UPDATE papers SET publish_date='2026-09-10 00:00:00', authors=ARRAY['A. Author'] WHERE id=:p"),{'p':paper})
+        app=FastAPI();app.include_router(investigation_router,prefix='/api/projects')
+        app.dependency_overrides[get_required_user]=lambda:SimpleNamespace(id=owner)
+        def sessions():
+            with self.Session() as db: yield db
+        app.dependency_overrides[get_db]=sessions
+        url=f'/api/projects/{project}/investigation'
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as client:
+            first=await client.get(url);tag=first.headers['etag'];document=first.json()['document']
+            read=await client.get(url+f'/sources/{paper}?start_line=2&line_count=1')
+            self.assertEqual(read.status_code,200,read.text)
+            source=read.json()
+            self.assertEqual(source['publish_date'],'2026-09-10')
+            fid=str(uuid4())
+            document['findings']=[{'id':fid,'label':'Observed result','source':{'kind':'anchored','paper_id':str(paper),'start_line':2,'end_line':2,'quote':source['text'],'source_sha256':source['source_sha256'],'quote_sha256':source['quote_sha256']}}]
+            saved=await client.put(url,json={'document':document},headers={'If-Match':tag})
+            self.assertEqual(saved.status_code,200,saved.text)
+            self.assertEqual(saved.json()['document']['findings'][0]['source']['publish_date'],'2026-09-10')
+            with self.Session() as db:
+                self.assertEqual(db.get(ProjectInvestigation,project).document['findings'][0]['source']['publish_date'],'2026-09-10')
+            again=await client.get(url)
+            self.assertEqual(again.status_code,200,again.text)
+            self.assertEqual(again.json()['validation']['findings'][fid],'current')
+            bibtex=await client.get(url+'/export?format=bibtex')
+            self.assertEqual(bibtex.status_code,200,bibtex.text)
+            self.assertIn('year = {2026}',bibtex.text)
+
     async def test_concurrent_first_save_has_one_winner(self):
         from fastapi import HTTPException
         from app.services.investigation import save,etag

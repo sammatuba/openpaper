@@ -70,7 +70,7 @@ def convert_project(db: Session, project_id, actor_id):
     anchored_papers = sorted({f["source"]["paper_id"] for f in findings if f["source"]["kind"] == "anchored"})
     source_versions, unresolved, mappings = {}, [], {}
     if anchored_papers:
-        from .investigation import text_hash
+        from .investigation import date_text, text_hash
         papers = {str(p.id): p for p in db.query(Paper).filter(Paper.id.in_([UUID(pid) for pid in anchored_papers])).all()}
         for paper in papers.values(): db.refresh(paper)  # committed bytes, even when cached (R44)
         for finding in findings:
@@ -85,7 +85,7 @@ def convert_project(db: Session, project_id, actor_id):
                                                     extractor="v1_raw_content", text_sha256=source["source_sha256"],
                                                     line_count=len(lines), byte_size=len(paper.raw_content.encode("utf-8")),
                                                     source_metadata={"title": paper.title or "", "authors": paper.authors or [],
-                                                                     "publish_date": paper.publish_date, "doi": paper.doi})
+                                                                     "publish_date": date_text(paper.publish_date), "doi": paper.doi})
                     db.add(version); db.flush()
                     source_versions[key] = str(version.id)
                 mappings[finding["id"]] = {"source_version_id": source_versions[key], "unresolved": False}

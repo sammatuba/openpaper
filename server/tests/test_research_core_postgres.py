@@ -1098,6 +1098,9 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
         from fastapi import HTTPException
         s = self.seed()
         paper = self.seed_paper(s.project, s.owner, "Fixture A", "Title\nExact fixture result.\nLimitations.")
+        # Papers store publish_date as a timestamp; the stored source metadata must carry it as text.
+        with self.engine.begin() as conn:
+            conn.execute(self.text("UPDATE papers SET publish_date='2026-09-10 00:00:00' WHERE id=:p"), {"p": paper})
         document, ids = self._v1_document(paper)
         self._write_v1_row(s.project, document)
         with self.Session() as db:
@@ -1132,6 +1135,7 @@ class ResearchCorePostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(finding.payload["anchor"]["quote"], "Exact fixture result.")
             self.assertEqual(version.text_sha256, document["findings"][0]["source"]["source_sha256"])
             self.assertEqual(version.source_metadata["title"], "Fixture A")
+            self.assertEqual(version.source_metadata["publish_date"], "2026-09-10")
             history = db.query(ResearchEntityRevision).filter(ResearchEntityRevision.entity_id == claim.id).one()
             self.assertEqual(history.origin, "imported")
             self.assertIn("v1 storage conversion", history.provenance["origin_label"])
