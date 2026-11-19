@@ -30,8 +30,9 @@ Neither defect was reachable by the existing tests: fixtures had no publication 
 | Reader from the canvas | "Open source" loaded the real PDF from storage and highlighted the quoted line. |
 | Capture a finding through the Evidence interface | Add finding, search (10 results), Use these lines, Attach, describe, relate, Save. With the live server: **400 Malformed If-Match**; the page kept the work and offered download, retry and reload. With the harness removing the proxy's suffix from the tag (a stand-in for defect 2's fix): 200, revision 2, present after reload. |
 | Add a section through the API (revision 3) | Threat model section added; the interface test finding archived; exports regenerated. |
+| Revise claims and case text through the API, acknowledging paragraphs (revision 4) | 200. 10 paragraphs acknowledged with `reviewed_block_ids`; 13 of 14 blocks read back `current`. One paragraph that cites two revised claims and no finding stays `review_needed`; it is left so the owner can see that state. |
 
-Temporary owner sessions minted: 12, each deleted on exit; the longest lasted 147 s. No token was printed or written to disk.
+Temporary owner sessions minted: 13, each deleted on exit; the longest lasted 147 s. No token was printed or written to disk.
 
 ## What the run says about the design
 
@@ -77,7 +78,8 @@ Assistant drafting and Discuss (model credits; not authorized), audio, tables an
 | Rollback | `gcloud run services update-traffic openpaper --region asia-southeast1 --to-revisions=openpaper-00023-wov=100` |
 | Smoke after promotion, both hosts | `/api/health`, `/`, `/login`, `/projects` 200; unauthenticated investigation 401; unauthenticated MCP POST 401 |
 | Fix 2 | `16a7f1b6`; image `server:dated-etag-16a7f1b6`, digest `sha256:1ddcd9557d38512bf6fbd1d169bd809fdc8f91cfceef166c87cc3e7ff6db1e8d` (Cloud Build `4856ef9a-a153-4228-9dab-0f14eccc5457`). **Not deployed.** |
-| Development branch | Both fixes committed locally on `feat/spatial-workspace` (`cd09afcb`, `7091c036`), with the conversion path covered; not pushed. |
+| Development branch | Both fixes and the review follow-ups committed locally on `feat/spatial-workspace` (`cd09afcb`, `7091c036`, `032aa17b`), with the conversion path and the note path covered; not pushed. |
+| Still to ship after fix 2 | The client change in `032aa17b` (revision parsed from a suffixed tag). Until a client with it is deployed, assistant drafting behind the proxy is expected to fail even with fix 2. |
 
 To deploy fix 2 the same way: `gcloud run services update openpaper --region=asia-southeast1 --no-traffic --tag=etag --container=server --image=<image@digest>`, check a save on the staged URL, then move traffic.
 
@@ -85,12 +87,13 @@ To deploy fix 2 the same way: `gcloud run services update openpaper --region=asi
 
 | Check | Result |
 | --- | --- |
-| Required PostgreSQL suite, development tree | 186 tests OK, zero skips (was 184 before the two new tests) |
+| Required PostgreSQL suite, development tree | 186 tests OK, zero skips (was 184 before the two new tests; the note test extends an existing one) |
 | Required PostgreSQL suite, hotfix tree | 102 tests OK |
 | New test for defect 1 on the pre-fix code | Fails with the production error (confirmed by the author and independently by the reviewer) |
-| New test for defect 2 | Passes with the fix; not run against the pre-fix code |
+| New test for defect 2 | Passes with the fix; fails on the parent commit (run by the reviewer) |
 | Independent review of fix 1 (fresh Claude reviewer agent; same model family as the author) | Accept with findings: commit the fix on the development branch (done), test the conversion path (done), make the size check tolerant (done), and the product question above |
-| Review of fix 2 | **None yet.** |
+| Review of fix 2 (fresh Claude reviewer agent; same model family as the author) | **Accept with findings; safe to deploy as is.** The new test fails on the parent commit with "Malformed If-Match". Lost-update protection is unchanged: the format check, the UUID check and the comparison with the current revision still run under the row lock. Findings: the page parsed the revision out of the tag, so a suffixed tag gave no base revision for assistant drafting (fixed on the development branch, `032aa17b`; needs a client build; not exercised in a browser); the note path had no test with a suffixed tag (added, `032aa17b`); a README sentence was stale (corrected). |
+| Client checks after `032aa17b` | Provider harness, investigation unit test, `tsc --noEmit` and eslint on the touched file: pass. They were run after the commit, not before it: the first attempt did not find `node` on the path. |
 
 ## Next
 

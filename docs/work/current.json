@@ -547,7 +547,7 @@
     "origin": "https://papers.sammatuba.workers.dev",
     "papers_imported": 8,
     "papers_in_project": 9,
-    "investigation_revision": 3,
+    "investigation_revision": 4,
     "artifacts": ".meos/artifacts/tara-e2e (ignored): state, extracted text, exports, journey and capture reports, screenshots",
     "hotfix_branch": "fix/investigation-dated-papers (from c757bbf0; pushed)",
     "fix_1": {
@@ -565,14 +565,17 @@
       "cloud_build": "4856ef9a-a153-4228-9dab-0f14eccc5457",
       "server_image": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/server@sha256:1ddcd9557d38512bf6fbd1d169bd809fdc8f91cfceef166c87cc3e7ff6db1e8d",
       "deployed": false,
-      "status": "awaiting the owner's go"
+      "status": "awaiting the owner's go",
+      "review": "fresh Claude reviewer agent (same model family as the author): accept with findings, safe to deploy as is; follow-ups in 032aa17b"
     },
     "development_branch_commits": [
       "cd09afcb",
-      "7091c036"
+      "7091c036",
+      "032aa17b",
+      "b83b5dde"
     ],
     "development_branch_pushed": false,
-    "owner_sessions_minted": 12,
+    "owner_sessions_minted": 13,
     "not_exercised": [
       "assistant drafting",
       "Discuss",
@@ -584,6 +587,7 @@
       "a real phone",
       "the deployed client",
       "a note edit"
-    ]
+    ],
+    "client_followup": "032aa17b: the page read the revision by parsing the ETag; a suffixed tag gave no base revision for assistant drafting. Fixed on the development branch; needs a client build; not exercised in a browser."
   }
 }
