@@ -176,5 +176,40 @@ const failure = promise => promise.then(() => null, error => error);
         assert.ok(await failure(reads.read('/p', body => body.papers)));
     }
 
+    // A recorded denial is reported, from a read and from a prefetch; other failures and overtaken denials are not.
+    {
+        const { calls, request } = manual();
+        const told = [];
+        let changes = 0;
+        const reads = createReads(request, { denied: url => told.push(url), changed: () => { changes += 1; } });
+        const read = failure(reads.read('/p', same)); calls[0].reject(http(403));
+        await read;
+        assert.deepEqual(told, ['/p']);
+        const warm = reads.prefetch('/q', same, () => assert.fail('a denied prefetch writes nothing')); calls[1].reject(http(404));
+        await warm;
+        assert.deepEqual(told, ['/p', '/q'], 'a prefetch that is refused reports the denial with nothing mounted to see it');
+        const offline = failure(reads.read('/r', same)); calls[2].reject(http(500));
+        await offline;
+        assert.deepEqual(told, ['/p', '/q']);
+        const older = failure(reads.read('/s', same)), newer = reads.read('/s', same);
+        calls[4].resolve({ ok: true }); await newer;
+        calls[3].reject(http(403)); await older;
+        assert.deepEqual(told, ['/p', '/q'], 'a denial older than a success is not recorded and not reported');
+        const ended = failure(reads.read('/t', same)); reads.end(); calls[5].reject(http(403));
+        await ended;
+        assert.deepEqual(told, ['/p', '/q'], 'nor one that arrives after the session ended');
+        // Whoever shows a denial is told when it is recorded, when a success lifts it, and when the session ends with one standing.
+        assert.equal(changes, 3, 'two denials recorded, and the session ended with them standing');
+        const again = failure(reads.read('/u', same)); calls[6].reject(http(403)); await again;
+        assert.equal(changes, 4);
+        const lifted = reads.read('/u', same); calls[7].resolve({ back: true }); await lifted;
+        assert.equal(reads.denied('/u'), null);
+        assert.equal(changes, 5, 'a success that lifts a denial is announced');
+        const plain = reads.read('/u', same); calls[8].resolve({ back: true }); await plain;
+        assert.equal(changes, 5, 'a success with no denial standing is not');
+        reads.end();
+        assert.equal(changes, 5, 'ending a session with no denial standing is not');
+    }
+
     console.log('reads: ok');
 })().catch(error => { console.error(error); process.exit(1); });

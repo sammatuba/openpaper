@@ -25,7 +25,14 @@ export interface Reads {
 
 type Started = { data: unknown; started: number };
 
-export function createReads(request: (url: string) => Promise<unknown>): Reads {
+/**
+ * `watch.denied` is told each time a denial is recorded against a resource, whoever asked (a hook or a
+ * prefetch), so anything else kept for that resource can be dropped with it. `watch.changed` is told
+ * whenever the answer of `denied()` may have changed (recorded, lifted, or the session ended): a view that
+ * shows a denial cannot rely on its own request to learn of either.
+ */
+export type ReadsWatch = { denied?: (url: string) => void; changed?: () => void };
+export function createReads(request: (url: string) => Promise<unknown>, watch: ReadsWatch = {}): Reads {
     let session = 0;
     let clock = 0;
     // Start time of the newest read of each resource that has begun, and that has settled.
@@ -45,13 +52,15 @@ export function createReads(request: (url: string) => Promise<unknown>): Reads {
             if (mine !== session) throw new Error("The session ended before this response arrived");
             if (newest()) {
                 settled.set(url, started);
-                denials.delete(url);
+                if (denials.delete(url)) watch.changed?.();
             }
             return { data, started };
         } catch (error) {
             if (mine === session && isGone(error) && newest()) {
                 settled.set(url, started);
                 denials.set(url, error as Error);
+                watch.denied?.(url);
+                watch.changed?.();
             }
             throw error;
         }
@@ -84,8 +93,10 @@ export function createReads(request: (url: string) => Promise<unknown>): Reads {
             session++;
             begun.clear();
             settled.clear();
+            const any = denials.size > 0;
             denials.clear();
             warming.clear();
+            if (any) watch.changed?.();
         },
     };
 }

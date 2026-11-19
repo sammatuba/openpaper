@@ -35,6 +35,9 @@ https://example.org/source?q=&amp;copy; "Literal &amp;amp;"`;
     const browser = await chromium.launch({ headless: true, executablePath: process.env.OPENPAPER_CHROMIUM || undefined, args: ['--no-sandbox'] });
     for (const width of [1440, 390]) {
         const page = await browser.newPage({ viewport: { width, height: 960 }, reducedMotion: width === 1440 ? 'no-preference' : 'reduce', acceptDownloads: true });
+        // The app layout loads a Google tag from the network; when it arrives it writes its own storage key at a time
+        // of its choosing. The storage assertions below are about the reader, so the tag is kept out of this run.
+        await page.route('**://www.googletagmanager.com/**', route => route.abort());
         const errors = [], writes = [], reads = [];
         let failSave = false, empty = false, role = 'admin';
         let project = { id: 'research-demo', title: 'Compositional AI control across trust boundaries', description: fixture, research_brief: null, role, created_at: '', updated_at: '' };
@@ -226,6 +229,17 @@ https://example.org/source?q=&amp;copy; "Literal &amp;amp;"`;
         await reader.locator('[data-view-option="map"]').click();
         assert.equal(await sectionNodes.first().getAttribute('aria-expanded'), 'false', 'folded sections survive a visit to the text');
         await press(sectionNodes.first());
+        // A selected paragraph is in view when the map is reopened, also when the fitted view would not show it.
+        {
+            const low = unitNodes.last();
+            await press(low);
+            await reader.locator('[data-view-option="read"]').click();
+            await reader.locator('[data-view-option="map"]').click();
+            await settled();
+            assert.equal(await low.getAttribute('aria-pressed'), 'true', 'the selection survives a visit to the text');
+            assert.equal(await inView(low), true, 'the selected paragraph is in view when the map is reopened');
+            await press(low);
+        }
         await press(evidenceNode);
         assert.match(await detail.innerText(), /A controlled study observed boundary crossings through inter-agent content\./);
         await detail.getByRole('button', {name:/^Show source sentences/}).click();

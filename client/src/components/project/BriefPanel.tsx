@@ -15,7 +15,7 @@ import { EditProjectDialog } from "./EditProjectDialog";
 
 // The investigation views that have a folded preview, by route.
 const PAGE_VIEWS = [
-    { path: "", view: "case", label: "Overview preview" },
+    { path: "/overview", view: "case", label: "Overview preview" },
     { path: "/evidence", view: "evidence", label: "Evidence preview" },
     { path: "/draft", view: "draft", label: "Write preview" },
 ] as const;

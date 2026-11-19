@@ -44,6 +44,8 @@ interface ProjectWorkspaceValue {
     refetchProject: () => Promise<void>;
     papers: PaperItem[];
     isPapersLoading: boolean;
+    // The paper list could not be loaded and none is cached: `papers` is empty because it is unknown.
+    papersError: Error | null;
     refetchPapers: () => Promise<void>;
     updatePaper: (paperId: string, patch: Partial<PaperItem>) => void;
     conversations: Conversation[];
@@ -119,7 +121,7 @@ interface ProjectWorkspaceProviderProps {
 
 export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspaceProviderProps) {
     const { project, isLoading: isProjectLoading, error: projectError, refetch: refetchProject } = useProject(projectId);
-    const { papers, isLoading: isPapersLoading, refetch: refetchPapers, updatePaper } = useProjectPapers(projectId);
+    const { papers, isLoading: isPapersLoading, error: papersError, refetch: refetchPapers, updatePaper } = useProjectPapers(projectId);
     const { conversations, isLoading: isConversationsLoading, refetch: refetchConversations } = useProjectConversations(projectId);
 
     const [openPaperIds, setOpenPaperIds] = useState<string[]>([]);
@@ -334,6 +336,7 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
         refetchProject,
         papers: shown.papers,
         isPapersLoading,
+        papersError,
         refetchPapers,
         updatePaper,
         conversations: shown.conversations,
@@ -370,7 +373,7 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
         pendingDiscussions,
     }), [
         projectId, project, isProjectLoading, projectError, refetchProject,
-        papers, isPapersLoading, refetchPapers, updatePaper,
+        papers, isPapersLoading, papersError, refetchPapers, updatePaper,
         conversations, isConversationsLoading, refetchConversations,
         openPaperIds, activePaperId, readerSearchTerm,
         openPaper, activatePaper, closePaper, closeReader, refreshPaperUrl,

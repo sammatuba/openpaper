@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import useSWR, { mutate as mutateCache } from "swr";
 import { fetchFromApi } from "@/lib/api";
 import { createReads, isGone } from "@/lib/reads";
+import { forgetInvestigation, forgetInvestigations } from "@/lib/investigation-snapshot";
 import { Project, PaperItem, Conversation } from "@/lib/schema";
 
 // Project data is read through SWR: a cached value renders at once and is
@@ -16,7 +17,27 @@ const papersKey = (projectId: string, loadUrls = false) =>
     `/api/projects/papers/${projectId}${loadUrls ? "?load_urls=true" : ""}`;
 const conversationsKey = (projectId: string) => `/api/projects/conversations/${projectId}`;
 
-const reads = createReads(fetchFromApi);
+// A project that is denied takes its kept investigation with it, whether a mounted workspace or a card's
+// prefetch learned of the denial.
+// A denial can also be recorded, or lifted, by a request the hook showing it did not make (a card's
+// prefetch), and SWR does not re-render a hook whose data came back unchanged. So the hooks subscribe to
+// the denials themselves.
+let denialsVersion = 0;
+const denialWatchers = new Set<() => void>();
+const subscribeDenials = (watcher: () => void) => { denialWatchers.add(watcher); return () => { denialWatchers.delete(watcher); }; };
+const useDenials = () => useSyncExternalStore(subscribeDenials, () => denialsVersion, () => 0);
+const reads = createReads(fetchFromApi, {
+    denied: url => {
+        // The project itself, not its paper list or discussions: a refusal of those alone leaves the
+        // investigation's own request to say whether it may be read.
+        const project = /^\/api\/projects\/([^/?]+)$/.exec(url)?.[1];
+        if (project) forgetInvestigation(project);
+    },
+    changed: () => {
+        denialsVersion += 1;
+        for (const watcher of [...denialWatchers]) watcher();
+    },
+});
 const asJson = <T,>(body: unknown) => body as T;
 const asList = <T,>(body: unknown) => ((body as T[] | null) || []);
 const asPapers = (body: unknown) => (body as { papers?: PaperItem[] } | null)?.papers || [];
@@ -56,6 +77,7 @@ export function preloadProject(projectId: string) {
 // still on its way must not land in the next user's cache.
 export async function endProjectSession() {
     reads.end();
+    forgetInvestigations();
     warmedAt.clear();
     await mutateCache(() => true, undefined, { revalidate: false });
 }
@@ -76,6 +98,7 @@ export function useProjects(detailed = false): UseProjectsResult {
     // that the plain list omits.
     const key = detailed ? "/api/projects?detailed=true" : "/api/projects";
     const swr = useSWR<Project[]>(key, fetchList<Project>, OPTIONS);
+    useDenials();
     const { data, error } = settle(key, swr.data, swr.error, "projects");
     const { mutate } = swr;
     const refetch = useCallback(async () => { await mutate().catch(() => undefined); }, [mutate]);
@@ -93,6 +116,7 @@ interface UseProjectResult {
 export function useProject(projectId?: string): UseProjectResult {
     const key = projectId ? projectKey(projectId) : null;
     const swr = useSWR<Project>(key, fetchJson<Project>, OPTIONS);
+    useDenials();
     const { data, error } = settle(key, swr.data, swr.error, `project ${projectId}`);
     const { mutate } = swr;
     const refetch = useCallback(async () => { await mutate().catch(() => undefined); }, [mutate]);
@@ -127,6 +151,7 @@ export function useProjectPapers(
     const loadUrls = options?.loadUrls ?? false;
     const key = projectId ? papersKey(projectId, loadUrls) : null;
     const swr = useSWR<PaperItem[]>(key, fetchPapers, OPTIONS);
+    useDenials();
     const { data, error } = settle(key, swr.data, swr.error, `papers for project ${projectId}`);
     const { mutate } = swr;
     const refetch = useCallback(async () => { await mutate().catch(() => undefined); }, [mutate]);
@@ -159,6 +184,7 @@ interface UseProjectConversationsResult {
 export function useProjectConversations(projectId?: string): UseProjectConversationsResult {
     const key = projectId ? conversationsKey(projectId) : null;
     const swr = useSWR<Conversation[]>(key, fetchList<Conversation>, OPTIONS);
+    useDenials();
     const { data, error } = settle(key, swr.data, swr.error, `conversations for project ${projectId}`);
     const { mutate } = swr;
     const refetch = useCallback(async () => { await mutate().catch(() => undefined); }, [mutate]);
