@@ -82,5 +82,5 @@ function InvestigationSession({children}:{children:ReactNode}){
   // A review that arrived during a save that succeeded has not been sent: the document is not fully saved yet.
   finally{saving.current=false;if(!done){queuedReviews.current=[...new Set([...sent,...queuedReviews.current])];if(queuedReviews.current.length)setDirty(true);}if(done&&queuedReviews.current.length){setDirty(true);setStatus(now=>now==='Saved'?'Unsaved changes':now);}}
  };
- return <InvestigationContext.Provider value={{document,update,save,reload,dirty,status,validation,loaded,revision:Number(tag?.split(':').at(-1)?.replace('"','')||0),reviewProposal:id=>reviewedProposals.current.add(id)}}>{children}</InvestigationContext.Provider>;
+ return <InvestigationContext.Provider value={{document,update,save,reload,dirty,status,validation,loaded,revision:Number(tag?.match(/:(\d+)(?:-[a-z]+)?"$/)?.[1]||0)/* a compressing proxy appends "-gzip" or "-zstd" to the tag */,reviewProposal:id=>reviewedProposals.current.add(id)}}>{children}</InvestigationContext.Provider>;
 }

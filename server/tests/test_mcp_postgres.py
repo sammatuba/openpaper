@@ -275,6 +275,15 @@ class MCPPostgresTests(unittest.TestCase):
                 self.assertEqual(caught.exception.status_code, code)
         with self.Session() as session:
             self.assertEqual(session.query(self.PaperNote).filter_by(paper_id=paper).one().content, "original\n\nnew append")
+        # A compressing proxy appends its encoding to the tag and may mark it weak; the browser sends that back.
+        current = note_etag("original\n\nnew append")
+        with patch.dict(os.environ, {"MCP_ENABLED": "true"}), patch.object(paper_api.paper_crud, "get", return_value=object()):
+            with self.assertRaises(HTTPException) as caught:
+                asyncio.run(put('W/' + old[:-1] + '-gzip"'))
+            self.assertEqual(caught.exception.status_code, 412)
+            asyncio.run(put('W/' + current[:-1] + '-gzip"'))
+        with self.Session() as session:
+            self.assertEqual(session.query(self.PaperNote).filter_by(paper_id=paper).one().content, "old editor")
 
     def test_mcp_tool_identity_and_access_isolation(self):
         import asyncio
