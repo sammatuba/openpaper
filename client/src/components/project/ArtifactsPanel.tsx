@@ -502,7 +502,7 @@ export function ArtifactsPanel() {
         <>
             <aside
                 className={cn(
-                    "flex-col bg-background",
+                    "workspace-panel flex-col bg-background",
                     rightPanel === "artifacts" ? "flex" : "hidden",
                     "fixed inset-0 z-40 md:static md:z-auto md:w-[400px] md:shrink-0 md:border-l",
                 )}

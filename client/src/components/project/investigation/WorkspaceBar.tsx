@@ -48,8 +48,9 @@ function SaveState({ status }: { status: string }) {
 export function WorkspaceBar() {
     const pathname = usePathname();
     const params = useSearchParams();
-    const { projectId } = useProjectWorkspace();
+    const { projectId, projectDenied: cutOff } = useProjectWorkspace();
     const { document: doc, save, reload, dirty, status, loaded, update } = useInvestigation();
+    // Access to the project is gone: the server will refuse an export, so recovery uses what is in memory.
     const canEdit = useCanEdit();
     const [importPreview, setImportPreview] = useState<Investigation | null>(null);
     const [confirmReload, setConfirmReload] = useState(false);
@@ -161,7 +162,7 @@ export function WorkspaceBar() {
                             <DropdownMenuItem disabled={dirty || !loaded} onSelect={() => void exportSaved("bibtex")}>
                                 <Download className="h-4 w-4" />Export saved BibTeX
                             </DropdownMenuItem>
-                            <DropdownMenuItem disabled={!loaded} onSelect={() => (dirty ? downloadInvestigation(doc, false) : void exportSaved("bundle"))}>
+                            <DropdownMenuItem disabled={!loaded} onSelect={() => (dirty || cutOff ? downloadInvestigation(doc, !dirty) : void exportSaved("bundle"))}>
                                 <Download className="h-4 w-4" />Download {dirty ? "unsaved" : "saved"} bundle
                             </DropdownMenuItem>
                             {canEdit && (

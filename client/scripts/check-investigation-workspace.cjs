@@ -147,6 +147,8 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
    await article.getByRole('button',{name:'Open PDF source',exact:true}).click();
    await page.locator('.page[data-page-number="1"] canvas').first().waitFor({timeout:20000});
    await page.getByRole('button',{name:'Close reader',exact:true}).click();
+   // The close is applied inside a view transition, a frame after the click.
+   await article.getByRole('button',{name:'Open PDF source',exact:true}).evaluate(el=>new Promise(done=>{const until=performance.now()+1000;const look=()=>el===document.activeElement||performance.now()>until?done():requestAnimationFrame(look);look();}));
    assert.equal(await article.getByRole('button',{name:'Open PDF source',exact:true}).evaluate(el=>el===document.activeElement),true,'Reader close restores focus');
    await nav.getByRole('link',{name:'Write',exact:true}).click();
    const cited=saved.manuscript.sections[0].blocks.find(b=>b.finding_ids.includes(item.id)).id;await page.waitForURL(url=>url.pathname.endsWith('/draft')&&url.searchParams.get('block')===cited);

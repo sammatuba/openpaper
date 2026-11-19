@@ -78,7 +78,7 @@ export function BriefPanel() {
             // Below the desktop layout the panel covers the page, so following a link out of it (a cited finding) closes it.
             onClick={event => { if ((event.target as HTMLElement).closest('a[href^="/"]') && window.innerWidth < 1024) closeBrief(); }}
             className={cn(
-                "fixed inset-0 z-40 flex flex-col bg-background outline-none lg:static lg:z-auto lg:shrink-0 lg:border-l",
+                "workspace-panel fixed inset-0 z-40 flex flex-col bg-background outline-none lg:static lg:z-auto lg:shrink-0 lg:border-l",
                 wide ? "lg:w-[72%]" : "lg:w-[56%] lg:min-w-[440px] lg:max-w-[980px]",
             )}
         >

@@ -38,7 +38,8 @@ export async function fetchFromApi(endpoint: string, options: RequestInit = {}) 
             errorMessage = JSON.stringify(errorMessage);
         }
 
-        throw new Error(errorMessage as string)
+        // The status rides along so callers can tell "gone or forbidden" from a network blip.
+        throw Object.assign(new Error(errorMessage as string), { status: response.status });
     }
 
     if (response.status === 204) {
