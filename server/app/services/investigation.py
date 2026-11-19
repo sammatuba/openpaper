@@ -130,6 +130,8 @@ def save(db:Session, project_id, actor_id, request, if_match):
         row,old=read_document(db,project_id)
         current=etag(project_id,row.revision if row else 0)
         if if_match is None: raise HTTPException(428,'If-Match is required')
+        from app.helpers.etag import issued_tag
+        if_match=issued_tag(if_match)  # the proxy appends its encoding to the tag the browser received
         if not re.fullmatch(r'"investigation:[0-9a-fA-F-]{36}:[0-9]+"',if_match): raise HTTPException(400,'Malformed If-Match')
         try: UUID(if_match.split(':')[1])
         except ValueError as error:raise HTTPException(400,'Malformed If-Match') from error
