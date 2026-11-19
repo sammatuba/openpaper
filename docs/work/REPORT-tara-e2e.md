@@ -32,7 +32,7 @@ Neither defect was reachable by the existing tests: fixtures had no publication 
 | Add a section through the API (revision 3) | Threat model section added; the interface test finding archived; exports regenerated. |
 | Revise claims and case text through the API, acknowledging paragraphs (revision 4) | 200. 10 paragraphs acknowledged with `reviewed_block_ids`; 13 of 14 blocks read back `current`. One paragraph that cites two revised claims and no finding stays `review_needed`; it is left so the owner can see that state. |
 
-Temporary owner sessions minted: 13, each deleted on exit; the longest lasted 147 s. No token was printed or written to disk.
+Temporary owner sessions minted: 17, each deleted on exit; the longest lasted 147 s. No token was printed or written to disk.
 
 ## What the run says about the design
 
@@ -77,11 +77,12 @@ Assistant drafting and Discuss (model credits; not authorized), audio, tables an
 | Deployed | Staged as `openpaper-00026-rum` (tag `dated`), smoke and 9 of 9 signed-in source reads on the staged URL, then 100% on the owner's go; tag removed. Client and Caddy images unchanged. No migration. |
 | Rollback | `gcloud run services update-traffic openpaper --region asia-southeast1 --to-revisions=openpaper-00023-wov=100` |
 | Smoke after promotion, both hosts | `/api/health`, `/`, `/login`, `/projects` 200; unauthenticated investigation 401; unauthenticated MCP POST 401 |
-| Fix 2 | `16a7f1b6`; image `server:dated-etag-16a7f1b6`, digest `sha256:1ddcd9557d38512bf6fbd1d169bd809fdc8f91cfceef166c87cc3e7ff6db1e8d` (Cloud Build `4856ef9a-a153-4228-9dab-0f14eccc5457`). **Not deployed.** |
+| Fix 2 | `16a7f1b6`; image `server:dated-etag-16a7f1b6`, digest `sha256:1ddcd9557d38512bf6fbd1d169bd809fdc8f91cfceef166c87cc3e7ff6db1e8d` (Cloud Build `4856ef9a-a153-4228-9dab-0f14eccc5457`). **Deployed 2026-11-20 on the owner's go**: staged as `openpaper-00029-jen` (tag `etag`), checked, then 100%; tag removed. Rollback: `openpaper-00026-rum`. Client and Caddy images unchanged. No migration. |
+| Checks of fix 2 | Staged URL: health, `/`, `/login`, `/projects` 200; unauthenticated investigation and MCP POST 401; 9 of 9 signed-in source reads; a save sent with the received tag (`…:4-zstd`) answered 200 (revision 5); a tag one revision behind answered 412; a nonsense tag 400. After the traffic move, on both public hosts: the same smoke; a save through `papers.sammatuba.workers.dev` with the received tag (`…:5-gzip`) answered 200 (revision 6). Both saves sent the document unchanged; document and all statuses read back identical. On the two public hosts the stale-tag check also altered the project id in the tag by mistake, so there it shows a refusal (412), not specifically the stale-revision case; the staged check is the clean one. Not checked: a save from a real browser, a note edit. |
 | Development branch | Both fixes and the review follow-ups committed locally on `feat/spatial-workspace` (`cd09afcb`, `7091c036`, `032aa17b`), with the conversion path and the note path covered; not pushed. |
 | Still to ship after fix 2 | The client change in `032aa17b` (revision parsed from a suffixed tag). Until a client with it is deployed, assistant drafting behind the proxy is expected to fail even with fix 2. |
 
-To deploy fix 2 the same way: `gcloud run services update openpaper --region=asia-southeast1 --no-traffic --tag=etag --container=server --image=<image@digest>`, check a save on the staged URL, then move traffic.
+Fix 2 was deployed the same way: `gcloud run services update openpaper --region=asia-southeast1 --no-traffic --tag=etag --container=server --image=<image@digest>`, a save checked on the staged URL, then traffic moved.
 
 ## Checks
 
@@ -97,7 +98,7 @@ To deploy fix 2 the same way: `gcloud run services update openpaper --region=asi
 
 ## Next
 
-1. Owner: give or withhold the go for fix 2. Until then, saving from a browser fails after the first save.
+1. Done 2026-11-20: fix 2 is live. Owner: confirm a save and a note edit from a real browser.
 2. Owner: open the TARA project and judge the canvas as project home, with real content now in it.
 3. Decide what to do about extracted text for two-column papers; it limits Evidence more than any interface choice.
 4. Decide whether a draft may cite evidence that is not a project paper.
