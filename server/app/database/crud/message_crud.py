@@ -12,7 +12,7 @@ from app.database.models import (
     Paper,
     ProjectRole,
 )
-from app.schemas.tutor import TUTOR_TRACE_KEY
+from app.schemas.tutor import TUTOR_TRACE_KEY, TUTOR_TURN_KEY
 from app.schemas.user import CurrentUser
 from pydantic import BaseModel
 from sqlalchemy import desc, func
@@ -227,6 +227,12 @@ class MessageCRUD(CRUDBase[Message, MessageCreate, MessageUpdate]):
             .filter(
                 Message.conversation_id == conversation_id,
                 # Remove the joins and just check the conversation directly
+                # A tutoring session is the learner's, not the paper's: its
+                # turns are no part of what a shared paper shows. Filtered
+                # here, in the query, so that pages stay full. (coalesce:
+                # `?` on a NULL trace is NULL, which a bare NOT would drop.)
+                func.coalesce(Message.trace.has_key(TUTOR_TURN_KEY), False).is_(False),
+                func.coalesce(Message.trace.has_key(TUTOR_TRACE_KEY), False).is_(False),
             )
             .order_by(desc(Message.sequence))  # newest first for pagination
             .offset((page - 1) * page_size)
