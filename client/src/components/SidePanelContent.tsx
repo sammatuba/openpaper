@@ -197,6 +197,7 @@ export function SidePanelContent({
         }
 
         setIsLoadingMoreMessages(true);
+        const requestedUnder = `${user?.id ?? ''}:${conversationId}`;
         try {
             const response = await fetchFromApi(`/api/conversation/${conversationId}?page=${pageNumberConversationHistory}`, {
                 method: 'GET',
@@ -211,7 +212,7 @@ export function SidePanelContent({
 
             // Where a tutoring session in this conversation stands. Every page
             // carries the latest one, since the turn that set it may be on any.
-            if (response.tutor_state) {
+            if (response.tutor_state && tutorSessionKeyRef.current === requestedUnder) {
                 setTutorState(response.tutor_state);
             }
 
@@ -244,7 +245,7 @@ export function SidePanelContent({
                 setIsFetchingHistory(false);
             }
         }
-    }, [hasMoreMessages, isLoadingMoreMessages, conversationId, pageNumberConversationHistory, isFetchingHistory]);
+    }, [hasMoreMessages, isLoadingMoreMessages, conversationId, pageNumberConversationHistory, isFetchingHistory, user?.id]);
 
 
 
@@ -306,9 +307,15 @@ export function SidePanelContent({
     // The session shown belongs to one person's conversation. When either
     // changes under this component, what was on screen is someone else's (or
     // another paper's) until the new conversation's own state arrives.
+    // A history read or a reply that was already on its way when that
+    // happened belongs to the old session too, and must not put it back.
+    // Each one notes the session it started under and checks before writing.
+    const tutorSessionKey = `${user?.id ?? ''}:${conversationId ?? ''}`;
+    const tutorSessionKeyRef = useRef(tutorSessionKey);
     useEffect(() => {
+        tutorSessionKeyRef.current = tutorSessionKey;
         setTutorState(null);
-    }, [user?.id, conversationId]);
+    }, [tutorSessionKey]);
 
     const handleTutorModeChange = useCallback((enabled: boolean) => {
         setTutorMode(enabled);
@@ -493,6 +500,7 @@ export function SidePanelContent({
 
         // If the answer is re-sent from scratch, the panel goes back to this.
         const tutorStateBefore = tutorState;
+        const sentUnder = tutorSessionKeyRef.current;
 
         if (!command) {
             // Clear input field
@@ -606,7 +614,9 @@ export function SidePanelContent({
                             setStreamingReferences(undefined);
                             // The abandoned attempt's session state goes with
                             // it; the server did not keep it either.
-                            setTutorState(tutorStateBefore);
+                            if (tutorSessionKeyRef.current === sentUnder) {
+                                setTutorState(tutorStateBefore);
+                            }
                         }
                         else if (chunkType === 'references') {
                             referenceChunks++;
@@ -620,7 +630,9 @@ export function SidePanelContent({
                         } else if (chunkType === 'tutor_state') {
                             // A tutor turn's session state, for the progress
                             // panel. It is not part of the message.
-                            setTutorState(chunkContent);
+                            if (tutorSessionKeyRef.current === sentUnder) {
+                                setTutorState(chunkContent);
+                            }
                         } else if (chunkType === 'error') {
                             console.error('Server error in stream:', chunkContent);
                             throw new Error(`Server error: ${chunkContent}`);
