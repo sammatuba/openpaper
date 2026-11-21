@@ -11,6 +11,9 @@ class ResponseStyle(str, Enum):
     NORMAL = "normal"
     CONCISE = "concise"
     DETAILED = "detailed"
+    # Not a length setting: a different mode of the paper chat, in which the
+    # model teaches by asking instead of answering. See app.llm.tutor.
+    TUTOR = "tutor"
 
 
 class Evidence(BaseModel):

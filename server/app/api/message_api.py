@@ -27,6 +27,7 @@ from app.llm.operations import operations
 from app.llm.paper_operations import PaperNotFoundError
 from app.schemas.artifact import artifact_payload_adapter
 from app.schemas.message import EvidenceCollection, ResponseStyle
+from app.schemas.tutor import TUTOR_TRACE_KEY
 from app.schemas.user import CurrentUser
 from app.tasks.chart_generation import generate_chart
 from dotenv import load_dotenv
@@ -175,7 +176,15 @@ async def _stream_chat_chunks(
             # this stream opened, and are still valid.
             content_chunks.clear()
             evidence_container["evidence"] = None
+            evidence_container.pop("tutor_state", None)
             yield f"{json.dumps({'type': 'reset', 'content': ''})}{END_DELIMITER}"
+            continue
+
+        if chunk_type == "tutor_state":
+            # A tutor turn's session state: kept for the caller to store with
+            # the message, and forwarded so the progress panel follows along.
+            evidence_container["tutor_state"] = chunk_content
+            yield f"{json.dumps({'type': 'tutor_state', 'content': chunk_content})}{END_DELIMITER}"
             continue
 
         if chunk_type == "artifact":
@@ -787,6 +796,8 @@ async def chat_message_stream(
     - normal: Standard balanced response
     - concise: Short and to the point
     - detailed: Comprehensive and thorough
+    - tutor: Teaches the paper by asking instead of answering. The stream then
+      also carries a `tutor_state` chunk, stored on the assistant message.
     """
     try:
 
@@ -817,6 +828,10 @@ async def chat_message_stream(
                     yield chunk
 
                 evidence = evidence_container["evidence"]
+                # Present only on a tutor turn whose state block parsed. A turn
+                # without one is saved as an ordinary message, and the session
+                # carries on from the last state that was stored.
+                tutor_state = evidence_container.get("tutor_state")
 
                 # Save the complete message to the database
                 full_content = "".join(content_chunks)
@@ -875,6 +890,7 @@ async def chat_message_stream(
                         role="assistant",
                         content=full_content,
                         references=evidence if evidence else None,
+                        trace=({TUTOR_TRACE_KEY: tutor_state} if tutor_state else None),
                     ),
                     user=current_user,
                 )
