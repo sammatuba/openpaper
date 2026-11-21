@@ -40,6 +40,7 @@ SUITES = (
     "tests.test_research_core",
     "tests.test_research_core_postgres",
     "tests.test_tutor_state_postgres",
+    "tests.test_project_tutor_postgres",
 )
 
 RUNNER = """

@@ -10,12 +10,17 @@ import {
     ChartGenerationJob,
     MessageTrace,
     Reference,
+    TutorState,
 } from '@/lib/schema';
 import { useAuth } from '@/lib/auth';
 import { useProjectWorkspace } from '@/components/project/ProjectWorkspaceProvider';
 import { PaperItem } from "@/lib/schema";
 import { toast } from "sonner";
+import { GraduationCap } from 'lucide-react';
 import { ConversationView } from '@/components/ConversationView';
+import TutorPanel from '@/components/tutor/TutorPanel';
+import { Toggle } from '@/components/ui/toggle';
+import { cn } from '@/lib/utils';
 import {
     MentionSelection,
     EMPTY_MENTION_SELECTION,
@@ -28,7 +33,14 @@ interface ChatRequestBody {
     conversation_id: string | null;
     project_id?: string;
     mentioned_paper_ids?: string[];
+    // Omitted for an ordinary answer. 'tutor' has the model teach the
+    // project's papers by asking, instead of answering.
+    style?: 'tutor';
 }
+
+// Whether tutor mode is on for a conversation, remembered per browser. The
+// session itself is kept with the conversation on the server.
+const TUTOR_MODE_STORAGE_PREFIX = 'openpaper:tutor-mode:conversation:';
 
 const chatLoadingMessages = [
     "Thinking about your question...",
@@ -88,8 +100,44 @@ function ProjectConversationPageContent() {
     const [highlightedInfo, setHighlightedInfo] = useState<{ paperId: string; messageIndex: number } | null>(null);
     const [isCentered, setIsCentered] = useState(false);
     const [isSessionLoading, setIsSessionLoading] = useState(true);
+    const [tutorMode, setTutorMode] = useState(false);
+    const [tutorState, setTutorState] = useState<TutorState | null>(null);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    // A command from the tutor panel that failed while a draft was in the
+    // input, kept so that Retry sends the command and not the draft.
+    const retryMessageRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        try {
+            setTutorMode(localStorage.getItem(`${TUTOR_MODE_STORAGE_PREFIX}${conversationIdFromUrl}`) === 'true');
+        } catch {
+            // Storage can be unavailable (private mode); the switch still
+            // works for this visit.
+            setTutorMode(false);
+        }
+    }, [conversationIdFromUrl]);
+
+    const handleTutorModeChange = useCallback((enabled: boolean) => {
+        setTutorMode(enabled);
+        try {
+            localStorage.setItem(`${TUTOR_MODE_STORAGE_PREFIX}${conversationIdFromUrl}`, String(enabled));
+        } catch {
+            // See above.
+        }
+    }, [conversationIdFromUrl]);
+
+    // The session shown belongs to one person's conversation. When either
+    // changes under this page, what was on screen is someone else's (or
+    // another conversation's) until the new one's own state arrives. A
+    // history read or a reply already on its way belongs to the old session
+    // too: each notes the session it started under and checks before writing.
+    const tutorSessionKey = `${user?.id ?? ''}:${conversationIdFromUrl ?? ''}`;
+    const tutorSessionKeyRef = useRef(tutorSessionKey);
+    useEffect(() => {
+        tutorSessionKeyRef.current = tutorSessionKey;
+        setTutorState(null);
+    }, [tutorSessionKey]);
 
     const END_DELIMITER = "END_OF_STREAM";
 
@@ -155,6 +203,7 @@ function ProjectConversationPageContent() {
 
 
     const fetchMessages = useCallback(async (id: string) => {
+        const requestedUnder = tutorSessionKeyRef.current;
         try {
             const response = await fetchFromApi(`/api/projects/conversations/${projectId}/${id}`);
             if (response && response.messages) {
@@ -162,6 +211,16 @@ function ProjectConversationPageContent() {
                 setIsOwner(response.is_owner);
                 setConversationId(id);
                 setIsCentered(false);
+                // Where the owner's tutoring session in this conversation
+                // stands. Another member is never sent one.
+                if (response.tutor_state && tutorSessionKeyRef.current === requestedUnder) {
+                    // A history read that was slow to return must not roll
+                    // the panel back past a turn that has been saved since.
+                    const fromHistory: TutorState = response.tutor_state;
+                    setTutorState(current =>
+                        current && current.turn > fromHistory.turn ? current : fromHistory
+                    );
+                }
             }
         } catch (error) {
             console.error("Error fetching messages:", error);
@@ -205,7 +264,13 @@ function ProjectConversationPageContent() {
                         // ignore malformed pending mentions
                     }
                 }
-                handleSubmit(null, pendingQuery, pendingMentions);
+                if (pending?.tutor) {
+                    // A study session started from the Discuss page. The
+                    // switch is set for later turns; this first one is told
+                    // outright, since the state above has not rendered yet.
+                    handleTutorModeChange(true);
+                }
+                handleSubmit(null, pendingQuery, pendingMentions, pending?.tutor ? { tutor: true } : undefined);
             } else if (messages.length === 0 && isSessionLoading && !isStreaming) {
                 fetchMessages(conversationIdFromUrl);
             }
@@ -271,7 +336,11 @@ function ProjectConversationPageContent() {
         }
     }, [isStreaming]);
 
-    const handleSubmit = useCallback(async (e: FormEvent | null = null, message?: string, mentionsOverride?: MentionSelection) => {
+    // `message` is sent in place of what is typed, and leaves the input as it
+    // is: a discussion's first prompt, or a command picked from the tutor
+    // panel. `options.tutor` says outright whether this turn goes to the
+    // tutor, for a caller that knows before the switch has rendered.
+    const handleSubmit = useCallback(async (e: FormEvent | null = null, message?: string, mentionsOverride?: MentionSelection, options?: { tutor?: boolean }) => {
         if (e) {
             e.preventDefault();
         }
@@ -280,11 +349,24 @@ function ProjectConversationPageContent() {
 
         if (!query.trim() || isStreaming || !conversationId) return;
 
+        // Only in a conversation of the member's own, which is where the
+        // server takes a tutor turn and where the switch is shown.
+        const asTutor = options?.tutor ?? (isOwner && tutorMode);
+        // If the answer is re-sent from scratch, the panel goes back to this.
+        const tutorStateBefore = tutorState;
+        const sentUnder = tutorSessionKeyRef.current;
+        // Whatever failed before, this send replaces it as the thing to retry.
+        retryMessageRef.current = null;
+
         // Get the artifacts panel out of the way so the reply is front-and-center.
         collapseArtifacts();
 
         // Snapshot @-mention scope for this send, then clear it from the input.
-        const submittedMentions = mentionsOverride ?? mentionSelection;
+        // A tutor turn has none: it covers the whole project, whatever papers
+        // are open beside the chat.
+        const submittedMentions = asTutor
+            ? EMPTY_MENTION_SELECTION
+            : mentionsOverride ?? mentionSelection;
         const userMessage: ChatMessage = {
             role: 'user',
             content: query,
@@ -316,6 +398,9 @@ function ProjectConversationPageContent() {
         if (submittedMentions.paperIds.length > 0) {
             requestBody.mentioned_paper_ids = submittedMentions.paperIds;
         }
+        if (asTutor) {
+            requestBody.style = 'tutor';
+        }
 
         try {
             const stream = await fetchStreamFromApi('/api/message/chat/everything', {
@@ -344,6 +429,7 @@ function ProjectConversationPageContent() {
             const chartJobs: ChartGenerationJob[] = [];
             let trace: MessageTrace | undefined = undefined;
             let buffer = '';
+            let serverError: string | null = null;
 
             try {
                 while (true) {
@@ -366,6 +452,15 @@ function ProjectConversationPageContent() {
                             console.warn('Unprocessed buffer at end of stream:', buffer);
                         }
                         break;
+                    }
+
+                    if (tutorSessionKeyRef.current !== sentUnder) {
+                        // The signed-in user or the conversation changed
+                        // while this reply was arriving. It belongs to the
+                        // session it was asked in: stop reading it and show
+                        // none of it.
+                        await reader.cancel();
+                        return;
                     }
 
                     if (!value) {
@@ -413,6 +508,20 @@ function ProjectConversationPageContent() {
                                     references = undefined;
                                     setStreamingChunks([]);
                                     setStreamingReferences(undefined);
+                                    // The abandoned attempt's session state
+                                    // goes with it; the server did not keep
+                                    // it either.
+                                    if (asTutor && tutorSessionKeyRef.current === sentUnder) {
+                                        setTutorState(tutorStateBefore);
+                                    }
+                                } else if (chunkType === 'tutor_state') {
+                                    // A tutor turn's session state, for the
+                                    // panel. It is not part of the message,
+                                    // and it is sent only once the turn is
+                                    // saved.
+                                    if (tutorSessionKeyRef.current === sentUnder) {
+                                        setTutorState(chunkContent as TutorState);
+                                    }
                                 } else if (chunkType === 'references') {
                                     references = chunkContent;
                                     setStreamingReferences(chunkContent);
@@ -430,8 +539,13 @@ function ProjectConversationPageContent() {
                                 } else if (chunkType === 'status') {
                                     setStatusMessage(chunkContent);
                                 } else if (chunkType === 'error') {
+                                    // Noted here and raised below, outside
+                                    // this try: thrown from inside it, the
+                                    // catch meant for an unparseable event
+                                    // took it, and a turn the server refused
+                                    // or failed looked like one still waiting.
                                     console.error('Server error in stream:', chunkContent);
-                                    throw new Error(`Server error: ${chunkContent}`);
+                                    serverError = String(chunkContent);
                                 } else {
                                     console.warn(`Unknown chunk type: ${chunkType}`, parsedChunk);
                                 }
@@ -445,6 +559,10 @@ function ProjectConversationPageContent() {
                             console.error('Event preview (first 200 chars):', event.substring(0, 200));
                             continue;
                         }
+
+                        if (serverError !== null) {
+                            throw new Error(`Server error: ${serverError}`);
+                        }
                     }
                 }
             } finally {
@@ -456,7 +574,7 @@ function ProjectConversationPageContent() {
                 }
             }
 
-            if (accumulatedContent) {
+            if (accumulatedContent && tutorSessionKeyRef.current === sentUnder) {
                 const finalMessage: ChatMessage = {
                     role: 'assistant',
                     content: accumulatedContent,
@@ -515,7 +633,14 @@ function ProjectConversationPageContent() {
             }
 
             setMessages(prev => prev.slice(0, -1));
-            setCurrentMessage(query);
+            // What failed goes back in the input to be sent again, unless it
+            // was sent in place of a draft that is still sitting there. Then
+            // it is kept aside, so that Retry sends it and not the draft.
+            if (message && currentMessage.trim()) {
+                retryMessageRef.current = message;
+            } else {
+                setCurrentMessage(query);
+            }
             setError(`Streaming error: ${error instanceof Error ? error.message : 'Unknown error'}`);
         } finally {
             setIsStreaming(false);
@@ -526,14 +651,38 @@ function ProjectConversationPageContent() {
             setStatusMessage('');
             refetchSubscription();
         }
-    }, [currentMessage, isStreaming, conversationId, projectId, router, refetchSubscription, mentionSelection, papers, openPaperIds, collapseArtifacts]);
+    }, [currentMessage, isStreaming, conversationId, projectId, router, refetchSubscription, mentionSelection, papers, openPaperIds, collapseArtifacts, tutorMode, tutorState, isOwner]);
 
     const [error, setError] = useState<string | null>(null);
 
     const handleRetry = useCallback(() => {
         setError(null);
-        handleSubmit();
+        // A failed command is sent again as itself; the draft it left in the
+        // input is still not the thing being retried.
+        handleSubmit(null, retryMessageRef.current ?? undefined);
     }, [handleSubmit]);
+
+    // A message the learner picked from the tutor panel rather than typed. It
+    // is sent on its own: whatever is in the input stays where it is.
+    const sendTutorCommand = useCallback((command: string) => {
+        setError(null);
+        handleSubmit(null, command);
+    }, [handleSubmit]);
+
+    const openPathPaper = useCallback((paperId: string) => {
+        const paper = papers.find((candidate) => candidate.id === paperId);
+        if (paper) openPaper(paper, null);
+    }, [papers, openPaper]);
+
+    // Tutor mode is offered where a tutor turn is taken: in a conversation
+    // that is the signed-in member's own.
+    const canTutor = isOwner && !isSessionLoading;
+    const isTutoring = canTutor && tutorMode;
+    const tutorDisabledReason = isStreaming
+        ? "Wait for the reply to finish"
+        : chatCreditLimitReached
+            ? "You have used this week's chat credits"
+            : undefined;
 
 
     return (
@@ -566,10 +715,43 @@ function ProjectConversationPageContent() {
                     authLoading={authLoading}
                     onRefreshPaperUrl={refreshPaperUrl}
                     onOpenPaperExternal={openPaper}
-                    mentionSelection={mentionSelection}
-                    onMentionSelectionChange={setMentionSelection}
+                    // A tutor turn covers the whole project, so there is
+                    // nothing to scope it to.
+                    mentionSelection={isTutoring ? EMPTY_MENTION_SELECTION : mentionSelection}
+                    onMentionSelectionChange={isTutoring ? undefined : setMentionSelection}
                     mentionPapersOnly
                     projectId={projectId}
+                    inputPlaceholder={isTutoring ? "Answer the tutor, or ask to be taught these papers." : undefined}
+                    composerAccessory={isTutoring ? (
+                        <TutorPanel
+                            subject="project"
+                            state={tutorState}
+                            disabledReason={tutorDisabledReason}
+                            onCommand={sendTutorCommand}
+                            papers={papers}
+                            onOpenPaper={openPathPaper}
+                        />
+                    ) : undefined}
+                    inputToolbar={canTutor ? (
+                        <Toggle
+                            pressed={tutorMode}
+                            onPressedChange={handleTutorModeChange}
+                            disabled={isStreaming}
+                            title={isStreaming
+                                ? "Wait for the reply to finish"
+                                : tutorMode
+                                    ? "Tutor mode is on: these papers are taught through questions"
+                                    : "Tutor mode: learn these papers through questions instead of answers"}
+                            className={cn(
+                                "h-8 w-fit gap-1.5 px-3 text-xs text-secondary-foreground",
+                                "data-[state=on]:bg-blue-100 data-[state=on]:text-blue-700",
+                                "dark:data-[state=on]:bg-blue-900 dark:data-[state=on]:text-blue-300"
+                            )}
+                        >
+                            <GraduationCap className="h-4 w-4" />
+                            Tutor
+                        </Toggle>
+                    ) : undefined}
                 />
             </div>
         </div>

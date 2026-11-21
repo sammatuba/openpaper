@@ -19,7 +19,7 @@ from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
 
-def _not_a_tutoring_turn() -> tuple:
+def not_a_tutoring_turn() -> tuple:
     """Filter conditions that leave out every message of a tutoring turn.
 
     coalesce, because `?` on a NULL trace is NULL and a bare NOT would then
@@ -117,7 +117,7 @@ class MessageCRUD(CRUDBase[Message, MessageCreate, MessageUpdate]):
             .filter(
                 Message.conversation_id == conversation_id,
                 Message.user_id == current_user.id,
-                *(_not_a_tutoring_turn() if shareable_only else ()),
+                *(not_a_tutoring_turn() if shareable_only else ()),
             )
             .order_by(desc(Message.sequence))  # newest first for pagination
             .offset((page - 1) * page_size)
@@ -170,6 +170,11 @@ class MessageCRUD(CRUDBase[Message, MessageCreate, MessageUpdate]):
         1. Order by sequence DESC for correct pagination (most recent first)
         2. Apply offset and limit
         3. Reverse final results for chronological display
+
+        A project conversation is read by every member of the project. Its
+        tutoring turns are not: a tutoring session is the learner's, so only
+        the member who owns the conversation is sent them. For anyone else
+        they are left out here, in the query, so that pages stay full.
         """
         # First, check if the user has access to the project.
         project_role = (
@@ -197,10 +202,13 @@ class MessageCRUD(CRUDBase[Message, MessageCreate, MessageUpdate]):
         if not conversation:
             return []
 
+        is_owner = str(conversation.user_id) == str(current_user.id)
+
         messages = (
             db.query(Message)
             .filter(
                 Message.conversation_id == conversation_id,
+                *(() if is_owner else not_a_tutoring_turn()),
             )
             .order_by(desc(Message.sequence))  # newest first for pagination
             .offset((page - 1) * page_size)
@@ -250,7 +258,7 @@ class MessageCRUD(CRUDBase[Message, MessageCreate, MessageUpdate]):
                 # A tutoring session is the learner's, not the paper's: its
                 # turns are no part of what a shared paper shows. Filtered
                 # here, in the query, so that pages stay full.
-                *_not_a_tutoring_turn(),
+                *not_a_tutoring_turn(),
             )
             .order_by(desc(Message.sequence))  # newest first for pagination
             .offset((page - 1) * page_size)
