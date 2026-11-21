@@ -8,7 +8,7 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Owner: confirm a save and a note edit from a real browser (fix 2 is live as openpaper-00029-jen). Owner: open the TARA project (52bd2d45-c7b5-451c-ad58-1543524b8924) and judge the canvas with real content; read the ten design findings in REPORT-tara-e2e.md (extracted text of two-column papers is the largest). feat/spatial-workspace is 2+ commits ahead of origin, not pushed. Then, as before: Owner: sign in, open a real project and say whether the canvas is the right home (not deployed yet; deploy needs the owner's go). Owner to know: an account switch in another tab discards this tab's unsaved draft at once; the signed-in app loads a Google Ads tag (main layout). Next slice in the strategy's order: the jump palette; decision B (hand-placed positions) needs a server slice. Owner: look at the panel transition on a real project and decide its timing (160 ms now; design.md says 200 to 300 ms). Three minor review findings are open in docs/work/VERIFICATION-spatial-workspace-flow.md. Not deployed. Then the project canvas, which needs its own intent and must first settle the mount cost of large maps. Operator: sign in and use the Brief panel and map on a real project (header Brief button; Open folded preview on Overview, Evidence, Write). Operator: sign in and read a real brief in the new folded reader (Discuss, and Open folded preview on Overview, Evidence, Write). No PR is open for feat/guided-shell or feat/native-fold-reader; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
+  "next_action": "Owner: confirm one save from a real browser (fix 2 is live as openpaper-00029-jen; a note edit was checked at the API). Owner: decide on a client build and deploy from fix/investigation-dated-papers at 1cf4437d (assistant drafting behind the proxy needs it). Owner: open the TARA project (52bd2d45-c7b5-451c-ad58-1543524b8924) and judge the canvas with real content; read the ten design findings in REPORT-tara-e2e.md (extracted text of two-column papers is the largest). feat/spatial-workspace is 2+ commits ahead of origin, not pushed. Then, as before: Owner: sign in, open a real project and say whether the canvas is the right home (not deployed yet; deploy needs the owner's go). Owner to know: an account switch in another tab discards this tab's unsaved draft at once; the signed-in app loads a Google Ads tag (main layout). Next slice in the strategy's order: the jump palette; decision B (hand-placed positions) needs a server slice. Owner: look at the panel transition on a real project and decide its timing (160 ms now; design.md says 200 to 300 ms). Three minor review findings are open in docs/work/VERIFICATION-spatial-workspace-flow.md. Not deployed. Then the project canvas, which needs its own intent and must first settle the mount cost of large maps. Operator: sign in and use the Brief panel and map on a real project (header Brief button; Open folded preview on Overview, Evidence, Write). Operator: sign in and read a real brief in the new folded reader (Discuss, and Open folded preview on Overview, Evidence, Write). No PR is open for feat/guided-shell or feat/native-fold-reader; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
   "blocked_on": [
     "No current operator browser/session exposed for authenticated production UI acceptance."
   ],
@@ -549,7 +549,7 @@
     "papers_in_project": 9,
     "investigation_revision": 6,
     "artifacts": ".meos/artifacts/tara-e2e (ignored): state, extracted text, exports, journey and capture reports, screenshots",
-    "hotfix_branch": "fix/investigation-dated-papers (from c757bbf0; pushed)",
+    "hotfix_branch": "fix/investigation-dated-papers (from c757bbf0; pushed; head 1cf4437d)",
     "fix_1": {
       "commit": "afbd6fee",
       "cloud_build": "e6ce7ebb-5b12-49f2-8b73-3a3ffb078a0f",
@@ -576,10 +576,12 @@
       "cd09afcb",
       "7091c036",
       "032aa17b",
-      "b83b5dde"
+      "b83b5dde",
+      "df8f6292",
+      "7ceb8241"
     ],
     "development_branch_pushed": false,
-    "owner_sessions_minted": 17,
+    "owner_sessions_minted": 18,
     "not_exercised": [
       "assistant drafting",
       "Discuss",
@@ -590,8 +592,9 @@
       "viewer role",
       "a real phone",
       "the deployed client",
-      "a note edit"
+      "a save from a real browser on the deployed client"
     ],
-    "client_followup": "032aa17b: the page read the revision by parsing the ETag; a suffixed tag gave no base revision for assistant drafting. Fixed on the development branch; needs a client build; not exercised in a browser."
+    "client_followup": "032aa17b (development branch) and 1cf4437d (hotfix branch, pushed 2026-11-21): the page read the revision by parsing the ETag; a suffixed tag gave NaN. No client image built; not deployed; not exercised in a browser.",
+    "note_edit_check": "2026-11-21, public host: unchanged note sent with the proxy-suffixed tag answered 200; wrong tag 412"
   }
 }
