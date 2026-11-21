@@ -4,8 +4,9 @@ import re
 import uuid
 from typing import AsyncGenerator, Literal, Optional, Sequence, Union
 
+from app.database.crud.conversation_crud import conversation_crud
 from app.database.crud.paper_crud import paper_crud
-from app.database.models import Paper
+from app.database.models import ConversableType, Paper
 from app.llm.base import BaseLLMClient, ModelType
 from app.llm.citation_handler import CitationHandler
 from app.llm.json_parser import JSONParser
@@ -160,6 +161,21 @@ class PaperOperations(BaseLLMClient):
         tutor_turn: Optional[int] = None
 
         if response_style == ResponseStyle.TUTOR:
+            # A tutor turn leaves the learner's session state on the message it
+            # is saved to, so it may only go to this paper's own conversation,
+            # which nobody else reads. The request names the paper and the
+            # conversation separately; a project conversation named here would
+            # put that state in front of the project's other members.
+            conversation = conversation_crud.get_conversation_by_id(
+                db, conversation_id=casted_conversation_id, user_id=current_user.id
+            )
+            if (
+                conversation is None
+                or conversation.conversable_type != ConversableType.PAPER
+                or str(conversation.conversable_id) != str(paper.id)
+            ):
+                raise ValueError("Tutor mode works in this paper's own conversation.")
+
             # The session does not live in the transcript — only the last few
             # messages are replayed — so it is read back from where the last
             # tutor turn stored it.
@@ -205,12 +221,39 @@ class PaperOperations(BaseLLMClient):
             history=conversation_history,
             llm_provider=llm_provider,
             model_type=model_type,
+            tutor_turn=tutor_turn,
         )
-        if tutor_turn is not None:
-            answer = split_tutor_state(answer, turn=tutor_turn)
 
         async for chunk in answer:
             yield chunk
+
+    async def _model_text(
+        self,
+        *,
+        message: list,
+        file: FileContent,
+        system_prompt: str,
+        history: list,
+        llm_provider: Optional[LLMProvider],
+        model_type: ModelType,
+    ) -> AsyncGenerator[dict, None]:
+        """The model's raw answer as "content" and "reset" events."""
+        async for chunk in self.send_message_stream(
+            message=message,
+            file=file,
+            system_prompt=system_prompt,
+            history=history,
+            provider=llm_provider,
+            model_type=model_type,
+        ):
+            if chunk.is_restart:
+                yield {"type": "reset", "content": ""}
+                continue
+
+            logger.debug(f"Received chunk: {chunk.text}")
+
+            if chunk.text:
+                yield {"type": "content", "content": chunk.text}
 
     async def _stream_paper_answer(
         self,
@@ -221,12 +264,14 @@ class PaperOperations(BaseLLMClient):
         history: list,
         llm_provider: Optional[LLMProvider],
         model_type: ModelType,
+        tutor_turn: Optional[int] = None,
     ) -> AsyncGenerator[Union[str, dict], None]:
         """Stream one answer about a paper, splitting its evidence block off.
 
         Yields "content" chunks for what the reader sees, one "references"
         chunk for the evidence block, and "reset" when the upstream request was
-        re-sent and everything so far should be discarded.
+        re-sent and everything so far should be discarded. On a tutor turn
+        (`tutor_turn` set) it also yields one "tutor_state" chunk.
         """
         evidence_buffer: list[str] = []
         text_buffer: str = ""
@@ -235,16 +280,27 @@ class PaperOperations(BaseLLMClient):
         START_DELIMITER = "---EVIDENCE---"
         END_DELIMITER = "---END-EVIDENCE---"
 
-        # Chat with the paper using the LLM
-        async for chunk in self.send_message_stream(
+        source: AsyncGenerator[Union[str, dict], None] = self._model_text(
             message=message,
             file=file,
             system_prompt=system_prompt,
             history=history,
-            provider=llm_provider,
+            llm_provider=llm_provider,
             model_type=model_type,
-        ):
-            if chunk.is_restart:
+        )
+        if tutor_turn is not None:
+            # The tutor's state comes out of the raw text before anything
+            # reads it as evidence. Done the other way round, a reply that
+            # forgot to close its evidence block would carry the state into a
+            # citation, and citations are shown to whoever the paper is
+            # shared with.
+            source = split_tutor_state(source, turn=tutor_turn)
+
+        async for event in source:
+            if not isinstance(event, dict):
+                continue
+
+            if event.get("type") == "reset":
                 # The upstream connection dropped mid-answer and the request was
                 # re-sent. The partial answer is not resumable, so drop the
                 # parse state and tell the client to clear what it rendered.
@@ -254,9 +310,12 @@ class PaperOperations(BaseLLMClient):
                 yield {"type": "reset", "content": ""}
                 continue
 
-            text = chunk.text
+            if event.get("type") != "content":
+                # A tutor turn's state. Not text, so not parsed.
+                yield event
+                continue
 
-            logger.debug(f"Received chunk: {text}")
+            text = event.get("content")
 
             if not text:
                 continue
@@ -311,19 +370,9 @@ class PaperOperations(BaseLLMClient):
                 yield {"type": "content", "content": to_yield}
                 text_buffer = text_buffer[-len(START_DELIMITER) :]
 
-        if in_evidence_section:
-            # The stream ended inside the block, most likely at the output
-            # limit. The citations that did arrive are still worth having.
-            structured_evidence = CitationHandler.parse_evidence_block(
-                "".join(evidence_buffer)
-            )
-            if structured_evidence:
-                yield {
-                    "type": "references",
-                    "content": {
-                        "citations": structured_evidence,
-                    },
-                }
+        # A block the stream ended inside is dropped, as it always was: its last
+        # quotation is cut off wherever the output stopped, and a cut-off
+        # quotation presented as the paper's words is worse than none.
 
         if text_buffer:
             yield {"type": "content", "content": text_buffer}

@@ -302,7 +302,20 @@ class TutorPromptTest(unittest.TestCase):
 class ChatWithPaperTest(unittest.IsolatedAsyncioTestCase):
     """The paper chat end to end, with the model and the database replaced."""
 
-    async def run_chat(self, style, model_text, stored_state=None, pieces=None):
+    PAPER_ID = uuid.uuid4()
+    # The paper's own conversation, which is what the reader always sends.
+    OWN_CONVERSATION = SimpleNamespace(
+        conversable_type="paper", conversable_id=PAPER_ID
+    )
+
+    async def run_chat(
+        self,
+        style,
+        model_text,
+        stored_state=None,
+        pieces=None,
+        conversation=OWN_CONVERSATION,
+    ):
         operations = PaperOperations.__new__(PaperOperations)
         seen = {}
         if pieces is None:
@@ -315,10 +328,16 @@ class ChatWithPaperTest(unittest.IsolatedAsyncioTestCase):
                 yield SimpleNamespace(text=piece, is_restart=False)
 
         operations.send_message_stream = send_message_stream
-        paper = SimpleNamespace(title="A paper", s3_object_key="k", raw_content="text")
+        paper = SimpleNamespace(
+            id=self.PAPER_ID, title="A paper", s3_object_key="k", raw_content="text"
+        )
 
         with (
             patch("app.llm.paper_operations.paper_crud.get", return_value=paper),
+            patch(
+                "app.llm.paper_operations.conversation_crud.get_conversation_by_id",
+                return_value=conversation,
+            ) as own_conversation,
             patch(
                 "app.llm.paper_operations.message_crud.get_conversation_messages",
                 return_value=[],
@@ -343,6 +362,7 @@ class ChatWithPaperTest(unittest.IsolatedAsyncioTestCase):
                     db=None,
                 )
             ]
+        self.conversation_lookup = own_conversation
         return chunks, seen, latest_state
 
     async def test_a_tutor_turn_carries_its_state_and_hides_the_block(self):
@@ -419,15 +439,100 @@ class ChatWithPaperTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(visible(chunks), f"{answer}\n\n{closing}")
                 self.assertEqual(citations(chunks), [CITATION])
 
-    async def test_an_evidence_block_the_stream_ended_inside_still_cites(self):
-        whole = 'Right [^1].\n\n---EVIDENCE---\n@cite[1]\n"Self-attention layers'
+    async def test_an_evidence_block_the_stream_ended_inside_is_not_cited(self):
+        """Cut off in the quotation or in the closing marker itself, an
+        unfinished block yields no citation, as before this change. A quotation
+        that stops wherever the output did is not the paper's words, and one
+        ending in half a marker is not even text."""
+        for ending in ('"Self-attention layers', '"Full passage."\n---END-EVIDENC'):
+            with self.subTest(ending=ending):
+                whole = f"Right [^1].\n\n---EVIDENCE---\n@cite[1]\n{ending}"
 
-        chunks, _, _ = await self.run_chat(ResponseStyle.NORMAL, whole)
+                chunks, _, _ = await self.run_chat(ResponseStyle.NORMAL, whole)
 
-        self.assertEqual(visible(chunks), "Right [^1].\n\n")
-        self.assertEqual(
-            citations(chunks), [{"key": 1, "reference": '"Self-attention layers'}]
+                self.assertEqual(visible(chunks), "Right [^1].\n\n")
+                self.assertEqual(citations(chunks), [])
+
+    async def test_an_unclosed_evidence_block_cannot_carry_the_state_out(self):
+        """The tutor forgets `---END-EVIDENCE---` and goes straight on to its
+        state. Citations are stored with the message and shown to anyone the
+        paper is shared with, so nothing of the state may end up in one."""
+        whole = (
+            "Right. Why? [^1]\n\n"
+            '---EVIDENCE---\n@cite[1]\n"Self-attention layers are faster"\n\n'
+            f"{BLOCK}"
         )
+        expected = {**TutorState.model_validate(STATE).model_dump(), "turn": 1}
+
+        for cut in range(0, len(whole)):
+            pieces = [whole[:cut], whole[cut:]] if cut else [whole]
+            with self.subTest(cut=cut):
+                chunks, _, _ = await self.run_chat(
+                    ResponseStyle.TUTOR, whole, pieces=pieces
+                )
+
+                self.assertEqual(states(chunks), [expected])
+                everything_else = json.dumps(
+                    [c for c in chunks if c.get("type") != "tutor_state"]
+                )
+                self.assertNotIn("confuses path length with depth", everything_else)
+                self.assertNotIn("TUTOR-STATE", everything_else)
+                self.assertEqual(visible(chunks), "Right. Why? [^1]\n\n")
+
+    async def test_tutor_mode_is_refused_outside_the_papers_own_conversation(self):
+        """The request names the paper and the conversation separately. A
+        tutor turn sent to a project conversation would store the learner's
+        state where the project's other members read."""
+        elsewhere = [
+            None,  # not this user's conversation, or not a conversation at all
+            SimpleNamespace(conversable_type="project", conversable_id=uuid.uuid4()),
+            SimpleNamespace(conversable_type="everything", conversable_id=None),
+            SimpleNamespace(conversable_type="paper", conversable_id=uuid.uuid4()),
+        ]
+        for conversation in elsewhere:
+            with self.subTest(conversation=conversation):
+                with self.assertRaises(ValueError):
+                    await self.run_chat(
+                        ResponseStyle.TUTOR, f"Why?{BLOCK}", conversation=conversation
+                    )
+
+    async def test_the_model_is_not_called_for_a_refused_tutor_turn(self):
+        operations = PaperOperations.__new__(PaperOperations)
+        called = []
+
+        async def send_message_stream(**kwargs):
+            called.append(kwargs)
+            yield SimpleNamespace(text="Why?", is_restart=False)
+
+        operations.send_message_stream = send_message_stream
+        paper = SimpleNamespace(id=uuid.uuid4(), title="A paper", s3_object_key="k")
+        with (
+            patch("app.llm.paper_operations.paper_crud.get", return_value=paper),
+            patch(
+                "app.llm.paper_operations.conversation_crud.get_conversation_by_id",
+                return_value=None,
+            ),
+            patch(
+                "app.llm.paper_operations.message_crud.get_conversation_messages",
+                return_value=[],
+            ),
+            patch(
+                "app.llm.paper_operations.message_crud.get_latest_tutor_state"
+            ) as latest_state,
+        ):
+            with self.assertRaises(ValueError):
+                async for _ in operations.chat_with_paper(
+                    paper_id=str(paper.id),
+                    conversation_id=str(uuid.uuid4()),
+                    question="x",
+                    current_user=SimpleNamespace(id=uuid.uuid4()),
+                    response_style=ResponseStyle.TUTOR,
+                    db=None,
+                ):
+                    pass
+
+        self.assertEqual(called, [])
+        latest_state.assert_not_called()
 
     async def test_an_ordinary_answer_is_untouched_by_tutor_mode(self):
         model_text = (
@@ -446,6 +551,9 @@ class ChatWithPaperTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("personal tutor", seen["system_prompt"])
         self.assertIn("Query:", seen["message"][0].text)
         latest_state.assert_not_called()
+        # The conversation check belongs to tutor turns. An ordinary answer
+        # stores nothing private, and is sent as it always was.
+        self.conversation_lookup.assert_not_called()
 
     async def test_text_after_the_evidence_block_arrives_once(self):
         """It used to arrive twice: once when the block closed, and again when
@@ -481,13 +589,15 @@ class StreamChatChunksTest(unittest.IsolatedAsyncioTestCase):
         ]
         return sent, container
 
-    async def test_the_state_is_kept_for_saving_and_sent_to_the_client(self):
+    async def test_the_state_is_kept_for_saving_but_not_yet_sent(self):
+        """Sending it is the endpoint's job, after the save. Forwarded from
+        here it would reach the panel before anyone knew the turn was kept."""
         sent, container = await self.collect(
             content("Why?"), {"type": "tutor_state", "content": STATE}
         )
 
         self.assertEqual(container["tutor_state"], STATE)
-        self.assertIn({"type": "tutor_state", "content": STATE}, sent)
+        self.assertEqual(sent, [{"type": "content", "content": "Why?"}])
 
     async def test_a_restart_forgets_the_state_of_the_abandoned_attempt(self):
         _, container = await self.collect(
@@ -507,7 +617,9 @@ class TutorEndpointsTest(unittest.IsolatedAsyncioTestCase):
     noticing, so each is held here at the endpoint itself.
     """
 
-    async def chat(self, style, *chunks):
+    async def chat(self, style, *chunks, save_error=None):
+        """Run the endpoint; return what it saved, in order, and what it sent."""
+
         async def chat_with_paper(**kwargs):
             for chunk in chunks:
                 yield chunk
@@ -518,17 +630,25 @@ class TutorEndpointsTest(unittest.IsolatedAsyncioTestCase):
             user_query="Because every position attends to every other one.",
             style=style,
         )
+        self.sent = []
         with (
             patch.object(message_api.operations, "chat_with_paper", chat_with_paper),
-            patch.object(message_api.message_crud, "create") as create,
+            patch.object(
+                message_api.message_crud, "create", side_effect=save_error
+            ) as create,
             patch.object(message_api, "track_event"),
         ):
             response = await message_api.chat_message_stream(
                 request, db=None, current_user=SimpleNamespace(id=uuid.uuid4())
             )
-            async for _ in response.body_iterator:
-                pass
+            async for event in response.body_iterator:
+                body = event.replace("END_OF_STREAM", "")
+                if body:
+                    self.sent.append(json.loads(body))
         return [call.kwargs["obj_in"] for call in create.call_args_list]
+
+    def sent_states(self):
+        return [e["content"] for e in self.sent if e["type"] == "tutor_state"]
 
     async def test_a_tutor_turn_is_saved_with_its_state(self):
         saved = await self.chat(
@@ -541,6 +661,68 @@ class TutorEndpointsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved[1].content, "Why?")
         self.assertEqual(saved[1].trace, {"tutor": STATE})
         self.assertIsNone(saved[0].trace)
+        # And only then told to the reader, as the last thing in the stream.
+        self.assertEqual(self.sent_states(), [STATE])
+        self.assertEqual(self.sent[-1]["type"], "tutor_state")
+
+    async def test_a_reply_that_is_only_state_changes_nothing_the_learner_sees(self):
+        """No visible text is a failed turn: nothing is saved. The panel must
+        not move on to a state the server threw away."""
+        saved = await self.chat(
+            ResponseStyle.TUTOR, {"type": "tutor_state", "content": STATE}
+        )
+
+        self.assertEqual(saved, [])
+        self.assertEqual(self.sent_states(), [])
+        self.assertEqual([e["type"] for e in self.sent], ["error"])
+
+    async def test_a_turn_that_fails_to_save_does_not_send_its_state(self):
+        await self.chat(
+            ResponseStyle.TUTOR,
+            content("Why?"),
+            {"type": "tutor_state", "content": STATE},
+            save_error=RuntimeError("database unavailable"),
+        )
+
+        self.assertEqual(self.sent_states(), [])
+        self.assertEqual(self.sent[-1]["type"], "error")
+
+    async def test_a_project_member_reading_a_conversation_gets_no_tutor_state(self):
+        """Tutor mode is refused outside a paper's own conversation, so none
+        should ever be stored here. If one is, it still is not handed out."""
+        from app.api.projects import project_conversations_api as api
+
+        project_id, conversation_id = uuid.uuid4(), uuid.uuid4()
+        with (
+            patch.object(
+                api.project_conversation_crud,
+                "get_by_conversation_id",
+                return_value=SimpleNamespace(
+                    id=conversation_id, title="Shared thread", user_id=uuid.uuid4()
+                ),
+            ),
+            patch.object(
+                api.message_crud, "get_project_conversation_messages", return_value=[]
+            ),
+            patch.object(
+                api.message_crud,
+                "messages_to_dict",
+                return_value=[
+                    {"content": "Why?", "trace": {"tutor": STATE, "tool_calls": []}}
+                ],
+            ),
+        ):
+            response = await api.get_project_conversation(
+                str(project_id),
+                str(conversation_id),
+                db=None,
+                current_user=SimpleNamespace(id=uuid.uuid4()),
+            )
+
+        body = json.loads(response.body)
+        self.assertEqual([m["content"] for m in body["messages"]], ["Why?"])
+        self.assertEqual(body["messages"][0]["trace"], {"tool_calls": []})
+        self.assertNotIn("confuses path length with depth", response.body.decode())
 
     async def test_a_tutor_turn_that_lost_its_state_is_still_saved(self):
         saved = await self.chat(ResponseStyle.TUTOR, content("Why?"))

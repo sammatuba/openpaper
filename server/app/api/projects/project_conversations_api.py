@@ -10,6 +10,7 @@ from app.database.crud.projects.project_conversation_crud import (
 from app.database.database import get_db
 from app.database.models import Conversation
 from app.database.telemetry import track_event
+from app.schemas.tutor import without_tutor_state
 from app.schemas.user import CurrentUser
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -139,7 +140,12 @@ async def get_project_conversation(
             page=page,
             page_size=page_size,
         )
-        formatted_messages = message_crud.messages_to_dict(messages)
+        # A project conversation is read by the project's members. Tutor state
+        # is never meant to be stored on one (tutor mode is refused outside a
+        # paper's own conversation), and is not handed out if it ever is.
+        formatted_messages = without_tutor_state(
+            message_crud.messages_to_dict(messages)
+        )
 
         return JSONResponse(
             status_code=200,

@@ -182,9 +182,10 @@ async def _stream_chat_chunks(
 
         if chunk_type == "tutor_state":
             # A tutor turn's session state: kept for the caller to store with
-            # the message, and forwarded so the progress panel follows along.
+            # the message. Not forwarded from here. The caller sends it once
+            # the message is saved, so the progress panel never shows a state
+            # the server did not keep.
             evidence_container["tutor_state"] = chunk_content
-            yield f"{json.dumps({'type': 'tutor_state', 'content': chunk_content})}{END_DELIMITER}"
             continue
 
         if chunk_type == "artifact":
@@ -796,8 +797,9 @@ async def chat_message_stream(
     - normal: Standard balanced response
     - concise: Short and to the point
     - detailed: Comprehensive and thorough
-    - tutor: Teaches the paper by asking instead of answering. The stream then
-      also carries a `tutor_state` chunk, stored on the assistant message.
+    - tutor: Teaches the paper by asking instead of answering. Only in the
+      paper's own conversation. The stream then ends with a `tutor_state`
+      chunk, sent once that state is stored on the assistant message.
     """
     try:
 
@@ -894,6 +896,11 @@ async def chat_message_stream(
                     ),
                     user=current_user,
                 )
+
+                # Only now, with the turn saved, is the session state the
+                # reader's to show.
+                if tutor_state:
+                    yield f"{json.dumps({'type': 'tutor_state', 'content': tutor_state})}{END_DELIMITER}"
 
                 # Track chat message event
                 track_event(
