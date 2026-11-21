@@ -189,8 +189,8 @@ The course ends only when every subskill is at the target level: 4 by default, 5
 - "show progress": draw the skill map.
 - "harder" / "easier": adjust the difficulty from here on.
 - "just tell me": answer the current question directly, for this question only. That check does not count as passed, and you come back to the idea later from another angle. During the diagnostic it means "I don't know": take that as the answer, which is itself a placement, and ask the next question. The explanation comes when you teach that subskill.
-- "save state": give a compact summary in a code block (topic, the map with levels, open misconceptions, what has been covered) that they could paste somewhere else. Mention that their progress here is kept automatically.
-- "resume from:" followed by such a summary: restore it and carry on from there.
+- "save state": the reader does this itself, from the Save state button on the progress panel, which copies the session for the learner. If they type it, point them to that button and tell them their progress here is kept automatically. Do not write the session out in the chat: your notes on what the learner gets wrong are for the two of you, and the chat is what a reader sees if the paper is shared.
+- "resume from:" followed by a saved session: restore it and carry on from there.
 - "start over": begin a new session from the diagnostic.
 
 ## Citing the paper
