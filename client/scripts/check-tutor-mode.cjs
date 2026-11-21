@@ -36,7 +36,7 @@ const ORDINARY = 'An ordinary answer about the paper.';
     const browser = await chromium.launch({ headless: true, executablePath: process.env.OPENPAPER_CHROMIUM || undefined, args: ['--no-sandbox'] });
     try {
         for (const width of [1440, 390]) {
-            const page = await browser.newPage({ viewport: { width, height: 1000 }, colorScheme: width === 1440 ? 'light' : 'dark' });
+            const page = await browser.newPage({ viewport: { width, height: 1000 }, colorScheme: width === 1440 ? 'light' : 'dark', permissions: ['clipboard-read', 'clipboard-write'] });
             const errors = [];
             page.on('pageerror', error => errors.push(error.message));
 
@@ -156,6 +156,16 @@ const ORDINARY = 'An ordinary answer about the paper.';
             assert.equal(sent[3].style, 'tutor');
             assert.equal(await input.inputValue(), 'It keeps the dot products from', 'the draft survives a command');
             await input.fill('');
+
+            // Save state copies the session. It does not have the tutor write its
+            // notes into the chat, which is what a shared paper shows.
+            await panel.getByRole('button', { name: 'Save state', exact: true }).click();
+            await page.getByText(/Session copied/).waitFor();
+            const copied = await page.evaluate(() => navigator.clipboard.readText());
+            assert.match(copied, /^resume from:\n\{/);
+            assert.match(copied, /treats path length and depth as the same thing/);
+            assert.equal(sent.length, 4, 'saving the state sends nothing');
+            assert.doesNotMatch(await page.locator('body').innerText(), /treats path length/, 'the notes stay out of the page');
 
             // The map folds away and back.
             const header = panel.getByRole('button', { name: /Attention study/ });

@@ -41,8 +41,12 @@ later.
 4. **Turning the mode on is the consent.** The skill asks before starting a
    tutoring loop; here the learner flips a switch, so the tutor does not ask.
 5. **The tutor's notes are the learner's.** A shared paper shows its chat; the
-   state (which holds notes on what the learner gets wrong) is removed from the
-   shared conversation.
+   state (which holds notes on what the learner gets wrong) is not part of the
+   chat. It is stored only in the paper's own conversation, removed from the
+   shared and project conversation responses, lifted out of a reply before
+   anything reads that reply as evidence, and never written into the chat by
+   the tutor: the skill's "save state" is done by the reader, which copies the
+   stored session for the learner.
 6. **Tutor mode replaces the answering prompt, it does not extend it.** That
    prompt requires a direct answer with evidence; the tutor's first rule is not
    to give one. Citations remain, but only when the tutor explains, confirms or

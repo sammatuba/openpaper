@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Check, ChevronDown, ChevronUp, GraduationCap } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -43,8 +44,15 @@ const SESSION_COMMANDS = [
     { label: "Easier", message: "easier" },
     { label: "Harder", message: "harder" },
     { label: "Just tell me", message: "just tell me" },
-    { label: "Save state", message: "save state" },
 ];
+
+// What "Save state" copies: the session in the form the tutor restores from.
+// Built here from the state the reader already holds, not by asking the tutor
+// to write it out, because the chat is what a shared paper shows and the
+// session holds notes on what the learner gets wrong.
+function sessionExport(state: TutorState): string {
+    return `resume from:\n${JSON.stringify(state, null, 2)}`;
+}
 
 const FINISHED_COMMANDS = [
     { label: "Show progress", message: "show progress" },
@@ -82,6 +90,17 @@ export default function TutorPanel({ state, disabledReason, onCommand }: TutorPa
 
     // Levels mean nothing until the diagnostic has placed them.
     const isPlaced = !!state && state.phase !== "diagnostic";
+
+    const copySession = async () => {
+        if (!state) return;
+        try {
+            await navigator.clipboard.writeText(sessionExport(state));
+            toast.success("Session copied. Paste it into a tutor chat to resume it there.");
+        } catch (error) {
+            console.error("Error copying the tutoring session:", error);
+            toast.error("Couldn't copy the session. Try again.");
+        }
+    };
 
     return (
         <Collapsible open={isOpen} onOpenChange={setIsOpen} asChild>
@@ -200,6 +219,18 @@ export default function TutorPanel({ state, disabledReason, onCommand }: TutorPa
                                 {command.label}
                             </Button>
                         ))}
+                        {isPlaced && (
+                            // Copies; sends nothing, so it works mid-reply too.
+                            <Button
+                                type="button"
+                                variant="outline"
+                                className="h-6 shrink-0 rounded-full px-2 text-xs font-normal text-secondary-foreground"
+                                title="Copy this session so it can be resumed in another tutor chat"
+                                onClick={copySession}
+                            >
+                                Save state
+                            </Button>
+                        )}
                     </div>
                 </CollapsibleContent>
             </section>
