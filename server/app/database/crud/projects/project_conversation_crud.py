@@ -2,11 +2,19 @@ import logging
 import uuid
 from typing import List, Optional
 
+from app.database.crud.message_crud import not_a_tutoring_turn
 from app.database.crud.projects.project_base_crud import ProjectBaseCRUD
 from app.database.crud.projects.project_crud import project_crud
-from app.database.models import ConversableType, Conversation, ProjectRole, ProjectRoles
+from app.database.models import (
+    ConversableType,
+    Conversation,
+    Message,
+    ProjectRole,
+    ProjectRoles,
+)
 from app.schemas.user import CurrentUser
 from pydantic import BaseModel
+from sqlalchemy import exists, or_
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -95,11 +103,25 @@ class ProjectConversationCRUD(
         if not project_role:
             return []
 
+        # A member's tutoring turns are not sent to the project's other
+        # members (see message_crud.get_project_conversation_messages), so
+        # another member's conversation is listed only once it holds a turn
+        # this member can read. One that holds nothing but tutoring turns
+        # would open empty and say only that its owner is being tutored. So
+        # would one that is still empty: a study session is created, and
+        # named, before its first turn is saved, and stays empty for good if
+        # that turn never is.
+        has_ordinary_turn = exists().where(
+            Message.conversation_id == self.model.id,
+            *not_a_tutoring_turn(),
+        )
+
         return (
             db.query(self.model)
             .filter(
                 self.model.conversable_id == project_id,
                 self.model.conversable_type == ConversableType.PROJECT,
+                or_(self.model.user_id == user.id, has_ordinary_turn),
             )
             .order_by(self.model.updated_at.desc())
             .all()
@@ -125,10 +147,15 @@ class ProjectConversationCRUD(
         if not project_role:
             return None
 
+        # The role checked above is for `project_id`, so the conversation has
+        # to be one of that project's. Fetched by id alone, a member of one
+        # project could reach a conversation of another by naming their own
+        # project with its id.
         return (
             db.query(self.model)
             .filter(
                 self.model.id == conversation_id,
+                self.model.conversable_id == project_id,
                 self.model.conversable_type == ConversableType.PROJECT,
             )
             .first()

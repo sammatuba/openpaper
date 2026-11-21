@@ -8,11 +8,20 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:textfold": "node scripts/test-textfold.cjs && node scripts/test-fold-view.cjs && node scripts/test-fold-map.cjs && node scripts/test-investigation.cjs",
+    "test:textfold": "node scripts/test-textfold.cjs && node scripts/test-fold-view.cjs && node scripts/test-fold-map.cjs && node scripts/test-camera.cjs && node scripts/test-project-canvas.cjs && node scripts/test-investigation-snapshot.cjs && node scripts/test-investigation-provider.cjs && node scripts/test-reads.cjs && node scripts/test-investigation.cjs",
     "test:research-overview:browser": "node scripts/check-project-research-overview.cjs",
     "test:project-workflow:browser": "node scripts/check-project-workflow.cjs",
     "go": "yarn install && yarn build && yarn start",
-    "test:investigation:browser": "node scripts/check-investigation-workspace.cjs"
+    "test:investigation:browser": "node scripts/check-investigation-workspace.cjs",
+    "test:map-touch:browser": "node scripts/check-map-touch.cjs",
+    "test:flow:browser": "node scripts/check-flow.cjs",
+    "test:canvas:browser": "node scripts/check-canvas.cjs",
+    "test:tutor:browser": "node scripts/check-tutor-mode.cjs",
+    "test:project-tutor:browser": "node scripts/check-project-tutor.cjs",
+    "measure:canvas": "node scripts/measure-canvas.cjs",
+    "measure:bundle": "node scripts/measure-bundle.cjs",
+    "measure:map": "node scripts/measure-map.cjs",
+    "measure:route": "node scripts/measure-route.cjs"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.10",

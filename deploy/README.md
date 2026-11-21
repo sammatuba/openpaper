@@ -210,8 +210,9 @@ and projects in which the user is a member. Search covers titles and abstracts;
 the bounded paper text tool exposes extracted text and its page-offset map.
 Appending a note requires a UUID request ID that must be reused for retries;
 its ledger is kept until the paper or user is deleted. Notes are plain text.
-The note API sends an ETag on GET; conditional PUT requires that exact value
-in `If-Match`, returns 412 if stale, and requires a precondition (428) when MCP
+The note API sends an ETag on GET; conditional PUT requires that value in
+`If-Match` (as received: the proxy's `-gzip` or `-zstd` suffix and a weak
+marker are accepted), returns 412 if stale, and requires a precondition (428) when MCP
 is enabled. POST returns 409 if a note already exists. The browser should keep
 the unsaved draft on conflict and reload before trying again.
 

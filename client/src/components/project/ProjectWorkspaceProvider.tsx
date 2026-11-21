@@ -11,6 +11,8 @@ import {
     useState,
 } from "react";
 import { fetchFromApi, getProjectPaperFileUrl } from "@/lib/api";
+import { withTransition } from "@/lib/transition";
+import { isGone } from "@/lib/reads";
 import { Conversation, MinimalJob, PaperItem, Project } from "@/lib/schema";
 import {
     useProject,
@@ -36,9 +38,14 @@ interface ProjectWorkspaceValue {
     project: Project | null;
     isProjectLoading: boolean;
     projectError: Error | null;
+    // The project is gone or no longer ours to read (401, 403, 404). A plain
+    // failure to load is not this: the workspace keeps its usual error states.
+    projectDenied: boolean;
     refetchProject: () => Promise<void>;
     papers: PaperItem[];
     isPapersLoading: boolean;
+    // The paper list could not be loaded and none is cached: `papers` is empty because it is unknown.
+    papersError: Error | null;
     refetchPapers: () => Promise<void>;
     updatePaper: (paperId: string, patch: Partial<PaperItem>) => void;
     conversations: Conversation[];
@@ -90,7 +97,15 @@ interface ProjectWorkspaceValue {
 export interface PendingDiscussion {
     query: string;
     paperIds: string[];
+    // The discussion is a study session: its first turn, and those after it,
+    // go to the tutor.
+    tutor?: boolean;
 }
+
+const NO_PAPERS: PaperItem[] = [];
+const NO_CONVERSATIONS: Conversation[] = [];
+const NO_IDS: string[] = [];
+const NO_JOBS: MinimalJob[] = [];
 
 const ProjectWorkspaceContext = createContext<ProjectWorkspaceValue | null>(null);
 
@@ -109,7 +124,7 @@ interface ProjectWorkspaceProviderProps {
 
 export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspaceProviderProps) {
     const { project, isLoading: isProjectLoading, error: projectError, refetch: refetchProject } = useProject(projectId);
-    const { papers, isLoading: isPapersLoading, refetch: refetchPapers, updatePaper } = useProjectPapers(projectId);
+    const { papers, isLoading: isPapersLoading, error: papersError, refetch: refetchPapers, updatePaper } = useProjectPapers(projectId);
     const { conversations, isLoading: isConversationsLoading, refetch: refetchConversations } = useProjectConversations(projectId);
 
     const [openPaperIds, setOpenPaperIds] = useState<string[]>([]);
@@ -133,11 +148,41 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
     const [hasCollaborators, setHasCollaborators] = useState(false);
     const [uploadJobs, setUploadJobs] = useState<MinimalJob[]>([]);
 
+    // The panel on screen, for handlers that must act at the click. A panel
+    // change is applied a frame later, inside the transition; a preference
+    // written only there would be lost if the page were left in that frame.
+    const shownPanel = useRef(rightPanel);
+    shownPanel.current = rightPanel;
+    // Whether the artifacts panel was last asked to be open, while that request
+    // is still on its way to the state. Lets two quick toggles save the right preference.
+    // It is kept until every change asked for has been applied, whatever renders in between.
+    const artifactsAsked = useRef<{ open: boolean; pending: number } | null>(null);
+    const askArtifacts = useCallback((open: boolean) => {
+        artifactsAsked.current = { open, pending: (artifactsAsked.current?.pending ?? 0) + 1 };
+        localStorage.setItem("project-artifacts-collapsed", String(!open));
+    }, []);
+    const artifactsApplied = useCallback(() => {
+        const asked = artifactsAsked.current;
+        if (asked && --asked.pending <= 0) artifactsAsked.current = null;
+    }, []);
+    const artifactsOpen = useCallback(() => artifactsAsked.current?.open ?? shownPanel.current === "artifacts", []);
+
+    // A change of what the right slot shows, animated where the browser can.
+    const movePanel = useCallback((next: (mode: RightPanelMode) => RightPanelMode, applied?: () => void) => {
+        withTransition(() => {
+            setRightPanel(next);
+            // After React has rendered the change: at once inside a transition, a microtask later without one.
+            if (applied) queueMicrotask(applied);
+        });
+    }, []);
+
     const openPaper = useCallback((paper: PaperItem, searchTerm: string | null = null) => {
-        setOpenPaperIds((prev) => (prev.includes(paper.id) ? prev : [...prev, paper.id]));
-        setActivePaperId(paper.id);
-        setReaderSearchTerm(searchTerm);
-        setRightPanel("reader");
+        withTransition(() => {
+            setOpenPaperIds((prev) => (prev.includes(paper.id) ? prev : [...prev, paper.id]));
+            setActivePaperId(paper.id);
+            setReaderSearchTerm(searchTerm);
+            setRightPanel("reader");
+        });
     }, []);
 
     const activatePaper = useCallback((paperId: string) => {
@@ -148,25 +193,30 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
     }, []);
 
     const closePaper = useCallback((paperId: string) => {
-        setOpenPaperIds((prev) => {
-            const next = prev.filter((id) => id !== paperId);
-            setActivePaperId((active) => (active === paperId ? (next[next.length - 1] ?? null) : active));
-            if (next.length === 0) {
-                setRightPanel((mode) => (mode === "reader" ? null : mode));
-            }
-            return next;
+        withTransition(() => {
+            setOpenPaperIds((prev) => {
+                const next = prev.filter((id) => id !== paperId);
+                setActivePaperId((active) => (active === paperId ? (next[next.length - 1] ?? null) : active));
+                if (next.length === 0) {
+                    setRightPanel((mode) => (mode === "reader" ? null : mode));
+                }
+                return next;
+            });
         });
     }, []);
 
     const closeReader = useCallback(() => {
-        setOpenPaperIds([]);
-        setActivePaperId(null);
-        setReaderSearchTerm(null);
-        setRightPanel((mode) => (mode === "reader" ? null : mode));
+        withTransition(() => {
+            setOpenPaperIds([]);
+            setActivePaperId(null);
+            setReaderSearchTerm(null);
+            setRightPanel((mode) => (mode === "reader" ? null : mode));
+        });
     }, []);
 
     const toggleArtifacts = useCallback(() => {
-        setRightPanel((mode) => {
+        askArtifacts(!artifactsOpen());
+        movePanel((mode) => {
             if (mode === "artifacts") {
                 localStorage.setItem("project-artifacts-collapsed", "true");
                 // Fall back to the reader when paper tabs are still open.
@@ -174,21 +224,23 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
             }
             localStorage.setItem("project-artifacts-collapsed", "false");
             return "artifacts";
-        });
-    }, [openPaperIds.length]);
+        }, artifactsApplied);
+    }, [openPaperIds.length, movePanel, askArtifacts, artifactsApplied, artifactsOpen]);
 
     const closeArtifacts = useCallback(() => {
-        setRightPanel((mode) => {
+        if (!artifactsOpen()) return;
+        askArtifacts(false);
+        movePanel((mode) => {
             if (mode !== "artifacts") return mode;
             localStorage.setItem("project-artifacts-collapsed", "true");
             return openPaperIds.length > 0 ? "reader" : null;
-        });
-    }, [openPaperIds.length]);
+        }, artifactsApplied);
+    }, [openPaperIds.length, movePanel, askArtifacts, artifactsApplied, artifactsOpen]);
 
     // Get the artifacts panel out of the way (e.g. when sending a chat message)
     // without changing the user's saved preference.
     const collapseArtifacts = useCallback(() => {
-        setRightPanel((mode) => {
+        movePanel((mode) => {
             if (mode !== "artifacts") return mode;
             return openPaperIds.length > 0 ? "reader" : null;
         });
@@ -196,15 +248,17 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
 
     const [briefSource, setBriefSource] = useState<BriefSource>("brief");
     const openBrief = useCallback((source: BriefSource = "brief") => {
-        setBriefSource(source);
-        setRightPanel("brief");
+        withTransition(() => {
+            setBriefSource(source);
+            setRightPanel("brief");
+        });
     }, []);
     // Closing the brief gives the slot back to open paper tabs, as the artifacts panel does.
     const closeBrief = useCallback(() => {
-        setRightPanel((mode) => (mode !== "brief" ? mode : openPaperIds.length > 0 ? "reader" : null));
+        movePanel((mode) => (mode !== "brief" ? mode : openPaperIds.length > 0 ? "reader" : null));
     }, [openPaperIds.length]);
     const toggleBrief = useCallback(() => {
-        setRightPanel((mode) => (mode !== "brief" ? "brief" : openPaperIds.length > 0 ? "reader" : null));
+        movePanel((mode) => (mode !== "brief" ? "brief" : openPaperIds.length > 0 ? "reader" : null));
     }, [openPaperIds.length]);
 
     const openAddPapers = useCallback((view: AddPapersView = "initial") => {
@@ -266,20 +320,32 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
         };
     }, [projectId]);
 
+    // A project that cannot be shown takes what was loaded with it: no papers,
+    // no chats, no open panel. Views and panels then have nothing of it to show.
+    const denied = project === null && isGone(projectError);
+    const shown = useMemo(
+        () => (denied
+            ? { papers: NO_PAPERS, conversations: NO_CONVERSATIONS, openPaperIds: NO_IDS, rightPanel: null as RightPanelMode, uploadJobs: NO_JOBS }
+            : { papers, conversations, openPaperIds, rightPanel, uploadJobs }),
+        [denied, papers, conversations, openPaperIds, rightPanel, uploadJobs],
+    );
+
     const value = useMemo<ProjectWorkspaceValue>(() => ({
         projectId,
         project,
         isProjectLoading,
         projectError,
+        projectDenied: denied,
         refetchProject,
-        papers,
+        papers: shown.papers,
         isPapersLoading,
+        papersError,
         refetchPapers,
         updatePaper,
-        conversations,
+        conversations: shown.conversations,
         isConversationsLoading,
         refetchConversations,
-        openPaperIds,
+        openPaperIds: shown.openPaperIds,
         activePaperId,
         readerSearchTerm,
         openPaper,
@@ -289,7 +355,7 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
         refreshPaperUrl,
         crumb,
         setCrumb,
-        rightPanel,
+        rightPanel: shown.rightPanel,
         briefSource,
         openBrief,
         toggleBrief,
@@ -305,18 +371,18 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
         openAddPapers,
         hasCollaborators,
         setHasCollaborators,
-        uploadJobs,
+        uploadJobs: shown.uploadJobs,
         addUploadJobs,
         pendingDiscussions,
     }), [
         projectId, project, isProjectLoading, projectError, refetchProject,
-        papers, isPapersLoading, refetchPapers, updatePaper,
+        papers, isPapersLoading, papersError, refetchPapers, updatePaper,
         conversations, isConversationsLoading, refetchConversations,
         openPaperIds, activePaperId, readerSearchTerm,
         openPaper, activatePaper, closePaper, closeReader, refreshPaperUrl,
         crumb, rightPanel, briefSource, openBrief, toggleBrief, closeBrief, toggleArtifacts, closeArtifacts, collapseArtifacts, railCollapsed, toggleRail,
         addPapersOpen, addPapersInitialView, openAddPapers, hasCollaborators,
-        uploadJobs, addUploadJobs,
+        uploadJobs, addUploadJobs, shown,
     ]);
 
     return (

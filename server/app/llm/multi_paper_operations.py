@@ -19,13 +19,20 @@ from app.llm.prompts import (
     ANSWER_EVIDENCE_BASED_QUESTION_MESSAGE,
     ANSWER_EVIDENCE_BASED_QUESTION_SYSTEM_PROMPT,
     GENERATE_MULTI_PAPER_NARRATIVE_SUMMARY,
+    TUTOR_PAPER_USER_MESSAGE,
     format_scope,
 )
 from app.llm.provider import LLMProvider, StreamChunk, SupplementaryContent, TextContent
+from app.llm.tutor import (
+    build_project_tutor_system_prompt,
+    next_turn,
+    split_tutor_state,
+)
 from app.llm.utils import retry_llm_operation
 from app.schemas.artifact import CitationArtifactPayload
 from app.schemas.message import EvidenceCollection
 from app.schemas.responses import AudioOverviewForLLM
+from app.schemas.tutor import restrict_path_papers
 from app.schemas.user import CurrentUser
 from fastapi import Depends
 from sqlalchemy.orm import Session
@@ -51,6 +58,8 @@ class MultiPaperOperations(EvidenceOperations):
         mentioned_highlights: Optional[List[dict]] = None,
         project_title: Optional[str] = None,
         is_mention_scoped: bool = False,
+        is_tutor_turn: bool = False,
+        tutor_state: Optional[dict] = None,
         db: Session = Depends(get_db),
     ) -> AsyncGenerator[Union[str, dict], None]:
         """
@@ -60,6 +69,11 @@ class MultiPaperOperations(EvidenceOperations):
         answer is being written about. They are the same inputs the gathering
         loop was given, so the answer names the container the search actually
         covered — a project by its title rather than "the library".
+
+        On a tutor turn (`is_tutor_turn`) the model teaches the set instead of
+        answering, from the session in `tutor_state` (None when none has
+        started), and the stream also carries one "tutor_state" chunk. The
+        caller decides whether a tutor turn is allowed here; see the endpoint.
         """
         user_citations = (
             CitationHandler.convert_references_to_citations(user_references)
@@ -69,8 +83,15 @@ class MultiPaperOperations(EvidenceOperations):
 
         casted_conversation_id = uuid.UUID(conversation_id)
 
+        # An ordinary answer in a project conversation is read by the
+        # project's members, so it is written without sight of the
+        # conversation's tutoring turns: it cannot repeat what it was never
+        # given. The tutor reads everything.
         conversation_history = message_crud.get_conversation_messages(
-            db, conversation_id=casted_conversation_id, current_user=current_user
+            db,
+            conversation_id=casted_conversation_id,
+            current_user=current_user,
+            shareable_only=not is_tutor_turn,
         )
 
         formatted_paper_options = {
@@ -79,25 +100,45 @@ class MultiPaperOperations(EvidenceOperations):
 
         logger.debug(f"Evidence gathered: {evidence_gathered.get_evidence_dict()}")
 
-        formatted_system_prompt = ANSWER_EVIDENCE_BASED_QUESTION_SYSTEM_PROMPT.format(
-            scope=format_scope(
-                n_papers=len(all_papers),
-                project_title=project_title,
-                is_mention_scoped=is_mention_scoped,
-            ),
-            available_papers=formatted_paper_options,
+        scope = format_scope(
+            n_papers=len(all_papers),
+            project_title=project_title,
+            is_mention_scoped=is_mention_scoped,
+        )
+        question_with_citations = (
+            f"{question}\n\n{user_citations}" if user_citations else question
         )
 
-        formatted_prompt = ANSWER_EVIDENCE_BASED_QUESTION_MESSAGE.format(
-            question=f"{question}\n\n{user_citations}" if user_citations else question,
-        )
+        # Set only on a tutor turn: the number that turn will carry.
+        tutor_turn: Optional[int] = None
 
-        evidence_buffer: list[str] = []
-        text_buffer: str = ""
-        in_evidence_section = False
-
-        START_DELIMITER = "---EVIDENCE---"
-        END_DELIMITER = "---END-EVIDENCE---"
+        if is_tutor_turn:
+            tutor_turn = next_turn(tutor_state)
+            formatted_system_prompt = build_project_tutor_system_prompt(
+                tutor_state,
+                scope=scope,
+                papers={
+                    str(paper.id): {
+                        "title": paper.title,
+                        "authors": paper.authors,
+                        "published": paper.publish_date,
+                    }
+                    for paper in all_papers
+                },
+            )
+            formatted_prompt = TUTOR_PAPER_USER_MESSAGE.format(
+                message=question_with_citations
+            )
+        else:
+            formatted_system_prompt = (
+                ANSWER_EVIDENCE_BASED_QUESTION_SYSTEM_PROMPT.format(
+                    scope=scope,
+                    available_papers=formatted_paper_options,
+                )
+            )
+            formatted_prompt = ANSWER_EVIDENCE_BASED_QUESTION_MESSAGE.format(
+                question=question_with_citations,
+            )
 
         # Build multipart message: supplementary evidence + user question
         message_content = [
@@ -152,7 +193,45 @@ class MultiPaperOperations(EvidenceOperations):
                 ),
             )
 
-        queue = asyncio.Queue()
+        source: AsyncGenerator[dict, None] = self._model_events(
+            message=message_content,
+            system_prompt=formatted_system_prompt,
+            history=conversation_history,
+            llm_provider=llm_provider,
+        )
+        if tutor_turn is not None:
+            # The tutor's state comes out of the raw text before anything
+            # reads it as evidence. Done the other way round, a reply that
+            # forgot to close its evidence block would carry the state into a
+            # citation.
+            source = split_tutor_state(source, turn=tutor_turn, project=True)
+
+        allowed_paper_ids = set(formatted_paper_options)
+        async for event in self._split_evidence(source, evidence_gathered):
+            if event.get("type") == "tutor_state":
+                event = {
+                    **event,
+                    "content": restrict_path_papers(
+                        event["content"], allowed_paper_ids
+                    ),
+                }
+            yield event
+
+    async def _model_events(
+        self,
+        *,
+        message: list,
+        system_prompt: str,
+        history: list,
+        llm_provider: Optional[LLMProvider],
+    ) -> AsyncGenerator[dict, None]:
+        """The model's raw answer as "content" and "reset" events.
+
+        Also "status" until the answer starts, so the user can see the turn is
+        still working, and one "error" in place of an exception if the stream
+        fails: the caller then stops, and shows nothing it was still holding.
+        """
+        queue: asyncio.Queue = asyncio.Queue()
 
         async def pinger():
             """Shows the user the turn is still working until the answer
@@ -170,9 +249,9 @@ class MultiPaperOperations(EvidenceOperations):
             """Reads from the LLM stream and puts chunks into the queue."""
             try:
                 async for chunk in self.send_message_stream(
-                    message=message_content,
-                    system_prompt=formatted_system_prompt,
-                    history=conversation_history,
+                    message=message,
+                    system_prompt=system_prompt,
+                    history=history,
                     provider=llm_provider,
                 ):
                     await queue.put(chunk)
@@ -202,78 +281,15 @@ class MultiPaperOperations(EvidenceOperations):
 
                 if chunk.is_restart:
                     # The upstream connection dropped mid-answer and the request
-                    # was re-sent. The partial answer is not resumable, so drop
-                    # the parse state and tell the client to clear what it
-                    # rendered.
-                    evidence_buffer = []
-                    text_buffer = ""
-                    in_evidence_section = False
+                    # was re-sent. The partial answer is not resumable, so tell
+                    # everything downstream to drop what it holds.
                     yield {"type": "reset", "content": ""}
                     continue
 
-                text = chunk.text
+                logger.debug(f"Received chunk: {chunk.text}")
 
-                logger.debug(f"Received chunk: {text}")
-
-                if not text:
-                    continue
-
-                text_buffer += text
-
-                if not in_evidence_section and START_DELIMITER in text_buffer:
-                    in_evidence_section = True
-                    pre_evidence = text_buffer.split(START_DELIMITER)[0]
-                    if pre_evidence:
-                        yield {"type": "content", "content": pre_evidence}
-                    evidence_buffer = [text_buffer.split(START_DELIMITER)[1]]
-                    text_buffer = ""
-                    continue
-
-                reconstructed_buffer = "".join(evidence_buffer + [text_buffer]).strip()
-
-                if in_evidence_section and END_DELIMITER in reconstructed_buffer:
-                    delimiter_pos = reconstructed_buffer.find(END_DELIMITER)
-                    evidence_part = reconstructed_buffer[:delimiter_pos]
-                    remaining = reconstructed_buffer[
-                        delimiter_pos + len(END_DELIMITER) :
-                    ]
-
-                    structured_evidence = (
-                        CitationHandler.parse_multi_paper_evidence_block(evidence_part)
-                    )
-
-                    # Resolve compacted citations to original snippets if evidence was compacted
-                    if evidence_gathered.is_compacted:
-                        structured_evidence = (
-                            CitationHandler.resolve_compacted_citations(
-                                structured_evidence,
-                                evidence_gathered.citation_index,
-                            )
-                        )
-
-                    yield {
-                        "type": "references",
-                        "content": {
-                            "citations": structured_evidence,
-                        },
-                    }
-
-                    in_evidence_section = False
-                    evidence_buffer = []
-                    text_buffer = remaining
-
-                    if remaining:
-                        yield {"type": "content", "content": remaining}
-                    continue
-
-                if in_evidence_section:
-                    evidence_buffer.append(text)
-                    text_buffer = ""
-                else:
-                    if len(text_buffer) > len(START_DELIMITER) * 2:
-                        to_yield = text_buffer[: -len(START_DELIMITER)]
-                        yield {"type": "content", "content": to_yield}
-                        text_buffer = text_buffer[-len(START_DELIMITER) :]
+                if chunk.text:
+                    yield {"type": "content", "content": chunk.text}
         finally:
             if not pinger_task.done():
                 pinger_task.cancel()
@@ -281,7 +297,7 @@ class MultiPaperOperations(EvidenceOperations):
                 stream_reader_task.cancel()
 
         # Check if stream_reader_task raised an exception
-        if stream_reader_task.done():
+        if stream_reader_task.done() and not stream_reader_task.cancelled():
             exc = stream_reader_task.exception()
             if exc is not None:
                 logger.error(f"Stream reader task failed with exception: {exc}")
@@ -289,43 +305,130 @@ class MultiPaperOperations(EvidenceOperations):
                     "type": "error",
                     "content": "Sorry, an error occurred while working on this response. Please try again or contact support (saba@openpaper.ai) if the issue persists.",
                 }
+
+    async def _split_evidence(
+        self,
+        source: AsyncGenerator[dict, None],
+        evidence_gathered: EvidenceCollection,
+    ) -> AsyncGenerator[dict, None]:
+        """Pass an answer through, turning its evidence block into citations.
+
+        Yields "content" for what the reader sees and one "references" chunk
+        for the block. "reset" discards what is held and is passed on. An
+        "error" is passed on and ends the answer. Anything else (a status, a
+        tutor turn's state) is not text, and passes straight through.
+        """
+        evidence_buffer: list[str] = []
+        text_buffer: str = ""
+        in_evidence_section = False
+
+        START_DELIMITER = "---EVIDENCE---"
+        END_DELIMITER = "---END-EVIDENCE---"
+
+        def citations_in(block: str) -> list:
+            structured_evidence = CitationHandler.parse_multi_paper_evidence_block(
+                block
+            )
+            # Resolve compacted citations to original snippets if evidence was compacted
+            if evidence_gathered.is_compacted:
+                structured_evidence = CitationHandler.resolve_compacted_citations(
+                    structured_evidence,
+                    evidence_gathered.citation_index,
+                )
+            return structured_evidence
+
+        async for event in source:
+            if not isinstance(event, dict):
+                continue
+
+            kind = event.get("type")
+
+            if kind == "reset":
+                evidence_buffer = []
+                text_buffer = ""
+                in_evidence_section = False
+                yield {"type": "reset", "content": ""}
+                continue
+
+            if kind == "error":
+                yield event
                 return
 
+            if kind != "content":
+                yield event
+                continue
+
+            text = event.get("content")
+
+            if not text:
+                continue
+
+            text_buffer += text
+
+            if in_evidence_section:
+                evidence_buffer.append(text_buffer)
+                text_buffer = ""
+            elif START_DELIMITER in text_buffer:
+                in_evidence_section = True
+                # Yield what came before the delimiter; the rest opens the
+                # evidence buffer.
+                pre_evidence, _, opening = text_buffer.partition(START_DELIMITER)
+                if pre_evidence:
+                    yield {"type": "content", "content": pre_evidence}
+                evidence_buffer = [opening]
+                text_buffer = ""
+
+            if in_evidence_section:
+                # Looked for in the same pass that opened the block, so a
+                # block that opens and closes in one chunk is not missed.
+                evidence_text = "".join(evidence_buffer)
+                delimiter_pos = evidence_text.find(END_DELIMITER)
+                if delimiter_pos == -1:
+                    continue
+
+                yield {
+                    "type": "references",
+                    "content": {
+                        "citations": citations_in(evidence_text[:delimiter_pos]),
+                    },
+                }
+
+                # Whatever followed the block goes back into the text buffer,
+                # exactly as it arrived, and leaves through the ordinary path
+                # below. Two things used to go wrong here, as they did in the
+                # paper chat. It was yielded now and again when the buffer
+                # flushed, so it showed twice. And it was cut from a stripped
+                # copy of the buffer, so a chunk ending in a space lost that
+                # space and joined two words.
+                in_evidence_section = False
+                evidence_buffer = []
+                text_buffer = evidence_text[delimiter_pos + len(END_DELIMITER) :]
+
+            # Keep a reasonable buffer size for detecting delimiters
+            if len(text_buffer) > len(START_DELIMITER) * 2:
+                to_yield = text_buffer[: -len(START_DELIMITER)]
+                yield {"type": "content", "content": to_yield}
+                text_buffer = text_buffer[-len(START_DELIMITER) :]
+
         # Handle case where stream ended while still in evidence section
-        if in_evidence_section and evidence_buffer:
-            reconstructed_buffer = "".join(evidence_buffer + [text_buffer]).strip()
+        if in_evidence_section:
+            unclosed = "".join(evidence_buffer).strip()
             logger.warning(
                 "Stream ended while in evidence section without END_DELIMITER"
             )
 
-            if reconstructed_buffer:
+            if unclosed:
                 try:
-                    structured_evidence = (
-                        CitationHandler.parse_multi_paper_evidence_block(
-                            reconstructed_buffer
-                        )
-                    )
-
-                    # Resolve compacted citations to original snippets if evidence was compacted
-                    if evidence_gathered.is_compacted:
-                        structured_evidence = (
-                            CitationHandler.resolve_compacted_citations(
-                                structured_evidence,
-                                evidence_gathered.citation_index,
-                            )
-                        )
-
                     yield {
                         "type": "references",
                         "content": {
-                            "citations": structured_evidence,
+                            "citations": citations_in(unclosed),
                         },
                     }
                 except Exception as e:
                     logger.error(f"Failed to parse incomplete evidence block: {e}")
-                    yield {"type": "content", "content": reconstructed_buffer}
-
-            text_buffer = ""
+                    yield {"type": "content", "content": unclosed}
+            return
 
         # Yield any remaining text buffer content
         if text_buffer:

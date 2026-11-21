@@ -1,7 +1,8 @@
 "use client"
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { ShieldX } from 'lucide-react';
+import { endProjectSession } from '@/hooks/useProjects';
 import { fetchFromApi } from './api';
 
 export interface BasicUser {
@@ -26,6 +27,15 @@ interface AuthContextType {
 }
 
 const AUTH_STORAGE_KEY = 'auth_user';
+// Tabs tell each other when the user signs out, so none keeps showing the account that left.
+const AUTH_CHANNEL = 'openpaper-auth';
+const SIGNED_OUT = 'signed-out';
+const announceSignOut = () => {
+	if (typeof BroadcastChannel === 'undefined') return;
+	const channel = new BroadcastChannel(AUTH_CHANNEL);
+	channel.postMessage(SIGNED_OUT);
+	channel.close();
+};
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -45,6 +55,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 		}
 	}, [user]);
 
+	// Counts changes of identity. An answer to "who am I" that was asked before the
+	// latest change is ignored, so a slow one cannot sign a user back in.
+	const identity = useRef(0);
+	const checkAuth = useRef(async () => {});
+
+	// Another tab signed out: this one drops the user and everything cached for them.
+	useEffect(() => {
+		if (typeof BroadcastChannel === 'undefined') return;
+		const channel = new BroadcastChannel(AUTH_CHANNEL);
+		channel.onmessage = event => {
+			if (event.data === SIGNED_OUT) {
+				identity.current++;
+				void endProjectSession();
+				setUser(null);
+				return;
+			}
+			// Another tab is now signed in as someone else: drop this tab's cache and ask who we are.
+			const other = (event.data as { user?: string } | null)?.user;
+			if (other && cachedFor.current !== null && other !== cachedFor.current) {
+				identity.current++;
+				void endProjectSession();
+				void checkAuth.current();
+			}
+		};
+		return () => channel.close();
+	}, []);
+
+	// The cache belongs to one user. If the signed-in user changes or leaves by
+	// any route, what was cached for the previous one is dropped.
+	const cachedFor = useRef<string | null>(null);
+	useEffect(() => {
+		const id = user?.id ?? null;
+		if (cachedFor.current !== null && cachedFor.current !== id) void endProjectSession();
+		if (id !== null && cachedFor.current !== id && typeof BroadcastChannel !== 'undefined') {
+			const channel = new BroadcastChannel(AUTH_CHANNEL);
+			channel.postMessage({ user: id });
+			channel.close();
+		}
+		cachedFor.current = id;
+	}, [user?.id]);
+
 	// Check if user is logged in
 	useEffect(() => {
 		// Immediately restore cached user for fast UI update
@@ -57,9 +108,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 			}
 		}
 
-		async function checkAuth() {
+		checkAuth.current = async () => {
+			const asked = identity.current;
 			try {
 				const response = await fetchFromApi('/api/auth/me');
+				if (asked !== identity.current) return;
 				if (response.success && response.user) {
 					setUser(response.user);
 				} else {
@@ -67,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 					setUser(null);
 				}
 			} catch (err) {
+				if (asked !== identity.current) return;
 				console.error('Auth check failed:', err);
 				setError('Failed to check authentication status');
 				// Also clear the user on error
@@ -74,9 +128,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 			} finally {
 				setLoading(false);
 			}
-		}
+		};
 
-		checkAuth();
+		void checkAuth.current();
 	}, []);
 
 	// Start Google login flow
@@ -108,7 +162,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 		try {
 			setLoading(true);
 			await fetchFromApi(`/api/auth/logout?all_devices=${allDevices}`);
+			identity.current++;
 			setUser(null);
+			// Cached responses belong to the user who just left.
+			await endProjectSession();
+			announceSignOut();
 		} catch (err) {
 			console.error('Logout failed:', err);
 			setError('Failed to logout');

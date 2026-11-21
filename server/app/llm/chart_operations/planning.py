@@ -326,6 +326,9 @@ class ChartPlanning(DataTableOperations):
                 db,
                 conversation_id=uuid.UUID(conversation_id),
                 current_user=current_user,
+                # A chart is the project's, seen by all its members, so it is
+                # planned without sight of the conversation's tutoring turns.
+                shareable_only=True,
             )
             if conversation_id and db and current_user
             else []
@@ -402,6 +405,9 @@ class ChartPlanning(DataTableOperations):
                 db,
                 conversation_id=uuid.UUID(conversation_id),
                 current_user=current_user,
+                # A chart is the project's, seen by all its members, so it is
+                # planned without sight of the conversation's tutoring turns.
+                shareable_only=True,
             )
             if conversation_id and db and current_user
             else []

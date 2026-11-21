@@ -50,6 +50,7 @@ export function ProjectHeader() {
     const {
         projectId,
         project,
+        projectDenied: denied,
         isProjectLoading,
         crumb,
         rightPanel,
@@ -60,6 +61,7 @@ export function ProjectHeader() {
         setHasCollaborators,
     } = useProjectWorkspace();
     const [isMobileRailOpen, setIsMobileRailOpen] = useState(false);
+    // A project that cannot be shown: no navigation into it, no collaborators, no panels. The way back to the list stays.
 
     return (
         <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3 md:px-4">
@@ -67,7 +69,7 @@ export function ProjectHeader() {
             <SidebarTrigger className="-ml-1 h-7 w-7" />
             <Separator orientation="vertical" className="h-4" />
             {/* Mobile: papers + chats rail lives behind a toggle */}
-            <Sheet open={isMobileRailOpen} onOpenChange={setIsMobileRailOpen}>
+            {!denied && <Sheet open={isMobileRailOpen} onOpenChange={setIsMobileRailOpen}>
                 <SheetTrigger asChild>
                     <Button variant="ghost" size="icon" className="h-7 w-7 md:hidden" aria-label="Open project navigation">
                         <PanelLeftOpen className="h-4 w-4" />
@@ -79,9 +81,9 @@ export function ProjectHeader() {
                     </SheetHeader>
                     <ProjectRail onNavigate={() => setIsMobileRailOpen(false)} />
                 </SheetContent>
-            </Sheet>
+            </Sheet>}
             {/* Desktop: collapse/expand the rail */}
-            <Button
+            {!denied && <Button
                 variant="ghost"
                 size="icon"
                 className="hidden h-7 w-7 md:inline-flex"
@@ -90,12 +92,12 @@ export function ProjectHeader() {
                 title={railCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             >
                 {railCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-            </Button>
+            </Button>}
 
             <Breadcrumb className="group/crumb min-w-0 flex-1">
                 <BreadcrumbList className="flex-nowrap">
                     {/* Root crumb hidden on mobile — the project name is the anchor there */}
-                    <BreadcrumbItem className="hidden md:inline-flex">
+                    <BreadcrumbItem className={denied ? "inline-flex" : "hidden md:inline-flex"}>
                         <BreadcrumbLink asChild>
                             <Link href="/projects">Projects</Link>
                         </BreadcrumbLink>
@@ -132,7 +134,7 @@ export function ProjectHeader() {
                 </BreadcrumbList>
             </Breadcrumb>
 
-            <div className="flex shrink-0 items-center gap-2">
+            {!denied && <div className="flex shrink-0 items-center gap-2">
                 <ProjectCollaborators
                     projectId={projectId}
                     setHasCollaborators={setHasCollaborators}
@@ -165,7 +167,7 @@ export function ProjectHeader() {
                     <Sparkles className="h-3.5 w-3.5 text-blue-500" />
                     <span className="hidden md:inline">Artifacts</span>
                 </Button>
-            </div>
+            </div>}
         </div>
     );
 }

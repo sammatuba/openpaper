@@ -12,10 +12,24 @@ from app.database.models import (
     Paper,
     ProjectRole,
 )
+from app.schemas.tutor import TUTOR_TRACE_KEY, TUTOR_TURN_KEY
 from app.schemas.user import CurrentUser
 from pydantic import BaseModel
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
+
+
+def not_a_tutoring_turn() -> tuple:
+    """Filter conditions that leave out every message of a tutoring turn.
+
+    coalesce, because `?` on a NULL trace is NULL and a bare NOT would then
+    drop the very rows that have nothing to hide. The second condition covers
+    a stored session that somehow lacks the turn mark.
+    """
+    return (
+        func.coalesce(Message.trace.has_key(TUTOR_TURN_KEY), False).is_(False),
+        func.coalesce(Message.trace.has_key(TUTOR_TRACE_KEY), False).is_(False),
+    )
 
 
 class MessageBase(BaseModel):
@@ -84,19 +98,26 @@ class MessageCRUD(CRUDBase[Message, MessageCreate, MessageUpdate]):
         conversation_id: UUID,
         current_user: CurrentUser,
         page: int = 1,
-        page_size: int = 10
+        page_size: int = 10,
+        shareable_only: bool = False,
     ) -> list[Message]:
         """
         Get messages for a conversation:
         1. Order by sequence DESC for correct pagination (most recent first)
         2. Apply offset and limit
         3. Reverse final results for chronological display
+
+        `shareable_only` leaves tutoring turns out. It is for anything whose
+        output a shared paper can show: the history an ordinary answer is
+        written from, and the text a conversation title is made from. Either
+        could otherwise repeat something said in a tutoring session.
         """
         messages = (
             db.query(Message)
             .filter(
                 Message.conversation_id == conversation_id,
                 Message.user_id == current_user.id,
+                *(not_a_tutoring_turn() if shareable_only else ()),
             )
             .order_by(desc(Message.sequence))  # newest first for pagination
             .offset((page - 1) * page_size)
@@ -107,6 +128,33 @@ class MessageCRUD(CRUDBase[Message, MessageCreate, MessageUpdate]):
         # Reverse the results to get chronological order
         return list(reversed(messages))
 
+    def get_latest_tutor_state(
+        self,
+        db: Session,
+        *,
+        conversation_id: UUID,
+        current_user: CurrentUser,
+    ) -> Optional[Dict[str, Any]]:
+        """The tutoring session as the most recent tutor turn left it.
+
+        Looked up directly rather than read off the recent messages: ordinary
+        questions asked since the last tutor turn push it out of that window
+        without ending the session.
+        """
+        message = (
+            db.query(Message)
+            .filter(
+                Message.conversation_id == conversation_id,
+                Message.user_id == current_user.id,
+                Message.role == "assistant",
+                Message.trace.has_key(TUTOR_TRACE_KEY),
+            )
+            .order_by(desc(Message.sequence))
+            .first()
+        )
+        state = (message.trace or {}).get(TUTOR_TRACE_KEY) if message else None
+        return state if isinstance(state, dict) else None
+
     def get_project_conversation_messages(
         self,
         db: Session,
@@ -115,13 +163,18 @@ class MessageCRUD(CRUDBase[Message, MessageCreate, MessageUpdate]):
         project_id: UUID,
         current_user: CurrentUser,
         page: int = 1,
-        page_size: int = 10
+        page_size: int = 10,
     ) -> list[Message]:
         """
         Get messages for a project conversation:
         1. Order by sequence DESC for correct pagination (most recent first)
         2. Apply offset and limit
         3. Reverse final results for chronological display
+
+        A project conversation is read by every member of the project. Its
+        tutoring turns are not: a tutoring session is the learner's, so only
+        the member who owns the conversation is sent them. For anyone else
+        they are left out here, in the query, so that pages stay full.
         """
         # First, check if the user has access to the project.
         project_role = (
@@ -149,10 +202,13 @@ class MessageCRUD(CRUDBase[Message, MessageCreate, MessageUpdate]):
         if not conversation:
             return []
 
+        is_owner = str(conversation.user_id) == str(current_user.id)
+
         messages = (
             db.query(Message)
             .filter(
                 Message.conversation_id == conversation_id,
+                *(() if is_owner else not_a_tutoring_turn()),
             )
             .order_by(desc(Message.sequence))  # newest first for pagination
             .offset((page - 1) * page_size)
@@ -170,7 +226,7 @@ class MessageCRUD(CRUDBase[Message, MessageCreate, MessageUpdate]):
         conversation_id: UUID,
         share_paper_id: str,
         page: int = 1,
-        page_size: int = 10
+        page_size: int = 10,
     ) -> list[Message]:
         """
         Get messages for a shared conversation:
@@ -199,6 +255,10 @@ class MessageCRUD(CRUDBase[Message, MessageCreate, MessageUpdate]):
             .filter(
                 Message.conversation_id == conversation_id,
                 # Remove the joins and just check the conversation directly
+                # A tutoring session is the learner's, not the paper's: its
+                # turns are no part of what a shared paper shows. Filtered
+                # here, in the query, so that pages stay full.
+                *not_a_tutoring_turn(),
             )
             .order_by(desc(Message.sequence))  # newest first for pagination
             .offset((page - 1) * page_size)
@@ -255,7 +315,7 @@ class MessageCRUD(CRUDBase[Message, MessageCreate, MessageUpdate]):
         *,
         conversation_id: UUID,
         current_user: CurrentUser,
-        gap: int = 10
+        gap: int = 10,
     ) -> None:
         """
         Resequence all messages in a conversation with specified gaps

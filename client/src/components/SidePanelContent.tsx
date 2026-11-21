@@ -5,6 +5,7 @@ import {
     PaperHighlightAnnotation,
     CreditUsage,
     Reference,
+    TutorState,
 } from '@/lib/schema';
 import { RenderedHighlightPosition } from './PdfHighlighterViewer';
 import {
@@ -16,7 +17,10 @@ import {
     Sparkle,
     Check,
     Route,
+    GraduationCap,
 } from 'lucide-react';
+import { Toggle } from '@/components/ui/toggle';
+import TutorPanel from '@/components/tutor/TutorPanel';
 import { Textarea } from '@/components/ui/textarea';
 import {
     DropdownMenu,
@@ -50,7 +54,11 @@ import { fetchFromApi, fetchStreamFromApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useSubscription, getChatCreditUsagePercentage, isChatCreditAtLimit, isChatCreditNearLimit } from '@/hooks/useSubscription';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { getAlphaHashToBackgroundColor, getInitials } from '@/lib/utils';
+import { cn, getAlphaHashToBackgroundColor, getInitials } from '@/lib/utils';
+
+// Whether tutor mode is on for a paper, remembered per browser. The session
+// itself lives on the server with the conversation; this is only the switch.
+const TUTOR_MODE_STORAGE_PREFIX = 'openpaper:tutor-mode:';
 
 
 interface SidePanelContentProps {
@@ -84,6 +92,9 @@ interface ChatRequestBody {
     paper_id: string;
     user_references: string[];
     llm_provider?: string;
+    // Omitted for an ordinary answer. 'tutor' has the model teach the paper
+    // by asking instead.
+    style?: 'tutor';
 }
 
 export function SidePanelContent({
@@ -131,6 +142,8 @@ export function SidePanelContent({
     const [currentLoadingMessageIndex, setCurrentLoadingMessageIndex] = useState(0);
     const [errorState, setErrorState] = useState<{ failedUserMessage: string } | null>(null);
     const [isFetchingHistory, setIsFetchingHistory] = useState(true);
+    const [tutorMode, setTutorMode] = useState(false);
+    const [tutorState, setTutorState] = useState<TutorState | null>(null);
 
     const messagesEndRef = useRef<HTMLDivElement | null>(null);
     const chatInputFormRef = useRef<HTMLFormElement | null>(null);
@@ -184,6 +197,7 @@ export function SidePanelContent({
         }
 
         setIsLoadingMoreMessages(true);
+        const requestedUnder = `${user?.id ?? ''}:${conversationId}`;
         try {
             const response = await fetchFromApi(`/api/conversation/${conversationId}?page=${pageNumberConversationHistory}`, {
                 method: 'GET',
@@ -195,6 +209,17 @@ export function SidePanelContent({
                 id: msg.id,
                 references: msg.references || {}
             }));
+
+            // Where a tutoring session in this conversation stands. Every page
+            // carries the latest one, since the turn that set it may be on any.
+            if (response.tutor_state && tutorSessionKeyRef.current === requestedUnder) {
+                // A history read that was slow to return must not roll the
+                // panel back past a turn that has been saved since.
+                const fromHistory: TutorState = response.tutor_state;
+                setTutorState(current =>
+                    current && current.turn > fromHistory.turn ? current : fromHistory
+                );
+            }
 
             if (fetchedMessages.length === 0) {
                 setHasMoreMessages(false);
@@ -225,7 +250,7 @@ export function SidePanelContent({
                 setIsFetchingHistory(false);
             }
         }
-    }, [hasMoreMessages, isLoadingMoreMessages, conversationId, pageNumberConversationHistory, isFetchingHistory]);
+    }, [hasMoreMessages, isLoadingMoreMessages, conversationId, pageNumberConversationHistory, isFetchingHistory, user?.id]);
 
 
 
@@ -272,6 +297,39 @@ export function SidePanelContent({
             fetchMoreMessages();
         }
     }, [user, fetchMoreMessages]);
+
+    useEffect(() => {
+        if (!id) return;
+        try {
+            setTutorMode(localStorage.getItem(`${TUTOR_MODE_STORAGE_PREFIX}${id}`) === 'true');
+        } catch {
+            // Storage can be unavailable (private mode); the switch still
+            // works for this visit.
+            setTutorMode(false);
+        }
+    }, [id]);
+
+    // The session shown belongs to one person's conversation. When either
+    // changes under this component, what was on screen is someone else's (or
+    // another paper's) until the new conversation's own state arrives.
+    // A history read or a reply that was already on its way when that
+    // happened belongs to the old session too, and must not put it back.
+    // Each one notes the session it started under and checks before writing.
+    const tutorSessionKey = `${user?.id ?? ''}:${conversationId ?? ''}`;
+    const tutorSessionKeyRef = useRef(tutorSessionKey);
+    useEffect(() => {
+        tutorSessionKeyRef.current = tutorSessionKey;
+        setTutorState(null);
+    }, [tutorSessionKey]);
+
+    const handleTutorModeChange = useCallback((enabled: boolean) => {
+        setTutorMode(enabled);
+        try {
+            localStorage.setItem(`${TUTOR_MODE_STORAGE_PREFIX}${id}`, String(enabled));
+        } catch {
+            // See above.
+        }
+    }, [id]);
 
     useEffect(() => {
         // Only fetch data when id is available
@@ -424,26 +482,38 @@ export function SidePanelContent({
         updateCreditUsage();
     }, [updateCreditUsage]);
 
-    const handleSubmit = useCallback(async (e: FormEvent | null = null) => {
+    // `command` is a message the learner picked from the tutor panel rather
+    // than typed. It is sent on its own: whatever is in the input, and any
+    // passages attached to it, stay where they are for the answer in progress.
+    const handleSubmit = useCallback(async (e: FormEvent | null = null, command?: string) => {
         if (e) {
             e.preventDefault();
         }
 
-        if (!currentMessage.trim() || isStreaming) return;
+        const messageText = command ?? currentMessage;
+        const messageReferences = command ? [] : userMessageReferences;
+
+        if (!messageText.trim() || isStreaming) return;
 
         setErrorState(null);
 
         // Add user message to chat
-        const userMessage: ChatMessage = { role: 'user', content: currentMessage, references: transformReferencesToFormat(userMessageReferences) };
+        const userMessage: ChatMessage = { role: 'user', content: messageText, references: transformReferencesToFormat(messageReferences) };
         setMessages(prev => [...prev, userMessage]);
 
-        const failedUserMessage = currentMessage;
+        const failedUserMessage = messageText;
 
-        // Clear input field
-        setCurrentMessage('');
+        // If the answer is re-sent from scratch, the panel goes back to this.
+        const tutorStateBefore = tutorState;
+        const sentUnder = tutorSessionKeyRef.current;
 
-        // Clear user message references
-        setUserMessageReferences([]);
+        if (!command) {
+            // Clear input field
+            setCurrentMessage('');
+
+            // Clear user message references
+            setUserMessageReferences([]);
+        }
 
         // Create placeholder for assistant response
         // setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
@@ -455,11 +525,15 @@ export function SidePanelContent({
             user_query: userMessage.content,
             conversation_id: conversationId,
             paper_id: id,
-            user_references: userMessageReferences,
+            user_references: messageReferences,
         };
 
         if (selectedModel) {
             requestBody.llm_provider = selectedModel;
+        }
+
+        if (tutorMode) {
+            requestBody.style = 'tutor';
         }
 
         try {
@@ -469,7 +543,9 @@ export function SidePanelContent({
                 body: JSON.stringify(requestBody),
             });
 
-            setUserMessageReferences([]);
+            if (!command) {
+                setUserMessageReferences([]);
+            }
 
             const reader = stream.getReader();
             const decoder = new TextDecoder();
@@ -491,6 +567,16 @@ export function SidePanelContent({
                         console.warn('Unprocessed buffer at end of stream:', buffer);
                     }
                     break;
+                }
+
+                if (tutorSessionKeyRef.current !== sentUnder) {
+                    // The signed-in user or the conversation changed while
+                    // this reply was arriving. It belongs to the session it
+                    // was asked in: stop reading it and show none of it.
+                    await reader.cancel();
+                    setStreamingChunks([]);
+                    setStreamingReferences(undefined);
+                    return;
                 }
 
                 // Decode the chunk and add to buffer
@@ -541,6 +627,11 @@ export function SidePanelContent({
                             referenceChunks = 0;
                             setStreamingChunks([]);
                             setStreamingReferences(undefined);
+                            // The abandoned attempt's session state goes with
+                            // it; the server did not keep it either.
+                            if (tutorSessionKeyRef.current === sentUnder) {
+                                setTutorState(tutorStateBefore);
+                            }
                         }
                         else if (chunkType === 'references') {
                             referenceChunks++;
@@ -551,6 +642,12 @@ export function SidePanelContent({
 
                             // Update the message with the references
                             setStreamingReferences(chunkContent);
+                        } else if (chunkType === 'tutor_state') {
+                            // A tutor turn's session state, for the progress
+                            // panel. It is not part of the message.
+                            if (tutorSessionKeyRef.current === sentUnder) {
+                                setTutorState(chunkContent);
+                            }
                         } else if (chunkType === 'error') {
                             console.error('Server error in stream:', chunkContent);
                             throw new Error(`Server error: ${chunkContent}`);
@@ -592,7 +689,19 @@ export function SidePanelContent({
         } finally {
             setIsStreaming(false);
         }
-    }, [currentMessage, isStreaming, conversationId, id, userMessageReferences, selectedModel, transformReferencesToFormat, refetchSubscription]);
+    }, [currentMessage, isStreaming, conversationId, id, userMessageReferences, selectedModel, tutorMode, tutorState, transformReferencesToFormat, refetchSubscription]);
+
+    const sendTutorCommand = useCallback((message: string) => {
+        handleSubmit(null, message);
+    }, [handleSubmit]);
+
+    // Why the tutor controls are unavailable, when they are.
+    const chatCreditsSpent = (creditUsage?.usagePercentage ?? 0) >= 100;
+    const tutorDisabledReason = isStreaming
+        ? "Wait for the reply to finish"
+        : chatCreditsSpent
+            ? "You have used this week's chat credits"
+            : undefined;
 
 
     const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -944,7 +1053,9 @@ export function SidePanelContent({
                                                 <>
                                                     {messages.length === 0 && (
                                                         <div className="text-center text-secondary-foreground py-8">
-                                                            What would you like to understand about this paper?
+                                                            {tutorMode
+                                                                ? "Tutor mode is on. You will be asked questions about this paper rather than given answers."
+                                                                : "What would you like to understand about this paper?"}
                                                         </div>
                                                     )}
 
@@ -1041,7 +1152,17 @@ export function SidePanelContent({
                                         }
                                         <div ref={messagesEndRef} />
                                     </div>
-                                    {(messages.length === 0 || messages.length === 1) && !hasMoreMessages && (
+                                    {tutorMode && (
+                                        <div className="mb-2">
+                                            <TutorPanel
+                                                state={tutorState}
+                                                disabledReason={tutorDisabledReason}
+                                                onCommand={sendTutorCommand}
+                                            />
+                                        </div>
+                                    )}
+                                    {/* Starter questions ask for answers, which tutor mode does not give. */}
+                                    {!tutorMode && (messages.length === 0 || messages.length === 1) && !hasMoreMessages && (
                                         <div className="text-center text-gray-500 my-4">
                                             <div className='flex overflow-x-auto gap-2 mt-2 pb-2 scrollbar-hide'>
                                                 {starterQuestions.slice(0, 5).map((question, i) => {
@@ -1114,7 +1235,7 @@ export function SidePanelContent({
                                                 value={currentMessage}
                                                 onChange={handleTextareaChange}
                                                 ref={inputMessageRef}
-                                                placeholder="Ask something about this paper."
+                                                placeholder={tutorMode ? "Answer the tutor, or ask to be taught this paper." : "Ask something about this paper."}
                                                 className="border-none bg-secondary dark:bg-secondary rounded-md resize-none hover:resize-y p-2 focus-visible:outline-none focus-visible:ring-0 shadow-none min-h-[2rem] max-h-32"
                                                 disabled={isStreaming || (creditUsage?.usagePercentage ?? 0) >= 100}
                                                 onKeyDown={(e) => {
@@ -1198,6 +1319,24 @@ export function SidePanelContent({
                                                             </DropdownMenuSub>
                                                         </DropdownMenuContent>
                                                     </DropdownMenu>
+                                                    <Toggle
+                                                        pressed={tutorMode}
+                                                        onPressedChange={handleTutorModeChange}
+                                                        disabled={isStreaming}
+                                                        title={isStreaming
+                                                            ? "Wait for the reply to finish"
+                                                            : tutorMode
+                                                                ? "Tutor mode is on: this paper is taught through questions"
+                                                                : "Tutor mode: learn this paper through questions instead of answers"}
+                                                        className={cn(
+                                                            "w-fit gap-1.5 px-3 text-xs text-secondary-foreground",
+                                                            "data-[state=on]:bg-blue-100 data-[state=on]:text-blue-700",
+                                                            "dark:data-[state=on]:bg-blue-900 dark:data-[state=on]:text-blue-300"
+                                                        )}
+                                                    >
+                                                        <GraduationCap className="h-4 w-4" />
+                                                        Tutor
+                                                    </Toggle>
                                                 </div>
                                                 <Button
                                                     type="submit"

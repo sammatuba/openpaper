@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { fetchFromApi } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
+import { preloadProject } from "@/hooks/useProjects";
 import { toast } from "sonner";
 
 // A slim single-line project row: title · description · stats · updated · actions.
@@ -117,6 +118,8 @@ export function ProjectCard({ project, onProjectUpdate, onUnlink }: {
 		<>
 			<Link
 				href={`/projects/${project.id}`}
+				onPointerEnter={() => preloadProject(project.id)}
+				onFocus={() => preloadProject(project.id)}
 				className="group flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-accent"
 				onClick={(e) => {
 					if (isDropdownOpen) e.preventDefault();

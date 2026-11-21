@@ -61,7 +61,7 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
    else{unexpected.push(request.method()+' '+p);status=500;body={detail:'Unexpected test request'};}
    return route.fulfill({status,headers,contentType:'application/json',body:JSON.stringify(body)});
   });
-  await page.goto(`${base}/projects/${projectId}`);
+  await page.goto(`${base}/projects/${projectId}/overview`);
   const workspace=page.getByRole('region',{name:'Investigation workspace'});
   const nav=page.getByRole('navigation',{name:'Project destinations'});
   const noOverflow=async label=>assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,label+' has no horizontal page overflow at '+width);
@@ -147,6 +147,8 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
    await article.getByRole('button',{name:'Open PDF source',exact:true}).click();
    await page.locator('.page[data-page-number="1"] canvas').first().waitFor({timeout:20000});
    await page.getByRole('button',{name:'Close reader',exact:true}).click();
+   // The close is applied inside a view transition, a frame after the click.
+   await article.getByRole('button',{name:'Open PDF source',exact:true}).evaluate(el=>new Promise(done=>{const until=performance.now()+1000;const look=()=>el===document.activeElement||performance.now()>until?done():requestAnimationFrame(look);look();}));
    assert.equal(await article.getByRole('button',{name:'Open PDF source',exact:true}).evaluate(el=>el===document.activeElement),true,'Reader close restores focus');
    await nav.getByRole('link',{name:'Write',exact:true}).click();
    const cited=saved.manuscript.sections[0].blocks.find(b=>b.finding_ids.includes(item.id)).id;await page.waitForURL(url=>url.pathname.endsWith('/draft')&&url.searchParams.get('block')===cited);
@@ -202,7 +204,8 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
   assert.ok(await preview.locator('[data-map-node="unit"]').count()>=2,'Draft paragraphs are on the map');
   assert.ok(await preview.locator('[data-map-node="finding"]').count()>=1,'Cited findings are on the map');
   assert.ok(await preview.locator('path[data-edge="cites"]').count()>=1,'Paragraphs are joined to the findings they cite');
-  await preview.getByRole('button',{name:'Finding: '+saved.findings[0].label,exact:true}).click();
+  // The map does not scroll: focus brings a node into view, as Tab does for a reader.
+  const finding=preview.getByRole('button',{name:'Finding: '+saved.findings[0].label,exact:true});await finding.focus();await finding.click();
   await preview.getByRole('link',{name:'Open in Evidence',exact:true}).waitFor();
   await page.waitForTimeout(300);await page.screenshot({path:path.join(artifacts,`draft-map-${width}.png`)});
   await preview.locator('[data-view-option="read"]').click();
@@ -240,7 +243,7 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
   }
   sourceChanged=true;await page.reload();await workspace.getByText('Evidence changed — review needed',{exact:false}).first().waitFor();assert.equal(await workspace.getByLabel('Paragraph',{exact:true}).first().inputValue(),'Unsaved paragraph survives a conflict.');await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`draft-source-changed-${width}.png`),fullPage:true});
   project.role='viewer';await page.goto(`${base}/projects/${projectId}/evidence`);await workspace.getByRole('heading',{name:'Evidence',exact:true}).waitFor();if(!(await workspace.getByLabel('Observed result',{exact:true}).first().isVisible().catch(()=>false)))await workspace.locator('article[id^="finding-"]').first().locator('button[aria-expanded]').first().click();assert.equal(await workspace.getByLabel('Observed result',{exact:true}).first().getAttribute('readonly'),'');assert.equal(await page.getByRole('button',{name:'Save investigation',exact:true}).count(),0,'Viewers are not offered Save');{const region=await openPreview();await region.getByRole('radio',{name:'Full',exact:true}).click();assert.equal(await region.getAttribute('data-level'),'full','Viewers can fold the preview');assert.equal(await region.locator('input,textarea,[contenteditable]').count(),0);await closePreview();}await workspace.getByLabel('Select for comparison').first().check();await workspace.getByText('Selected comparison',{exact:true}).waitFor();await workspace.getByRole('button',{name:'Open PDF source',exact:true}).first().click();await page.locator('.page[data-page-number="1"] canvas').first().waitFor();await page.getByRole('button',{name:'Close reader',exact:true}).click();assert.equal(await workspace.getByRole('button',{name:'Open PDF source',exact:true}).first().isEnabled(),true);
-  project.role='admin';failProject=true;await page.goto(`${base}/projects/${projectId}`);await page.getByRole('main').getByRole('alert').filter({hasText:/./}).first().waitFor();assert.equal(await page.getByLabel('Question',{exact:true}).count(),0,'A failed project request does not render a read-only case');failProject=false;
+  project.role='admin';failProject=true;await page.goto(`${base}/projects/${projectId}/overview`);await page.getByRole('main').getByRole('alert').filter({hasText:/./}).first().waitFor();assert.equal(await page.getByLabel('Question',{exact:true}).count(),0,'A failed project request does not render a read-only case');failProject=false;
   assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);await page.close();
  }console.log('Production desktop/mobile manual/assistant insertion-discard, reload/conflict, folded previews on Overview, Evidence and Write without requests or storage, AI/human/quotation attribution, finding link with unsaved prose, viewer preview and PDF, brief-only initialization and theme preservation passed.');}
  finally{await browser.close();}

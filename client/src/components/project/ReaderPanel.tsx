@@ -52,7 +52,7 @@ export function ReaderPanel() {
         // PDF scroll position survives switching back.
         <div
             className={cn(
-                "flex-col bg-background",
+                "workspace-panel flex-col bg-background",
                 rightPanel === "reader" ? "flex" : "hidden",
                 "fixed inset-0 z-40 md:static md:z-auto md:w-[46%] md:min-w-[420px] md:max-w-[760px] md:shrink-0 md:border-l",
             )}
