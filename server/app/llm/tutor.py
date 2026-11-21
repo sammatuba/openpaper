@@ -1,17 +1,25 @@
-"""Tutor mode for the paper chat: the parts that are not the prompt.
+"""Tutor mode for the paper and project chats: the parts that are not the prompt.
 
 A tutor turn ends with a state block the learner never reads. This module
 lifts that block out of the answer stream, validates it, and builds the system
 prompt that hands the previous one back. See app.schemas.tutor for why the
 state exists at all.
+
+A project turn has two models, one that fetches passages and one that
+teaches from them. Both are given the session here: the teacher its prompt,
+the fetcher a brief saying what the teacher needs.
 """
 
 import json
 import logging
 import re
-from typing import Any, AsyncGenerator, Dict, Optional, Union
+from typing import Any, AsyncGenerator, Dict, Mapping, Optional, Union
 
-from app.llm.prompts import TUTOR_PAPER_SYSTEM_PROMPT
+from app.llm.prompts import (
+    TUTOR_GATHERING_BRIEF,
+    TUTOR_PAPER_SYSTEM_PROMPT,
+    TUTOR_PROJECT_SYSTEM_PROMPT,
+)
 from app.schemas.tutor import TutorState
 from pydantic import ValidationError
 
@@ -158,8 +166,8 @@ def next_turn(previous: Optional[Dict[str, Any]]) -> int:
         return 1
 
 
-def build_tutor_system_prompt(previous: Optional[Dict[str, Any]]) -> str:
-    """The tutor instructions followed by where this session stands."""
+def _session_note(previous: Optional[Dict[str, Any]]) -> str:
+    """Where this session stands, as the last section of a tutor's prompt."""
     turn = next_turn(previous)
     if not previous:
         # A first turn whose state block was lost leaves no state either, and
@@ -185,7 +193,53 @@ def build_tutor_system_prompt(previous: Optional[Dict[str, Any]]) -> str:
             "tutor turns of yours that this state does not reflect, it missed "
             "them: bring it up to date from what you can see."
         )
-    return f"{TUTOR_PAPER_SYSTEM_PROMPT}\n## Session state\n{session}\n"
+    return f"\n## Session state\n{session}\n"
+
+
+def build_tutor_system_prompt(previous: Optional[Dict[str, Any]]) -> str:
+    """The paper tutor's instructions followed by where this session stands."""
+    return f"{TUTOR_PAPER_SYSTEM_PROMPT}{_session_note(previous)}"
+
+
+def build_project_tutor_system_prompt(
+    previous: Optional[Dict[str, Any]],
+    *,
+    scope: str,
+    papers: Mapping[str, Any],
+) -> str:
+    """The project tutor's instructions, the papers it teaches, and the session.
+
+    `scope` is the sentence the fetching model was given about the same set
+    (see prompts.format_scope), and `papers` the roster by id, so that the
+    two models of a turn are describing one thing.
+    """
+    roster = json.dumps(papers, ensure_ascii=False, indent=1, default=str)
+    return (
+        f"{TUTOR_PROJECT_SYSTEM_PROMPT}"
+        f"\n## The papers\n{scope}\n\nBy id:\n{roster}\n"
+        f"{_session_note(previous)}"
+    )
+
+
+def build_tutor_gathering_question(
+    previous: Optional[Dict[str, Any]], message: str
+) -> str:
+    """What the fetching model is asked on a project tutor turn.
+
+    It stands in for the learner's message, which is an answer to a question
+    and not something to search the papers for.
+    """
+    previous = previous or {}
+    fetch = [str(line) for line in previous.get("fetch") or [] if line]
+    return TUTOR_GATHERING_BRIEF.format(
+        state=(
+            json.dumps(previous, ensure_ascii=False)
+            if previous
+            else "No session has started."
+        ),
+        fetch="\n".join(f"- {line}" for line in fetch) or "Nothing yet.",
+        message=message,
+    )
 
 
 def _held_back(text: str, marker: str) -> int:
@@ -204,8 +258,13 @@ async def split_tutor_state(
     source: AsyncGenerator[Union[str, dict], None],
     *,
     turn: int,
+    project: bool = False,
 ) -> AsyncGenerator[Union[str, dict], None]:
     """Pass an answer stream through, lifting the tutor's state block out of it.
+
+    `project` says the session is a project's. Only then does the state keep a
+    study path and a fetch note: a paper's tutor is never asked for either,
+    and one that wrote them anyway would have the paper's panel draw a path.
 
     Content before and after the block is yielded as content; the block itself
     becomes one `tutor_state` chunk carrying the validated state, stamped with
@@ -230,7 +289,9 @@ async def split_tutor_state(
         if state is None:
             return None
         state.turn = turn
-        return {"type": "tutor_state", "content": state.model_dump()}
+        if not project:
+            state.path, state.fetch = [], []
+        return {"type": "tutor_state", "content": state.dump()}
 
     async for chunk in source:
         if not isinstance(chunk, dict) or chunk.get("type") not in ("content", "reset"):

@@ -1,6 +1,6 @@
 "use client";
 
-import { RefObject, useRef } from "react";
+import { ReactNode, RefObject, useRef } from "react";
 import { AtSign, Loader, Send } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,8 @@ interface MentionInputProps {
 	// Optional external ref (e.g. for focus effects); an internal one is used otherwise.
 	textareaRef?: RefObject<HTMLTextAreaElement | null>;
 	minHeightClass?: string;
+	// Extra controls for the left of the toolbar, after the @ button.
+	toolbarExtras?: ReactNode;
 }
 
 /**
@@ -58,6 +60,7 @@ export function MentionInput({
 	autoFocus = false,
 	textareaRef,
 	minHeightClass = "min-h-20",
+	toolbarExtras,
 }: MentionInputProps) {
 	const internalRef = useRef<HTMLTextAreaElement>(null);
 	const taRef = textareaRef ?? internalRef;
@@ -137,6 +140,7 @@ export function MentionInput({
 							<AtSign className="w-4 h-4" />
 						</Button>
 					)}
+					{toolbarExtras}
 				</div>
 				<Button
 					type="button"

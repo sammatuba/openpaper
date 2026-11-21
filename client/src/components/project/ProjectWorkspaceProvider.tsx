@@ -97,6 +97,9 @@ interface ProjectWorkspaceValue {
 export interface PendingDiscussion {
     query: string;
     paperIds: string[];
+    // The discussion is a study session: its first turn, and those after it,
+    // go to the tutor.
+    tutor?: boolean;
 }
 
 const NO_PAPERS: PaperItem[] = [];

@@ -227,9 +227,18 @@ export interface TutorSubskill {
 
 export type TutorPhase = 'diagnostic' | 'teaching' | 'assessment' | 'complete';
 
-// Where a tutoring session in the paper chat stands. Written by the tutor at
-// the end of each of its turns, sent as a `tutor_state` stream chunk, and
-// returned with the conversation as `tutor_state`.
+// One step of the study path a project tutor lays out across the project's
+// papers. `papers` holds paper ids, all of them papers of the project.
+export interface TutorUnit {
+    title: string;
+    papers: string[];
+    status: 'todo' | 'current' | 'done';
+}
+
+// Where a tutoring session stands, in the paper chat or in a project
+// conversation. Written by the tutor at the end of each of its turns, sent as
+// a `tutor_state` stream chunk, and returned with the conversation as
+// `tutor_state`.
 export interface TutorState {
     topic: string;
     phase: TutorPhase;
@@ -237,6 +246,8 @@ export interface TutorState {
     difficulty: 'easier' | 'normal' | 'harder';
     focus: string | null;
     subskills: TutorSubskill[];
+    // Project sessions only; absent for a paper, which is one source.
+    path?: TutorUnit[];
     misconceptions: string[];
     covered: string[];
     diagnostic_asked: number;

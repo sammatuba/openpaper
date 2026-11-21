@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, BookOpen, ChevronRight, FlaskConical, MessagesSquare, Scale, Telescope } from "lucide-react";
+import { ArrowRight, BookOpen, ChevronRight, FlaskConical, GraduationCap, MessagesSquare, Scale, Telescope } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchFromApi } from "@/lib/api";
@@ -105,6 +105,28 @@ function ProjectPage() {
         }
     };
 
+    // A study session is a discussion whose turns go to the tutor: it teaches
+    // the project's papers by asking, and keeps a study path and a skill map.
+    const handleStudySession = async () => {
+        if (isViewer || !papers.length || chatDisabled || submittingRef.current) return;
+        submittingRef.current = true;
+        setIsSubmitting(true);
+        setError(null);
+        try {
+            const conversation = await fetchFromApi(`/api/projects/conversations/${projectId}`, {
+                method: "POST", body: JSON.stringify({ title: "Study session" }),
+            });
+            pendingDiscussions.current.set(conversation.id, { query: "Teach me this project.", paperIds: [], tutor: true });
+            await refetchConversations();
+            router.push(`/projects/${projectId}/conversations/${conversation.id}`);
+        } catch (err) {
+            console.error(err);
+            setError("Could not start the study session. Please try again.");
+            submittingRef.current = false;
+            setIsSubmitting(false);
+        }
+    };
+
     const isInitialLoading = isProjectLoading ||
         ((isPapersLoading || isConversationsLoading) && !papers.length && !conversations.length);
     if (isInitialLoading) return <div className="mx-auto w-full max-w-4xl space-y-4 p-6"><Skeleton className="h-8 w-2/3" /><Skeleton className="h-48 w-full" /></div>;
@@ -132,6 +154,15 @@ function ProjectPage() {
                     <MessagesSquare aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1 truncate">{conversation.title}</span><ChevronRight aria-hidden className="h-4 w-4 shrink-0" />
                 </Link>)}
+            </section>}
+
+            {!isViewer && !!papers.length && <section aria-labelledby="study-heading" className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-xl border p-4">
+                <GraduationCap aria-hidden className="h-5 w-5 shrink-0 text-blue-500" />
+                <div className="min-w-48 flex-1">
+                    <h2 id="study-heading" className="text-sm font-semibold">Study these papers</h2>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">A tutor takes you through the project by asking questions. It lays out a study path across the papers, places your level with a few questions, then keeps a map of what you have shown you can do. Only you see a study session.</p>
+                </div>
+                <Button variant="outline" onClick={handleStudySession} disabled={chatDisabled || isSubmitting} className="h-auto whitespace-normal py-2">Start a study session<ArrowRight aria-hidden className="ml-2 h-4 w-4 shrink-0" /></Button>
             </section>}
 
             {!isViewer ? papers.length ? <section id="research-session" aria-labelledby="session-heading" tabIndex={-1} className="scroll-mt-5 space-y-4">

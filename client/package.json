@@ -17,6 +17,7 @@
     "test:flow:browser": "node scripts/check-flow.cjs",
     "test:canvas:browser": "node scripts/check-canvas.cjs",
     "test:tutor:browser": "node scripts/check-tutor-mode.cjs",
+    "test:project-tutor:browser": "node scripts/check-project-tutor.cjs",
     "measure:canvas": "node scripts/measure-canvas.cjs",
     "measure:bundle": "node scripts/measure-bundle.cjs",
     "measure:map": "node scripts/measure-map.cjs",
