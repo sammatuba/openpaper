@@ -231,3 +231,54 @@ on this evidence.
   separately and does not check that they match. Only tutor turns are checked.
 - The same duplicate-yield and `strip()` pattern is in
   `multi_paper_operations.py` (project and library chat). Untouched here.
+
+## Release record (2026-11-21)
+
+**State: staged, not live.** Revision `openpaper-00032-dox` exists with no
+traffic, under the tag `tutor`. Traffic is 100% on `openpaper-00029-jen`, as
+before. Moving traffic waits on the owner, because the last review verdict is
+rework and the last commit has not been reviewed (round 6 above).
+
+Why two branches: the live service is not one commit. Its server is built from
+`fix/investigation-dated-papers` (`16a7f1b6`, image `dated-etag-16a7f1b6`) and
+its client from `a3be08ca` (image `fold-a3be08cadbdd`), while
+`feat/spatial-workspace` also carries an unreleased migration and the project
+canvas. Each release branch is the six tutor commits on top of one live base
+and nothing else. No migration. Caddy unchanged.
+
+| | Server | Client |
+| --- | --- | --- |
+| Branch | `feat/tutor-mode-server` | `feat/tutor-mode-client` |
+| Base | `1cf4437d` (head of `fix/investigation-dated-papers`; server code as live) | `a3be08ca` (the live client commit) |
+| Head | `d6b10239` | `a9c78382` |
+| Development branch equivalent | `9889c461` on `feat/spatial-workspace` | same |
+| Checks at that head | Unit suite 549 tests (478 pass, 71 skipped); isolated PostgreSQL suites 111 of 111; server files this change touches byte-identical to the development branch | `tsc --noEmit`, `npm run build`, `npm run test:tutor:browser` at 1440 and 390 px |
+| Image | `server:tutor-d6b10239`, `sha256:8d657b49d6d375395d991670e00757310cc7e2f857ce25f9d50805ccb42bf59e` (Cloud Build `06ff8674-7faa-4c28-a7e7-0dcb7b5b12d8`) | `client:tutor-a9c78382`, `sha256:c4bf5f9ffc003875e2d5e83a04105908c8c57cfd7d4903789e68cdbb23e2e6d0` |
+
+All three branches are pushed. Each image was built with the matching step of
+`deploy/cloudbuild.yaml` on its own, from a clean worktree of its branch.
+
+Staged with `gcloud run services update openpaper --region=asia-southeast1
+--no-traffic --tag=tutor --container=server --image=<server@digest>
+--container=client --image=<client@digest>`.
+
+Signed-out smoke of the staged URL
+(`https://tutor---openpaper-rfv24u7kqa-as.a.run.app`): `/api/health` 200, `/`
+200, the server's `ResponseStyle` lists `tutor`, `POST /api/message/chat/paper`
+and `GET /api/conversation/{id}` answer 401, and the reader page's script
+carries the tutor switch. The public origin was checked afterwards: 200, still
+the previous build (`ResponseStyle` has no `tutor`).
+
+Not checked on the staged revision: anything signed in, and therefore the
+tutor itself against the real model.
+
+To put it live:
+`gcloud run services update-traffic openpaper --region asia-southeast1 --to-revisions=openpaper-00032-dox=100`,
+then `--remove-tags=tutor`. Rollback: `--to-revisions=openpaper-00029-jen=100`.
+To drop it instead: `gcloud run services update-traffic openpaper --region
+asia-southeast1 --remove-tags=tutor`; the revision then receives nothing and
+can be deleted.
+
+Images built from earlier heads and never deployed, safe to delete:
+`server:tutor-{e438dbe6,0fb6401b,915bdd74,b6c7bb79,1f8be7b3}` and
+`client:tutor-{14972c5d,5aa66b01,f5487289,8bb02155,86178e2f}`.
