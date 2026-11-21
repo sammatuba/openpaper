@@ -18,6 +18,22 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Key under Message.trace that holds a TutorState dump.
 TUTOR_TRACE_KEY = "tutor"
+# Key under Message.trace that marks a message, the learner's or the tutor's,
+# as part of a tutoring turn. A tutoring session is the learner's: its turns
+# are left out of what a shared paper shows. That is decided by this mark and
+# not by inspecting what the tutor wrote, because no inspection can tell a
+# reply that is safe to show from one in which the model put its notes on the
+# learner somewhere they should not be.
+TUTOR_TURN_KEY = "tutor_turn"
+
+
+def tutor_turn_trace(state: Optional[dict] = None) -> dict:
+    """The trace a message of a tutoring turn is saved with."""
+    trace: dict = {TUTOR_TURN_KEY: True}
+    if state:
+        trace[TUTOR_TRACE_KEY] = state
+    return trace
+
 
 MAX_LEVEL = 5
 MAX_SUBSKILLS = 10
@@ -32,9 +48,10 @@ DIFFICULTIES = ("easier", "normal", "harder")
 def without_tutor_state(messages: List[dict]) -> List[dict]:
     """Formatted messages with the tutoring session taken out of their trace.
 
-    For readers who are not the learner. A shared paper shows its chat, and a
-    tutor's questions and the learner's answers are part of that; the tutor's
-    private notes on what the learner gets wrong are not.
+    For readers who are not the learner. The second line of defence: the
+    shared-paper query already leaves tutoring turns out altogether, and tutor
+    mode is refused in a project conversation, so no message that reaches a
+    reader this way should carry a session. If one does, it is not handed out.
     """
     cleaned = []
     for message in messages:

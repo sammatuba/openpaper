@@ -56,17 +56,20 @@ class LatestTutorStatePostgresTests(unittest.TestCase):
         self.engine = create_engine(
             url, connect_args={"options": "-csearch_path=" + self.schema}
         )
-        # The real column types, without the foreign keys to tables this test
-        # has no use for.
-        messages = Table(
-            "messages",
-            MetaData(),
-            *[
-                Column(column.name, column.type, primary_key=column.primary_key)
-                for column in Message.__table__.columns
-            ],
-        )
-        messages.create(self.engine)
+        # The real column types, without the foreign keys and constraints
+        # this test has no use for.
+        from app.database.models import Conversation, Paper
+
+        self.Conversation, self.Paper = Conversation, Paper
+        for model in (Message, Conversation, Paper):
+            Table(
+                model.__tablename__,
+                MetaData(),
+                *[
+                    Column(column.name, column.type, primary_key=column.primary_key)
+                    for column in model.__table__.columns
+                ],
+            ).create(self.engine)
         self.db = sessionmaker(bind=self.engine)()
         self.addCleanup(self.db.close)
         self.user = SimpleNamespace(id=uuid4())
@@ -130,6 +133,76 @@ class LatestTutorStatePostgresTests(unittest.TestCase):
         self.add(2, trace={"tutor": "not a state"})
 
         self.assertIsNone(self.latest())
+
+    # A shared paper shows its chat to anyone with the link. Tutoring turns
+    # are not part of that: whatever the tutor wrote in them, well-formed or
+    # not, a reader of the shared paper never receives it.
+
+    def share_paper(self):
+        paper_id = uuid4()
+        self.db.add(self.Paper(id=paper_id, share_id="share-1", user_id=self.user.id))
+        self.db.add(
+            self.Conversation(
+                id=self.conversation_id,
+                conversable_id=paper_id,
+                conversable_type="paper",
+                user_id=self.user.id,
+            )
+        )
+        self.db.commit()
+
+    def shared(self, page=1, page_size=10):
+        return [
+            message.sequence
+            for message in self.message_crud.get_shared_conversation_messages(
+                self.db,
+                conversation_id=self.conversation_id,
+                share_paper_id="share-1",
+                page=page,
+                page_size=page_size,
+            )
+        ]
+
+    def test_a_shared_paper_shows_no_tutoring_turns(self):
+        self.share_paper()
+        self.add(1, role="user")
+        self.add(2)
+        self.add(3, role="user", trace={"tutor_turn": True})
+        self.add(4, trace={"tutor_turn": True, "tutor": {"turn": 1}})
+        self.add(5, role="user", trace={"tutor_turn": True})
+        self.add(6, trace={"tutor_turn": True})  # a tutor reply that lost its state
+        self.add(7, role="user")
+        self.add(8, trace={"tool_calls": []})
+        self.add(9, trace={"tutor": {"turn": 2}})  # a state with no turn mark
+
+        self.assertEqual(self.shared(), [1, 2, 7, 8])
+
+    def test_the_owner_still_reads_every_turn(self):
+        self.share_paper()
+        self.add(1, role="user", trace={"tutor_turn": True})
+        self.add(2, trace={"tutor_turn": True, "tutor": {"turn": 1}})
+
+        own = self.message_crud.get_conversation_messages(
+            self.db, conversation_id=self.conversation_id, current_user=self.user
+        )
+
+        self.assertEqual([message.sequence for message in own], [1, 2])
+        self.assertEqual(self.shared(), [])
+
+    def test_shared_pages_stay_full_around_a_tutoring_session(self):
+        """The turns are left out by the query, before paging. Dropped
+        afterwards, a page that fell on a tutoring session would come back
+        short or empty and the reader would stop loading."""
+        self.share_paper()
+        for sequence in range(1, 13):
+            self.add(sequence, role="user" if sequence % 2 else "assistant")
+        for sequence in range(13, 33):
+            self.add(sequence, trace={"tutor_turn": True})
+        for sequence in range(33, 37):
+            self.add(sequence)
+
+        self.assertEqual(self.shared(page=1), list(range(7, 13)) + list(range(33, 37)))
+        self.assertEqual(self.shared(page=2), list(range(1, 7)))
 
 
 if __name__ == "__main__":

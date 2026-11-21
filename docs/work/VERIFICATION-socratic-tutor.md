@@ -16,16 +16,16 @@ On `feat/spatial-workspace`:
 
 | Check | Result |
 | --- | --- |
-| `cd server && GEMINI_API_KEY=test-key .venv/bin/python -m unittest discover -s tests` | 628 tests: 500 pass, 128 skipped (the suites that need the isolated cluster) |
-| `server/.venv/bin/python scripts/ci/run_isolated_postgres.py` | 191 tests pass, none skipped; `tests.test_tutor_state_postgres` added to the required suites (5 tests) |
+| `cd server && GEMINI_API_KEY=test-key .venv/bin/python -m unittest discover -s tests` | 631 tests: 500 pass, 131 skipped (the suites that need the isolated cluster) |
+| `server/.venv/bin/python scripts/ci/run_isolated_postgres.py` | 194 tests pass, none skipped; `tests.test_tutor_state_postgres` added to the required suites (8 tests) |
 | `black==24.3.0` and `isort==5.13.2 --profile black` on the changed server files, from the repository root | No changes left to make |
 | `cd client && tsc --noEmit` | Pass |
 | `next lint` on `SidePanelContent.tsx`, `tutor/TutorPanel.tsx`, `lib/schema.ts` | No warnings or errors |
 | `cd client && npm run build` | Pass |
 | `npm run test:tutor:browser` against the production build on 127.0.0.1:3011, API mocked | Pass at 1440 px (light) and 390 px (dark) |
 
-The server suite went from 570 tests to 628: 53 in `tests/test_tutor_mode.py`
-and 5 in `tests/test_tutor_state_postgres.py`.
+The server suite went from 570 tests to 631: 53 in `tests/test_tutor_mode.py`
+and 8 in `tests/test_tutor_state_postgres.py`.
 
 The release branches are checked again in the release record at the end.
 
@@ -55,6 +55,10 @@ The release branches are checked again in the release record at the end.
 - **The lookup**, on PostgreSQL: the latest tutor turn wins, ordinary turns
   since then do not end the session, and another user's or conversation's
   state is never read.
+- **Sharing**, on PostgreSQL: the shared-paper conversation returns no
+  tutoring turn, neither the learner's half nor the tutor's, with or without a
+  stored session; its pages stay full around a tutoring session; the owner
+  still reads every turn.
 - **The reader**, in a browser: the switch is remembered per paper; a tutor turn
   is requested with `style: "tutor"` and an ordinary one without; the state
   chunk draws the map and never appears as text; levels are withheld during the
@@ -151,13 +155,24 @@ built from this commit were not deployed.
 | A history read or reply already in flight when the user or conversation changes could put the old session back on screen | important | Fixed: each notes the session it started under and checks before writing. A tab that never learns of an account switch is unchanged, as recorded in round 3 |
 | The work pointer and the release record | minor | Written at release, below |
 
-The limit that remains after this is not one a filter can remove. The tutor
-is given its notes so that it can teach from them, and nothing stops a model
-from saying one of them in an ordinary sentence of its reply. The prompt tells
-it not to write the session out. A tutor telling the learner what they got
-wrong is, in any case, the tutoring.
+A limit was recorded here as not removable by a filter: the tutor is given its
+notes so that it can teach from them, and nothing stops a model from saying
+one in an ordinary sentence of its reply. Round 5 removed it another way, by
+keeping tutoring turns out of what a shared paper shows.
 
-### Round 5: `./meos review` on the third rework
+### Round 5: `./meos review` on the third rework (`e8513451`)
+
+Report: `.meos/reviews/20261121T052456Z.md`. Verdict: **rework**. It confirmed the strict block ending
+closed, the scrub applied before saving, and no regression in the ordinary
+paper chat. The images built from this commit were not deployed.
+
+| Finding | Severity | Disposition |
+| --- | --- | --- |
+| The scrub misses other shapes: a lone subskill record, a state written as a single-quoted mapping. The notes in them are saved in the reply or a citation and reach a shared-paper reader | blocking | Fixed by taking the route away, not by adding shapes. Every message of a tutoring turn, the learner's and the tutor's, is saved with a mark, and the shared-paper conversation leaves marked turns out in its query. What the tutor wrote in a tutoring turn, well-formed or not, is no longer something a shared paper shows. This also removes the limit recorded after round 4: a tutor that says a note in a plain sentence says it only to the learner. The scrub stays, for what the learner themself sees stored |
+| A reply in flight when the mounted reader's account changes went on rendering its text and citations | important | Fixed: the stream is cancelled and nothing of it is shown once the session it was asked in is no longer the current one |
+| A slow history read could roll the panel back past a newer saved turn | minor | Fixed: the newer turn is kept |
+
+### Round 6: `./meos review` on the fourth rework
 
 See the release record.
 
@@ -179,9 +194,9 @@ See the release record.
   begins a new one in place.
 - A tutor turn costs what an ordinary turn costs: the paper is attached each
   time. Turns are longer by the state block.
-- A shared paper shows its tutoring chat like any other chat: the questions,
-  the answers, and any skill map the tutor drew in it. What it does not show is
-  the stored session.
+- A shared paper does not show tutoring turns. Its reader sees the paper's
+  ordinary questions and answers and nothing of a tutoring session. The share
+  dialog still says "annotations and chats"; it does not mention this.
 - The skill's "save state" and "resume from" are not offered. The session is
   kept per paper and resumes by itself; it cannot be moved to another paper.
 - The stored session is readable by whoever operates the service (database,
