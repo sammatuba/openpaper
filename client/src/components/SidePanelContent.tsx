@@ -213,7 +213,12 @@ export function SidePanelContent({
             // Where a tutoring session in this conversation stands. Every page
             // carries the latest one, since the turn that set it may be on any.
             if (response.tutor_state && tutorSessionKeyRef.current === requestedUnder) {
-                setTutorState(response.tutor_state);
+                // A history read that was slow to return must not roll the
+                // panel back past a turn that has been saved since.
+                const fromHistory: TutorState = response.tutor_state;
+                setTutorState(current =>
+                    current && current.turn > fromHistory.turn ? current : fromHistory
+                );
             }
 
             if (fetchedMessages.length === 0) {
@@ -562,6 +567,16 @@ export function SidePanelContent({
                         console.warn('Unprocessed buffer at end of stream:', buffer);
                     }
                     break;
+                }
+
+                if (tutorSessionKeyRef.current !== sentUnder) {
+                    // The signed-in user or the conversation changed while
+                    // this reply was arriving. It belongs to the session it
+                    // was asked in: stop reading it and show none of it.
+                    await reader.cancel();
+                    setStreamingChunks([]);
+                    setStreamingReferences(undefined);
+                    return;
                 }
 
                 // Decode the chunk and add to buffer

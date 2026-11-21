@@ -40,9 +40,14 @@ later.
    from the last stored state.
 4. **Turning the mode on is the consent.** The skill asks before starting a
    tutoring loop; here the learner flips a switch, so the tutor does not ask.
-5. **The tutor's notes are the learner's.** A shared paper shows its chat; the
-   state (which holds notes on what the learner gets wrong) is not part of the
-   chat. It is stored only in the paper's own conversation, removed from the
+5. **A tutoring session is the learner's.** A shared paper shows its chat, but
+   not its tutoring turns: every message of one is marked, and the shared
+   conversation leaves marked turns out. This is decided by the mark and not
+   by inspecting the reply, because no inspection can tell a reply that is
+   safe to show from one in which the model put its notes somewhere they
+   should not be. Beyond that, the state (which holds notes on what the
+   learner gets wrong) is not part of the chat even for the learner. It is
+   stored only in the paper's own conversation, removed from the
    shared and project conversation responses, lifted out of a reply before
    anything reads that reply as evidence, and never written into the chat by
    the tutor. The skill's "save state" and "resume from" are therefore not

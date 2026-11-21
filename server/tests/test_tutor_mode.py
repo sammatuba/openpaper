@@ -798,8 +798,10 @@ class TutorEndpointsTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([m.role for m in saved], ["user", "assistant"])
         self.assertEqual(saved[1].content, "Why?")
-        self.assertEqual(saved[1].trace, {"tutor": STATE})
-        self.assertIsNone(saved[0].trace)
+        # Both halves of the turn carry the mark that keeps them out of a
+        # shared paper; the tutor's half also carries the session.
+        self.assertEqual(saved[1].trace, {"tutor_turn": True, "tutor": STATE})
+        self.assertEqual(saved[0].trace, {"tutor_turn": True})
         # And only then told to the reader, as the last thing in the stream.
         self.assertEqual(self.sent_states(), [STATE])
         self.assertEqual(self.sent[-1]["type"], "tutor_state")
@@ -867,12 +869,14 @@ class TutorEndpointsTest(unittest.IsolatedAsyncioTestCase):
         saved = await self.chat(ResponseStyle.TUTOR, content("Why?"))
 
         self.assertEqual([m.role for m in saved], ["user", "assistant"])
-        self.assertIsNone(saved[1].trace)
+        # No session to store, but still a tutoring turn, and marked as one:
+        # whatever this reply holds, a shared paper does not show it.
+        self.assertEqual([m.trace for m in saved], [{"tutor_turn": True}] * 2)
 
-    async def test_an_ordinary_turn_is_saved_without_one(self):
+    async def test_an_ordinary_turn_is_saved_without_any_mark(self):
         saved = await self.chat(ResponseStyle.NORMAL, content("An answer."))
 
-        self.assertIsNone(saved[1].trace)
+        self.assertEqual([m.trace for m in saved], [None, None])
 
     async def test_a_state_written_without_its_markers_is_not_saved_as_the_reply(self):
         """The model left the opening marker off, so the filter never saw a

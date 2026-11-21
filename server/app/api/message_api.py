@@ -28,7 +28,7 @@ from app.llm.paper_operations import PaperNotFoundError
 from app.llm.tutor import scrub_citations, scrub_unmarked_state
 from app.schemas.artifact import artifact_payload_adapter
 from app.schemas.message import EvidenceCollection, ResponseStyle
-from app.schemas.tutor import TUTOR_TRACE_KEY
+from app.schemas.tutor import tutor_turn_trace
 from app.schemas.user import CurrentUser
 from app.tasks.chart_generation import generate_chart
 from dotenv import load_dotenv
@@ -835,11 +835,12 @@ async def chat_message_stream(
                 # without one is saved as an ordinary message, and the session
                 # carries on from the last state that was stored.
                 tutor_state = evidence_container.get("tutor_state")
+                is_tutor_turn = request.style == ResponseStyle.TUTOR
 
                 # Save the complete message to the database
                 full_content = "".join(content_chunks)
 
-                if request.style == ResponseStyle.TUTOR:
+                if is_tutor_turn:
                     # The tutor's state is supposed to arrive between its
                     # markers, where it never becomes reply text. This is the
                     # check for when the model got the markers wrong: nothing
@@ -907,6 +908,9 @@ async def chat_message_stream(
                         role="user",
                         content=request.user_query,
                         references=formatted_references,
+                        # Both halves of a tutoring turn are marked as one, so
+                        # a shared paper shows neither. See TUTOR_TURN_KEY.
+                        trace=tutor_turn_trace() if is_tutor_turn else None,
                     ),
                     user=current_user,
                 )
@@ -919,7 +923,9 @@ async def chat_message_stream(
                         role="assistant",
                         content=full_content,
                         references=evidence if evidence else None,
-                        trace=({TUTOR_TRACE_KEY: tutor_state} if tutor_state else None),
+                        trace=(
+                            tutor_turn_trace(tutor_state) if is_tutor_turn else None
+                        ),
                     ),
                     user=current_user,
                 )
