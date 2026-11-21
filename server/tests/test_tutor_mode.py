@@ -480,7 +480,7 @@ class ChatWithPaperTest(unittest.IsolatedAsyncioTestCase):
             patch(
                 "app.llm.paper_operations.message_crud.get_conversation_messages",
                 return_value=[],
-            ),
+            ) as history_lookup,
             patch(
                 "app.llm.paper_operations.message_crud.get_latest_tutor_state",
                 return_value=stored_state,
@@ -490,6 +490,7 @@ class ChatWithPaperTest(unittest.IsolatedAsyncioTestCase):
                 return_value=b"%PDF",
             ),
         ):
+            self.history_lookup = history_lookup
             chunks = [
                 c
                 async for c in operations.chat_with_paper(
@@ -521,6 +522,8 @@ class ChatWithPaperTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(states(chunks)), 1)
         self.assertEqual(states(chunks)[0]["turn"], 7)
+        # The tutor reads the whole conversation, its own turns included.
+        self.assertFalse(self.history_lookup.call_args.kwargs["shareable_only"])
         self.assertEqual(
             [c["type"] for c in chunks if c["type"] == "references"], ["references"]
         )
@@ -693,6 +696,34 @@ class ChatWithPaperTest(unittest.IsolatedAsyncioTestCase):
         # The conversation check belongs to tutor turns. An ordinary answer
         # stores nothing private, and is sent as it always was.
         self.conversation_lookup.assert_not_called()
+        # It is written without sight of the paper's tutoring turns. An
+        # ordinary answer is shareable; it cannot repeat what it never saw.
+        self.assertTrue(self.history_lookup.call_args.kwargs["shareable_only"])
+
+    async def test_a_title_is_made_only_from_what_a_shared_paper_shows(self):
+        """The title is returned with a shared paper. Made from the last few
+        messages whatever they were, it could name what a learner got wrong."""
+        from app.llm.conversation_operations import ConversationOperations
+
+        operations = ConversationOperations.__new__(ConversationOperations)
+        with (
+            patch(
+                "app.llm.conversation_operations.conversation_crud."
+                "get_conversation_by_id",
+                return_value=SimpleNamespace(id=uuid.uuid4(), title=None),
+            ),
+            patch(
+                "app.llm.conversation_operations.message_crud."
+                "get_conversation_messages",
+                return_value=[],
+            ) as history,
+        ):
+            title = operations.rename_conversation(
+                str(uuid.uuid4()), SimpleNamespace(id=uuid.uuid4()), db=None
+            )
+
+        self.assertTrue(history.call_args.kwargs["shareable_only"])
+        self.assertIsNone(title, "a conversation of tutoring turns only is not named")
 
     async def test_text_after_the_evidence_block_arrives_once(self):
         """It used to arrive twice: once when the block closed, and again when

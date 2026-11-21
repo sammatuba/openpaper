@@ -19,6 +19,19 @@ from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
 
+def _not_a_tutoring_turn() -> tuple:
+    """Filter conditions that leave out every message of a tutoring turn.
+
+    coalesce, because `?` on a NULL trace is NULL and a bare NOT would then
+    drop the very rows that have nothing to hide. The second condition covers
+    a stored session that somehow lacks the turn mark.
+    """
+    return (
+        func.coalesce(Message.trace.has_key(TUTOR_TURN_KEY), False).is_(False),
+        func.coalesce(Message.trace.has_key(TUTOR_TRACE_KEY), False).is_(False),
+    )
+
+
 class MessageBase(BaseModel):
     conversation_id: UUID
     role: str
@@ -86,18 +99,25 @@ class MessageCRUD(CRUDBase[Message, MessageCreate, MessageUpdate]):
         current_user: CurrentUser,
         page: int = 1,
         page_size: int = 10,
+        shareable_only: bool = False,
     ) -> list[Message]:
         """
         Get messages for a conversation:
         1. Order by sequence DESC for correct pagination (most recent first)
         2. Apply offset and limit
         3. Reverse final results for chronological display
+
+        `shareable_only` leaves tutoring turns out. It is for anything whose
+        output a shared paper can show: the history an ordinary answer is
+        written from, and the text a conversation title is made from. Either
+        could otherwise repeat something said in a tutoring session.
         """
         messages = (
             db.query(Message)
             .filter(
                 Message.conversation_id == conversation_id,
                 Message.user_id == current_user.id,
+                *(_not_a_tutoring_turn() if shareable_only else ()),
             )
             .order_by(desc(Message.sequence))  # newest first for pagination
             .offset((page - 1) * page_size)
@@ -229,10 +249,8 @@ class MessageCRUD(CRUDBase[Message, MessageCreate, MessageUpdate]):
                 # Remove the joins and just check the conversation directly
                 # A tutoring session is the learner's, not the paper's: its
                 # turns are no part of what a shared paper shows. Filtered
-                # here, in the query, so that pages stay full. (coalesce:
-                # `?` on a NULL trace is NULL, which a bare NOT would drop.)
-                func.coalesce(Message.trace.has_key(TUTOR_TURN_KEY), False).is_(False),
-                func.coalesce(Message.trace.has_key(TUTOR_TRACE_KEY), False).is_(False),
+                # here, in the query, so that pages stay full.
+                *_not_a_tutoring_turn(),
             )
             .order_by(desc(Message.sequence))  # newest first for pagination
             .offset((page - 1) * page_size)

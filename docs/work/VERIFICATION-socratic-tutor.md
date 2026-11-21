@@ -16,16 +16,16 @@ On `feat/spatial-workspace`:
 
 | Check | Result |
 | --- | --- |
-| `cd server && GEMINI_API_KEY=test-key .venv/bin/python -m unittest discover -s tests` | 631 tests: 500 pass, 131 skipped (the suites that need the isolated cluster) |
-| `server/.venv/bin/python scripts/ci/run_isolated_postgres.py` | 194 tests pass, none skipped; `tests.test_tutor_state_postgres` added to the required suites (8 tests) |
+| `cd server && GEMINI_API_KEY=test-key .venv/bin/python -m unittest discover -s tests` | 633 tests: 501 pass, 132 skipped (the suites that need the isolated cluster) |
+| `server/.venv/bin/python scripts/ci/run_isolated_postgres.py` | 195 tests pass, none skipped; `tests.test_tutor_state_postgres` added to the required suites (9 tests) |
 | `black==24.3.0` and `isort==5.13.2 --profile black` on the changed server files, from the repository root | No changes left to make |
 | `cd client && tsc --noEmit` | Pass |
 | `next lint` on `SidePanelContent.tsx`, `tutor/TutorPanel.tsx`, `lib/schema.ts` | No warnings or errors |
 | `cd client && npm run build` | Pass |
 | `npm run test:tutor:browser` against the production build on 127.0.0.1:3011, API mocked | Pass at 1440 px (light) and 390 px (dark) |
 
-The server suite went from 570 tests to 631: 53 in `tests/test_tutor_mode.py`
-and 8 in `tests/test_tutor_state_postgres.py`.
+The server suite went from 570 tests to 633: 54 in `tests/test_tutor_mode.py`
+and 9 in `tests/test_tutor_state_postgres.py`.
 
 The release branches are checked again in the release record at the end.
 
@@ -172,9 +172,28 @@ paper chat. The images built from this commit were not deployed.
 | A reply in flight when the mounted reader's account changes went on rendering its text and citations | important | Fixed: the stream is cancelled and nothing of it is shown once the session it was asked in is no longer the current one |
 | A slow history read could roll the panel back past a newer saved turn | minor | Fixed: the newer turn is kept |
 
-### Round 6: `./meos review` on the fourth rework
+### Round 6: `./meos review` on the fourth rework (`02318b7f`)
 
-See the release record.
+Report: `.meos/reviews/20261121T053402Z.md`. Verdict: **rework**. It confirmed round 5's direct disclosure closed: both
+halves of a tutoring turn carry the mark, replies with no usable state
+included, and the shared-paper query leaves them out before paging, whatever
+the tutor wrote. It found no regression in ordinary chat or in the shared
+conversation of papers that were never tutored. What it reported next are
+indirect routes, in which a later model call repeats something from a
+tutoring turn into something a shared paper shows.
+
+| Finding | Severity | Disposition |
+| --- | --- | --- |
+| With Tutor switched off, an ordinary answer is written from a history that includes the tutoring turns and could repeat them; the answer is shareable | blocking | Fixed. An ordinary answer's history leaves tutoring turns out (`shareable_only`). The tutor still reads everything |
+| The rename action makes a title from the last messages, tutoring ones included, and the title is returned with a shared paper | blocking | Fixed. The title is made from shareable messages only; a conversation of tutoring turns only is not named |
+| A mounted reader switched directly between two signed-in accounts keeps the previous transcript, and a delayed history read or a finishing stream can add to it | important | Not changed. This is the reader's ordinary chat, tutor mode or not. The tutor panel and an in-flight reply are covered (rounds 4 and 5) |
+| The shared response shows gaps in message sequence numbers where tutoring turns were left out, and a conversation of tutoring turns only is reported as present | minor | Not changed. It shows that tutoring happened, and how many messages, not what was said |
+
+**These two fixes have not been reviewed.** Six rounds in, the review has gone
+from direct disclosure of the stored state to second-order repetition by a
+later model call, and each round has found a further route. No seventh round
+was run before staging. The owner decides whether the release goes to traffic
+on this evidence.
 
 ## Not verified
 
@@ -197,6 +216,9 @@ See the release record.
 - A shared paper does not show tutoring turns. Its reader sees the paper's
   ordinary questions and answers and nothing of a tutoring session. The share
   dialog still says "annotations and chats"; it does not mention this.
+- For the same reason an ordinary answer does not know what was said in the
+  paper's tutoring session, and the tutor's turns do not count toward the
+  conversation's title.
 - The skill's "save state" and "resume from" are not offered. The session is
   kept per paper and resumes by itself; it cannot be moved to another paper.
 - The stored session is readable by whoever operates the service (database,

@@ -149,8 +149,14 @@ class PaperOperations(BaseLLMClient):
 
         casted_conversation_id = uuid.UUID(conversation_id)
 
+        # An ordinary answer is something a shared paper shows, so it is
+        # written without sight of the paper's tutoring turns: it cannot
+        # repeat what it was never given. The tutor reads everything.
         conversation_history = message_crud.get_conversation_messages(
-            db, conversation_id=casted_conversation_id, current_user=current_user
+            db,
+            conversation_id=casted_conversation_id,
+            current_user=current_user,
+            shareable_only=response_style != ResponseStyle.TUTOR,
         )
 
         question_with_citations = (

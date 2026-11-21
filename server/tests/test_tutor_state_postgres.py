@@ -189,6 +189,31 @@ class LatestTutorStatePostgresTests(unittest.TestCase):
         self.assertEqual([message.sequence for message in own], [1, 2])
         self.assertEqual(self.shared(), [])
 
+    def test_what_an_ordinary_answer_or_a_title_is_made_from_has_no_tutoring(self):
+        """Both are things a shared paper shows, and both are written by a
+        model from the conversation so far. Given the tutoring turns, either
+        could repeat what was said in them."""
+        self.add(1, role="user")
+        self.add(2)
+        self.add(3, role="user", trace={"tutor_turn": True})
+        self.add(4, trace={"tutor_turn": True, "tutor": {"turn": 1}})
+        self.add(5, role="user")
+        self.add(6, trace={"tool_calls": []})
+
+        def history(**kwargs):
+            return [
+                message.sequence
+                for message in self.message_crud.get_conversation_messages(
+                    self.db,
+                    conversation_id=self.conversation_id,
+                    current_user=self.user,
+                    **kwargs,
+                )
+            ]
+
+        self.assertEqual(history(shareable_only=True), [1, 2, 5, 6])
+        self.assertEqual(history(), [1, 2, 3, 4, 5, 6])  # the owner, and the tutor
+
     def test_shared_pages_stay_full_around_a_tutoring_session(self):
         """The turns are left out by the query, before paging. Dropped
         afterwards, a page that fell on a tutoring session would come back
