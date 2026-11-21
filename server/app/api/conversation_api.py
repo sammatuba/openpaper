@@ -13,6 +13,7 @@ from app.database.database import get_db
 from app.database.models import ConversableType, Conversation
 from app.database.telemetry import track_event
 from app.llm.operations import operations
+from app.schemas.tutor import without_tutor_state
 from app.schemas.user import CurrentUser
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends
@@ -119,7 +120,9 @@ async def get_shared_paper_conversation(
             page_size=page_size,
         )
 
-        formatted_messages = message_crud.messages_to_dict(messages)
+        formatted_messages = without_tutor_state(
+            message_crud.messages_to_dict(messages)
+        )
 
         return JSONResponse(
             status_code=200,
@@ -173,6 +176,14 @@ async def get_conversation(
                 "id": str(conversation.id),
                 "title": conversation.title,
                 "messages": formatted_messages,
+                # Where a tutoring session in this conversation stands, or
+                # null. Sent apart from the messages because the turn that
+                # holds it may be pages back.
+                "tutor_state": message_crud.get_latest_tutor_state(
+                    db,
+                    conversation_id=casted_conversation_id,
+                    current_user=current_user,
+                ),
             },
         )
     except ValueError as e:

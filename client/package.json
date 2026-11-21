@@ -12,7 +12,8 @@
     "test:research-overview:browser": "node scripts/check-project-research-overview.cjs",
     "test:project-workflow:browser": "node scripts/check-project-workflow.cjs",
     "go": "yarn install && yarn build && yarn start",
-    "test:investigation:browser": "node scripts/check-investigation-workspace.cjs"
+    "test:investigation:browser": "node scripts/check-investigation-workspace.cjs",
+    "test:tutor:browser": "node scripts/check-tutor-mode.cjs"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.10",
