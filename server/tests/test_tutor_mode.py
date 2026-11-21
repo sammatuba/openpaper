@@ -28,6 +28,8 @@ from app.llm.tutor import (
     TUTOR_STATE_START,
     build_tutor_system_prompt,
     parse_tutor_state,
+    scrub_citations,
+    scrub_unmarked_state,
     split_tutor_state,
 )
 from app.schemas.message import ResponseStyle
@@ -272,6 +274,29 @@ class SplitTutorStateTest(unittest.IsolatedAsyncioTestCase):
                     states(chunks)[0]["misconceptions"][1], "a second private note"
                 )
 
+    async def test_a_fenced_example_inside_a_note_does_not_end_the_block(self):
+        """The lenient JSON reader used elsewhere accepts prose that contains
+        a fenced JSON example. Asked "is the block finished?", it would say yes
+        halfway through this note and show the rest of the state."""
+        state = {
+            **STATE,
+            "misconceptions": [
+                f"wrote ```json {{}} ``` and {TUTOR_STATE_END} as an answer",
+                "a second private note",
+            ],
+        }
+        whole = f"Why?\n\n{TUTOR_STATE_START}\n{json.dumps(state)}\n{TUTOR_STATE_END}"
+
+        for cut in range(1, len(whole)):
+            with self.subTest(cut=cut):
+                chunks = await split(content(whole[:cut]), content(whole[cut:]))
+
+                self.assertEqual(visible(chunks), "Why?\n\n")
+                self.assertEqual(len(states(chunks)), 1)
+                self.assertEqual(
+                    states(chunks)[0]["misconceptions"][1], "a second private note"
+                )
+
     async def test_nothing_after_a_malformed_block_is_shown(self):
         """What follows the opening marker is private until proven to be a
         finished state. A block that never becomes one is dropped whole, with
@@ -304,6 +329,74 @@ class SplitTutorStateTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn(references, chunks)
         self.assertEqual(visible(chunks), "Right. Why?")
+
+
+class ScrubUnmarkedStateTest(unittest.TestCase):
+    """The check on the way to storage, for a model that got the markers wrong."""
+
+    PRIVATE = "confuses path length with depth"
+
+    def assert_scrubbed(self, text, expected="Why does that hold?"):
+        cleaned = scrub_unmarked_state(text)
+        self.assertEqual(cleaned, expected)
+        self.assertNotIn(self.PRIVATE, cleaned)
+
+    def test_a_bare_state_object_is_removed(self):
+        self.assert_scrubbed(f"Why does that hold?\n\n{json.dumps(STATE)}")
+        self.assert_scrubbed(f"Why does that hold?\n\n{json.dumps(STATE, indent=2)}")
+
+    def test_a_misspelt_opening_marker_goes_with_it(self):
+        for opener in ("---TUTOR STATE---", "--- tutor-state ---", "--TUTOR_STATE--"):
+            with self.subTest(opener=opener):
+                self.assert_scrubbed(
+                    f"Why does that hold?\n\n{opener}\n{json.dumps(STATE)}\n"
+                    f"{TUTOR_STATE_END}\n"
+                )
+
+    def test_a_fenced_state_object_leaves_no_empty_code_box(self):
+        self.assert_scrubbed(
+            f"Why does that hold?\n\n```json\n{json.dumps(STATE)}\n```"
+        )
+
+    def test_an_unfinished_state_object_is_cut_to_the_end(self):
+        whole = json.dumps(STATE)
+        for cut in (len(whole) // 3, len(whole) // 2, len(whole) - 1):
+            with self.subTest(cut=cut):
+                self.assert_scrubbed(f"Why does that hold?\n\n{whole[:cut]}")
+
+    def test_text_that_is_not_a_state_is_returned_untouched(self):
+        for text in (
+            "Why does that hold?",
+            'The config in Appendix B is {"layers": 6, "heads": 8}. Why six?',
+            "Let $$f(x) = \\{x : x > 0\\}$$ and consider {the empty case}.",
+            "",
+        ):
+            with self.subTest(text=text):
+                self.assertIs(scrub_unmarked_state(text), text)
+
+    def test_citations_get_the_same_check(self):
+        evidence = {
+            "citations": [
+                {"key": 1, "reference": '"A real quotation."'},
+                {"key": 2, "reference": f'"Another." {json.dumps(STATE)}'},
+                {"key": 3, "reference": json.dumps(STATE)},
+            ]
+        }
+
+        cleaned = scrub_citations(evidence)
+
+        self.assertEqual(
+            cleaned,
+            {
+                "citations": [
+                    {"key": 1, "reference": '"A real quotation."'},
+                    {"key": 2, "reference": '"Another."'},
+                ]
+            },
+        )
+        untouched = {"citations": [{"key": 1, "reference": '"A real quotation."'}]}
+        self.assertIs(scrub_citations(untouched), untouched)
+        self.assertIsNone(scrub_citations(None))
 
 
 class TutorPromptTest(unittest.TestCase):
@@ -780,6 +873,57 @@ class TutorEndpointsTest(unittest.IsolatedAsyncioTestCase):
         saved = await self.chat(ResponseStyle.NORMAL, content("An answer."))
 
         self.assertIsNone(saved[1].trace)
+
+    async def test_a_state_written_without_its_markers_is_not_saved_as_the_reply(self):
+        """The model left the opening marker off, so the filter never saw a
+        block and the state arrived as reply text. What is stored, which is
+        what a shared paper shows, must not have it; and the reader is sent the
+        cleaned reply in place of the one it was streaming."""
+        saved = await self.chat(
+            ResponseStyle.TUTOR,
+            content("Why does that hold?\n\n"),
+            content(json.dumps(STATE)),
+            {
+                "type": "references",
+                "content": {
+                    "citations": [
+                        {"key": 1, "reference": '"A real quotation."'},
+                        {"key": 2, "reference": f'"Another." {json.dumps(STATE)}'},
+                        {"key": 3, "reference": json.dumps(STATE)},
+                    ]
+                },
+            },
+        )
+
+        self.assertEqual(saved[1].content, "Why does that hold?")
+        self.assertEqual(
+            saved[1].references,
+            {
+                "citations": [
+                    {"key": 1, "reference": '"A real quotation."'},
+                    {"key": 2, "reference": '"Another."'},
+                ]
+            },
+        )
+        stored = json.dumps([m.model_dump(mode="json") for m in saved])
+        self.assertNotIn("confuses path length with depth", stored)
+        self.assertNotIn("subskills", stored)
+
+        kinds = [e["type"] for e in self.sent]
+        last_reset = len(kinds) - 1 - kinds[::-1].index("reset")
+        replacement = self.sent[last_reset + 1 :]
+        self.assertEqual([e["type"] for e in replacement], ["content", "references"])
+        self.assertEqual(replacement[0]["content"], "Why does that hold?")
+        self.assertNotIn("confuses path length with depth", json.dumps(replacement))
+
+    async def test_an_ordinary_answer_is_never_scrubbed(self):
+        """An ordinary answer may quote JSON from a paper, any JSON."""
+        answer = f"The appendix gives the schema: {json.dumps(STATE)}"
+
+        saved = await self.chat(ResponseStyle.NORMAL, content(answer))
+
+        self.assertEqual(saved[1].content, answer)
+        self.assertNotIn("reset", [e["type"] for e in self.sent])
 
     async def test_the_owner_gets_the_session_back_with_the_conversation(self):
         conversation_id = uuid.uuid4()

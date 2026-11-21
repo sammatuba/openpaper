@@ -8,9 +8,9 @@ state exists at all.
 
 import json
 import logging
+import re
 from typing import Any, AsyncGenerator, Dict, Optional, Union
 
-from app.llm.json_parser import JSONParser
 from app.llm.prompts import TUTOR_PAPER_SYSTEM_PROMPT
 from app.schemas.tutor import TutorState
 from pydantic import ValidationError
@@ -21,32 +21,134 @@ TUTOR_STATE_START = "---TUTOR-STATE---"
 TUTOR_STATE_END = "---END-TUTOR-STATE---"
 
 
+_WHOLE_FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
+
+
+def _load_object(raw: str) -> Optional[dict]:
+    """`raw` as one JSON object, or None.
+
+    The whole of it, start to end: a code fence is allowed only around the
+    entire object. The lenient parser used elsewhere would also accept prose
+    that merely contains a fenced JSON example, and here "is this a finished
+    object" decides whether what follows is private.
+    """
+    text = raw.strip()
+    fenced = _WHOLE_FENCE.fullmatch(text)
+    if fenced:
+        text = fenced.group(1)
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _as_state(data: Optional[dict]) -> Optional[TutorState]:
+    if data is None:
+        return None
+    try:
+        state = TutorState.model_validate(data)
+    except ValidationError as exc:
+        logger.warning("Unusable tutor state: %s", exc)
+        return None
+    if not state.subskills:
+        logger.warning("Tutor state names no subskills; ignoring it.")
+        return None
+    return state
+
+
 def parse_tutor_state(raw: str) -> Optional[TutorState]:
     """The state a tutor wrote, or None when it is not usable.
 
     None is an ordinary outcome, not an error: the caller keeps whatever state
     the session already had, and the tutor writes a fresh one next turn.
     """
-    try:
-        data = JSONParser.validate_and_extract_json(raw)
-        if not isinstance(data, dict):
-            return None
-        state = TutorState.model_validate(data)
-    except (ValueError, ValidationError) as exc:
-        logger.warning("Unusable tutor state block: %s", exc)
-        return None
-    if not state.subskills:
-        logger.warning("Tutor state block names no subskills; ignoring it.")
-        return None
-    return state
+    return _as_state(_load_object(raw))
 
 
 def _is_complete_json(raw: str) -> bool:
-    try:
-        JSONParser.validate_and_extract_json(raw)
-    except ValueError:
-        return False
-    return True
+    return _load_object(raw) is not None
+
+
+# Keys only a session state has. One is enough to treat an object as one.
+_STATE_KEYS = ("subskills", "misconceptions", "diagnostic_asked")
+_STATE_KEY_IN_TEXT = re.compile(r'"(?:subskills|misconceptions|diagnostic_asked)"\s*:')
+_MARKER_LINE = re.compile(
+    r"^[ \t]*-{2,}[ \t]*(?:END[- _]?)?TUTOR[- _]?STATE[ \t]*-{2,}[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_EMPTY_FENCE = re.compile(r"```(?:json)?\s*```")
+
+
+def scrub_unmarked_state(text: str) -> str:
+    """`text` with any session state that arrived outside its markers removed.
+
+    The markers are how the state is kept out of the learner's message, and a
+    model can get them wrong: leave the opening one off, misspell it, write the
+    object on its own. What it wrote then travels as ordinary reply text. This
+    is the check on the way to storage, where a reply becomes something a
+    shared paper shows: any JSON object carrying a state's keys is cut out,
+    along with stray marker lines, and an unfinished one is cut to the end.
+
+    It cannot catch a tutor that says its notes in plain sentences. Nothing
+    can; the prompt asks it not to.
+    """
+    if not text or not _STATE_KEY_IN_TEXT.search(text):
+        return text
+
+    decoder = json.JSONDecoder()
+    position = 0
+    while True:
+        start = text.find("{", position)
+        if start == -1:
+            break
+        try:
+            data, end = decoder.raw_decode(text, start)
+        except ValueError:
+            position = start + 1
+            continue
+        if isinstance(data, dict) and any(key in data for key in _STATE_KEYS):
+            text = text[:start] + text[end:]
+            position = start
+        else:
+            # Not a state itself; one may still be nested inside it.
+            position = start + 1
+
+    # What is left with a state's keys in it never closed: cut off by the
+    # output limit, or not valid JSON. From its opening brace on, it goes.
+    unfinished = _STATE_KEY_IN_TEXT.search(text)
+    if unfinished:
+        start = text.rfind("{", 0, unfinished.start())
+        text = text[: start if start != -1 else unfinished.start()]
+
+    text = _MARKER_LINE.sub("", text)
+    text = _EMPTY_FENCE.sub("", text)
+    return text.rstrip()
+
+
+def scrub_citations(evidence: Optional[dict]) -> Optional[dict]:
+    """A reply's citations with the same check applied to each quotation.
+
+    A state written inside the evidence block, ahead of its closing marker,
+    is read as part of the last quotation. Citations are stored and shared
+    with the message, so they get the scrub the message gets. A quotation
+    with nothing left is dropped.
+    """
+    if not evidence or not isinstance(evidence.get("citations"), list):
+        return evidence
+    kept = []
+    changed = False
+    for citation in evidence["citations"]:
+        reference = citation.get("reference") if isinstance(citation, dict) else None
+        if isinstance(reference, str):
+            clean = scrub_unmarked_state(reference)
+            if clean != reference:
+                changed = True
+                if not clean.strip():
+                    continue
+                citation = {**citation, "reference": clean}
+        kept.append(citation)
+    return {**evidence, "citations": kept} if changed else evidence
 
 
 def next_turn(previous: Optional[Dict[str, Any]]) -> int:

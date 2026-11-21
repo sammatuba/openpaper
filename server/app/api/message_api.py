@@ -25,6 +25,7 @@ from app.llm.base import LLMProvider
 from app.llm.citation_handler import CitationHandler
 from app.llm.operations import operations
 from app.llm.paper_operations import PaperNotFoundError
+from app.llm.tutor import scrub_citations, scrub_unmarked_state
 from app.schemas.artifact import artifact_payload_adapter
 from app.schemas.message import EvidenceCollection, ResponseStyle
 from app.schemas.tutor import TUTOR_TRACE_KEY
@@ -837,6 +838,32 @@ async def chat_message_stream(
 
                 # Save the complete message to the database
                 full_content = "".join(content_chunks)
+
+                if request.style == ResponseStyle.TUTOR:
+                    # The tutor's state is supposed to arrive between its
+                    # markers, where it never becomes reply text. This is the
+                    # check for when the model got the markers wrong: nothing
+                    # shaped like a state is stored in the message or its
+                    # citations, which is what a shared paper shows.
+                    scrubbed_content = scrub_unmarked_state(full_content)
+                    scrubbed_evidence = scrub_citations(evidence)
+                    if (
+                        scrubbed_content != full_content
+                        or scrubbed_evidence != evidence
+                    ):
+                        logger.warning(
+                            "Tutor reply for conversation %s carried session "
+                            "state outside its markers; removed before saving.",
+                            request.conversation_id,
+                        )
+                        full_content, evidence = scrubbed_content, scrubbed_evidence
+                        # The reader has already been sent the original. Replace
+                        # it the way a restarted answer is replaced.
+                        yield f"{json.dumps({'type': 'reset', 'content': ''})}{END_DELIMITER}"
+                        if full_content.strip():
+                            yield f"{json.dumps({'type': 'content', 'content': full_content})}{END_DELIMITER}"
+                        if evidence:
+                            yield f"{json.dumps({'type': 'references', 'content': evidence})}{END_DELIMITER}"
 
                 # An answer that produced no text is a failure, not a turn.
                 # Persisting it puts a blank bubble in the thread and — worse —

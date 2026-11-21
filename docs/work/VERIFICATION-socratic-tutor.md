@@ -16,7 +16,7 @@ On `feat/spatial-workspace`:
 
 | Check | Result |
 | --- | --- |
-| `cd server && GEMINI_API_KEY=test-key .venv/bin/python -m unittest discover -s tests` | 619 tests: 491 pass, 128 skipped (the suites that need the isolated cluster) |
+| `cd server && GEMINI_API_KEY=test-key .venv/bin/python -m unittest discover -s tests` | 628 tests: 500 pass, 128 skipped (the suites that need the isolated cluster) |
 | `server/.venv/bin/python scripts/ci/run_isolated_postgres.py` | 191 tests pass, none skipped; `tests.test_tutor_state_postgres` added to the required suites (5 tests) |
 | `black==24.3.0` and `isort==5.13.2 --profile black` on the changed server files, from the repository root | No changes left to make |
 | `cd client && tsc --noEmit` | Pass |
@@ -24,7 +24,7 @@ On `feat/spatial-workspace`:
 | `cd client && npm run build` | Pass |
 | `npm run test:tutor:browser` against the production build on 127.0.0.1:3011, API mocked | Pass at 1440 px (light) and 390 px (dark) |
 
-The server suite went from 570 tests to 619: 44 in `tests/test_tutor_mode.py`
+The server suite went from 570 tests to 628: 53 in `tests/test_tutor_mode.py`
 and 5 in `tests/test_tutor_state_postgres.py`.
 
 The release branches are checked again in the release record at the end.
@@ -39,6 +39,10 @@ The release branches are checked again in the release record at the end.
   the state written. The same sweep runs for an ordinary answer, for a tutor
   reply that never closes its evidence block, and for a state whose own JSON
   contains the closing marker. Nothing after a malformed state block is shown.
+- **The scrub.** A state that arrives without its markers (bare, fenced, under
+  a misspelt marker, or cut off) is removed from the reply and from its
+  citations before they are saved; text that is not a state, JSON included, is
+  returned untouched, and an ordinary answer is never scrubbed.
 - **The prompt.** A stored state reaches the next turn's system prompt with the
   next turn number. No stored state does not tell the tutor to restart a
   session that is visibly under way.
@@ -133,7 +137,27 @@ them, tutor mode or not.
 | A reply whose save failed still looks delivered until reload | important | Not changed. True of ordinary chat as well: the stream has no "saved" acknowledgement, and the server does keep a partial answer after a mid-stream error, so the client cannot tell the two apart. Worth its own change |
 | The work pointer was stale and this record pointed to a release record that did not exist yet | minor | The release record is written at release, below |
 
-### Round 4: `./meos review` on the second rework
+### Round 4: `./meos review` on the second rework (`b64f2d01`)
+
+Report: `.meos/reviews/20261121T051546Z.md`. Verdict: **rework**. It confirmed
+the save and resume finding closed, agreed that operator access is outside
+decision 5, and reported no regression in the ordinary paper chat. The images
+built from this commit were not deployed.
+
+| Finding | Severity | Disposition |
+| --- | --- | --- |
+| The "is the block finished" check used the lenient JSON reader, which accepts prose containing a fenced JSON example, so a contrived note could still end the block early | blocking | Fixed. The block ends only where everything before the marker parses, start to end, as one JSON object; a fence is allowed only around the whole object |
+| A state written with its opening marker missing or misspelt is never seen as a block and is saved as reply text | blocking | Fixed at the point of storage. A tutor reply and its citations are scrubbed before saving: any JSON object carrying a state's keys is cut out, with stray marker lines, and an unfinished one is cut to the end. The reader is sent the cleaned reply in place of the streamed one |
+| A history read or reply already in flight when the user or conversation changes could put the old session back on screen | important | Fixed: each notes the session it started under and checks before writing. A tab that never learns of an account switch is unchanged, as recorded in round 3 |
+| The work pointer and the release record | minor | Written at release, below |
+
+The limit that remains after this is not one a filter can remove. The tutor
+is given its notes so that it can teach from them, and nothing stops a model
+from saying one of them in an ordinary sentence of its reply. The prompt tells
+it not to write the session out. A tutor telling the learner what they got
+wrong is, in any case, the tutoring.
+
+### Round 5: `./meos review` on the third rework
 
 See the release record.
 
