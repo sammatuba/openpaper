@@ -44,5 +44,5 @@ export function InvestigationProvider({children}:{children:ReactNode}){
   try{validateInvestigation(document);const {body,etag}=await investigationRequest(`/api/projects/${projectId}/investigation`,{method:'PUT',headers:{'If-Match':tag},body:JSON.stringify({document,reviewed_block_ids:reviewed,reviewed_proposal_ids:[...reviewedProposals.current]})});setTag(etag);setValidation(body.validation);if(edits.current===savedEdit){setDocument(body.document);setDirty(false);setStatus('Saved');reviewedProposals.current.clear();}else{setDirty(true);setStatus('Unsaved changes');}}
   catch(error){if(error instanceof Error&&error.message.startsWith('Validation failed:')){setStatus(error.message);return;}setStatus(error instanceof InvestigationHttpError&&error.status===412?'Conflict':'Save failed');}
  };
- return <InvestigationContext.Provider value={{document,update,save,reload,dirty,status,validation,loaded,revision:Number(tag?.split(':').at(-1)?.replace('"','')||0),reviewProposal:id=>reviewedProposals.current.add(id)}}>{children}</InvestigationContext.Provider>;
+ return <InvestigationContext.Provider value={{document,update,save,reload,dirty,status,validation,loaded,revision:Number(tag?.match(/:(\d+)(?:-[a-z]+)?"$/)?.[1]||0),reviewProposal:id=>reviewedProposals.current.add(id)}}>{children}</InvestigationContext.Provider>;
 }
