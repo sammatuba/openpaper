@@ -303,6 +303,13 @@ export function SidePanelContent({
         }
     }, [id]);
 
+    // The session shown belongs to one person's conversation. When either
+    // changes under this component, what was on screen is someone else's (or
+    // another paper's) until the new conversation's own state arrives.
+    useEffect(() => {
+        setTutorState(null);
+    }, [user?.id, conversationId]);
+
     const handleTutorModeChange = useCallback((enabled: boolean) => {
         setTutorMode(enabled);
         try {

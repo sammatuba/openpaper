@@ -249,6 +249,43 @@ class SplitTutorStateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(visible(chunks), "What follows?")
         self.assertEqual(states(chunks), [])
 
+    async def test_a_closing_marker_inside_the_json_does_not_end_the_block(self):
+        """A note may quote anything, the closing marker included. Ending the
+        block there would leave the rest of the state, private notes and all,
+        to be shown as the tail of the learner's message."""
+        state = {
+            **STATE,
+            "misconceptions": [
+                f"typed {TUTOR_STATE_END} as an answer",
+                "a second private note",
+            ],
+        }
+        whole = f"Why?\n\n{TUTOR_STATE_START}\n{json.dumps(state)}\n{TUTOR_STATE_END}\n"
+
+        for cut in range(1, len(whole)):
+            with self.subTest(cut=cut):
+                chunks = await split(content(whole[:cut]), content(whole[cut:]))
+
+                self.assertEqual(visible(chunks), "Why?\n\n\n")
+                self.assertEqual(len(states(chunks)), 1)
+                self.assertEqual(
+                    states(chunks)[0]["misconceptions"][1], "a second private note"
+                )
+
+    async def test_nothing_after_a_malformed_block_is_shown(self):
+        """What follows the opening marker is private until proven to be a
+        finished state. A block that never becomes one is dropped whole, with
+        whatever came after it: showing the remainder would be showing notes."""
+        malformed = (
+            f'{TUTOR_STATE_START}{{"topic": "x", "misconceptions": ["private note"'
+            f'{TUTOR_STATE_END} and the rest of it"]}}{TUTOR_STATE_END}'
+        )
+
+        chunks = await split(content(f"Why?{malformed}\n\nAnd a trailing remark."))
+
+        self.assertEqual(visible(chunks), "Why?")
+        self.assertEqual(states(chunks), [])
+
     async def test_a_restart_discards_the_abandoned_attempt(self):
         chunks = await split(
             content(f"First attempt {TUTOR_STATE_START}" + '{"topic": "half'),
@@ -293,6 +330,15 @@ class TutorPromptTest(unittest.TestCase):
         self.assertIn("confuses path length with depth", prompt)
         self.assertIn("thinks positional encoding is learned", prompt)
         self.assertNotIn("No session state is stored", prompt)
+
+    def test_the_tutor_is_never_asked_to_write_the_session_into_the_chat(self):
+        """The skill this follows has "save state" and "resume from:", which
+        print the session and read it back from a message. The chat is what a
+        shared paper shows; the session here is kept and resumed by the server."""
+        self.assertIn(
+            "Never write the session out in the chat", TUTOR_PAPER_SYSTEM_PROMPT
+        )
+        self.assertNotIn("resume from:", TUTOR_PAPER_SYSTEM_PROMPT)
 
     def test_the_prompt_asks_for_the_markers_the_splitter_looks_for(self):
         self.assertIn(TUTOR_STATE_START, TUTOR_PAPER_SYSTEM_PROMPT)

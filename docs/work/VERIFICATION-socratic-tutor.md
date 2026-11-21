@@ -16,7 +16,7 @@ On `feat/spatial-workspace`:
 
 | Check | Result |
 | --- | --- |
-| `cd server && GEMINI_API_KEY=test-key .venv/bin/python -m unittest discover -s tests` | 616 tests: 488 pass, 128 skipped (the suites that need the isolated cluster) |
+| `cd server && GEMINI_API_KEY=test-key .venv/bin/python -m unittest discover -s tests` | 619 tests: 491 pass, 128 skipped (the suites that need the isolated cluster) |
 | `server/.venv/bin/python scripts/ci/run_isolated_postgres.py` | 191 tests pass, none skipped; `tests.test_tutor_state_postgres` added to the required suites (5 tests) |
 | `black==24.3.0` and `isort==5.13.2 --profile black` on the changed server files, from the repository root | No changes left to make |
 | `cd client && tsc --noEmit` | Pass |
@@ -24,7 +24,7 @@ On `feat/spatial-workspace`:
 | `cd client && npm run build` | Pass |
 | `npm run test:tutor:browser` against the production build on 127.0.0.1:3011, API mocked | Pass at 1440 px (light) and 390 px (dark) |
 
-The server suite went from 570 tests to 616: 41 in `tests/test_tutor_mode.py`
+The server suite went from 570 tests to 619: 44 in `tests/test_tutor_mode.py`
 and 5 in `tests/test_tutor_state_postgres.py`.
 
 The release branches are checked again in the release record at the end.
@@ -36,8 +36,9 @@ The release branches are checked again in the release record at the end.
 - **The stream.** A tutor turn is sent through the state filter and the real
   evidence parser at every two-chunk cut and as one chunk. Each time the
   visible text is identical, the citation arrives and the stored state equals
-  the state written. The same sweep runs for an ordinary answer, and for a
-  tutor reply that never closes its evidence block.
+  the state written. The same sweep runs for an ordinary answer, for a tutor
+  reply that never closes its evidence block, and for a state whose own JSON
+  contains the closing marker. Nothing after a malformed state block is shown.
 - **The prompt.** A stored state reaches the next turn's system prompt with the
   next turn number. No stored state does not tell the tutor to restart a
   session that is visibly under way.
@@ -53,8 +54,9 @@ The release branches are checked again in the release record at the end.
 - **The reader**, in a browser: the switch is remembered per paper; a tutor turn
   is requested with `style: "tutor"` and an ordinary one without; the state
   chunk draws the map and never appears as text; levels are withheld during the
-  diagnostic; a command chip leaves a half-typed answer in place; Save state
-  copies the session and sends nothing; a reload restores the map.
+  diagnostic; a command chip leaves a half-typed answer in place; the session
+  cannot be exported and its notes are never on the page; a reload restores
+  the map.
 
 ## Defects found in the existing paper chat and fixed
 
@@ -101,14 +103,37 @@ ended inside). The images built from `d9cd3ec5` were not deployed.
 
 | Finding | Severity | Disposition |
 | --- | --- | --- |
-| "Save state" had the tutor write its notes on the learner into the visible chat, which a shared paper shows | blocking | Fixed. Save state is now done by the reader: it copies the stored session to the clipboard. The prompt tells the tutor not to write the session out |
+| "Save state" had the tutor write its notes on the learner into the visible chat, which a shared paper shows | blocking | First moved to the reader (copy to clipboard), which round 3 showed only moved the problem. Removed in the end: see round 3 |
 | A reply that never closed its evidence block could carry the state into a citation, and citations are shared | blocking | Fixed twice over. The state is lifted out of the raw text before evidence is parsed, and an unclosed evidence block is discarded again |
 | A tutor turn could be saved to a conversation other than the paper's own (the request names both separately), where project members read the trace | blocking | Fixed. A tutor turn is refused unless the conversation is this user's conversation for this paper; the project conversation reader also strips the state |
 | Ordinary chat showed an unfinished evidence block as a citation | important | Fixed: reverted to dropping it. Introduced by the round 1 fix, never released |
 | The panel could show a state the server did not save (a reply with no visible text, or a failed save) | important | Fixed: the state is sent to the reader only after the turn is saved |
 | The work packet called the change uncommitted and counted skipped tests as passes | minor | Fixed in this record and in `current.json` |
 
-### Round 3: `./meos review` on the rework
+### Round 3: `./meos review` on the first rework (`a88966d2`)
+
+Report: `.meos/reviews/20261121T050607Z.md`. Verdict: **rework**. It confirmed
+three round 2 findings closed (unfinished evidence, state before citations,
+the conversation check) and found no regression in the ordinary parser across
+201 further checks. The images built from this commit were not deployed.
+
+What the state is protected from is set by the intent: people who read the
+learner's chat without being the learner, which here means readers of a shared
+paper and members of a project. The service's operator is not in that set. The
+operator reads the database, the logs and the traces, and every message in
+them, tutor mode or not.
+
+| Finding | Severity | Disposition |
+| --- | --- | --- |
+| The copied session is resumed by pasting it into the chat, which stores it as a message a shared paper shows | blocking | Fixed by removal. There is no Save state and no "resume from": the session is kept with the paper and resumes by itself, which is what those two commands were for. The prompt tells the tutor never to write the session into the chat |
+| A closing marker inside the state's own JSON ended the block early and showed the rest of the state as text | blocking | Fixed. The filter fails closed: after the opening marker nothing is visible until a closing marker follows complete JSON, and a malformed block takes everything after it with it |
+| Provider traces and debug logs record the system prompt, which carries the state; a failed save can put exception text in telemetry | important | Not changed. Operator-side, and true of every prompt and message in the service already |
+| The admin message view shows `trace` | important | Not changed. Same reason: the administrator of this service is its operator |
+| A reader left open across an account switch in another tab keeps the previous session on screen | important | Partly. The panel is cleared when the signed-in user or the conversation changes. A tab that never learns of the switch keeps its whole chat on screen, not only the panel; that is how the reader already behaves |
+| A reply whose save failed still looks delivered until reload | important | Not changed. True of ordinary chat as well: the stream has no "saved" acknowledgement, and the server does keep a partial answer after a mid-stream error, so the client cannot tell the two apart. Worth its own change |
+| The work pointer was stale and this record pointed to a release record that did not exist yet | minor | The release record is written at release, below |
+
+### Round 4: `./meos review` on the second rework
 
 See the release record.
 
@@ -133,6 +158,14 @@ See the release record.
 - A shared paper shows its tutoring chat like any other chat: the questions,
   the answers, and any skill map the tutor drew in it. What it does not show is
   the stored session.
+- The skill's "save state" and "resume from" are not offered. The session is
+  kept per paper and resumes by itself; it cannot be moved to another paper.
+- The stored session is readable by whoever operates the service (database,
+  admin view, logs, traces), as every message is.
+- If the model writes a malformed state block, anything it wrote after that
+  block in the same reply, citations included, is dropped with it.
+- A reply whose save fails still looks delivered until the page is reloaded.
+  Ordinary chat has the same gap.
 - The ordinary chat's request still names the paper and the conversation
   separately and does not check that they match. Only tutor turns are checked.
 - The same duplicate-yield and `strip()` pattern is in

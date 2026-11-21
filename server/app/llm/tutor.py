@@ -41,6 +41,14 @@ def parse_tutor_state(raw: str) -> Optional[TutorState]:
     return state
 
 
+def _is_complete_json(raw: str) -> bool:
+    try:
+        JSONParser.validate_and_extract_json(raw)
+    except ValueError:
+        return False
+    return True
+
+
 def next_turn(previous: Optional[Dict[str, Any]]) -> int:
     try:
         return int((previous or {}).get("turn") or 0) + 1
@@ -101,9 +109,19 @@ async def split_tutor_state(
     becomes one `tutor_state` chunk carrying the validated state, stamped with
     this turn's number. A block that does not parse is dropped silently — the
     learner's message is already complete without it.
+
+    It fails closed. Once the opening marker has been seen, nothing is visible
+    again until a closing marker arrives with complete JSON in front of it. A
+    closing marker that turns up inside the JSON (in a note, say) or after
+    something that is not JSON does not end the block, so neither the tail of
+    a state nor a malformed one can spill into the learner's message, which is
+    what a shared paper shows. The price is that whatever followed a malformed
+    block that turn, citations included, is dropped with it.
     """
     buffer = ""
     inside = False
+    # Where to look for the next closing marker; past any already ruled out.
+    scan_from = 0
 
     def emit(raw: str) -> Optional[dict]:
         state = parse_tutor_state(raw)
@@ -121,6 +139,7 @@ async def split_tutor_state(
             # The answer is being re-sent from scratch; so is its state block.
             buffer = ""
             inside = False
+            scan_from = 0
             yield chunk
             continue
 
@@ -128,11 +147,16 @@ async def split_tutor_state(
 
         while True:
             if inside:
-                end = buffer.find(TUTOR_STATE_END)
+                end = buffer.find(TUTOR_STATE_END, scan_from)
                 if end == -1:
                     break
-                raw, buffer = buffer[:end], buffer[end + len(TUTOR_STATE_END) :]
+                raw = buffer[:end]
+                if not _is_complete_json(raw):
+                    scan_from = end + len(TUTOR_STATE_END)
+                    continue
+                buffer = buffer[end + len(TUTOR_STATE_END) :]
                 inside = False
+                scan_from = 0
                 state_chunk = emit(raw)
                 if state_chunk:
                     yield state_chunk
@@ -154,8 +178,9 @@ async def split_tutor_state(
             inside = True
 
     if inside:
-        # Cut off before the closing marker, most likely by the output limit.
-        # The JSON may still be whole; if not, parse_tutor_state says so.
+        # No closing marker ended the block: cut off by the output limit, or
+        # malformed. The JSON may still be whole; if not, parse_tutor_state
+        # says so. Either way none of it is shown.
         state_chunk = emit(buffer)
         if state_chunk:
             yield state_chunk
