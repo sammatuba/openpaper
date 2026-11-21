@@ -212,6 +212,37 @@ export interface ChatMessage {
     scope?: MessageScopeItem[];
 }
 
+// One thing a learner who has mastered the paper can do, and how far along
+// they are: 0 unaware, 1 heard of it, 2 can follow along, 3 can do with help,
+// 4 can do independently, 5 can teach it.
+export interface TutorSubskill {
+    name: string;
+    level: number;
+    // Checks passed toward the next level since the level last changed.
+    passes: number;
+    unprompted: boolean;
+    last_checked: number;
+    notes: string;
+}
+
+export type TutorPhase = 'diagnostic' | 'teaching' | 'assessment' | 'complete';
+
+// Where a tutoring session in the paper chat stands. Written by the tutor at
+// the end of each of its turns, sent as a `tutor_state` stream chunk, and
+// returned with the conversation as `tutor_state`.
+export interface TutorState {
+    topic: string;
+    phase: TutorPhase;
+    target_level: number;
+    difficulty: 'easier' | 'normal' | 'harder';
+    focus: string | null;
+    subskills: TutorSubskill[];
+    misconceptions: string[];
+    covered: string[];
+    diagnostic_asked: number;
+    turn: number;
+}
+
 // Position types for react-pdf-highlighter-extended
 export interface ScaledRect {
     x1: number;
