@@ -234,10 +234,18 @@ on this evidence.
 
 ## Release record (2026-11-21)
 
-**State: staged, not live.** Revision `openpaper-00032-dox` exists with no
-traffic, under the tag `tutor`. Traffic is 100% on `openpaper-00029-jen`, as
-before. Moving traffic waits on the owner, because the last review verdict is
-rework and the last commit has not been reviewed (round 6 above).
+**State: live.** Revision `openpaper-00032-dox` serves 100% of traffic since
+2026-11-21, on the owner's go. It was first staged with no traffic under the
+tag `tutor` and held there, because the last review verdict is rework and the
+last commit has not been reviewed (round 6 above); the owner was shown that
+and chose to release. After the switch the public origin
+(`https://papers.sammatuba.workers.dev`) passed the same signed-out smoke as
+the staged URL, now listing `tutor` among the server's response styles and
+carrying the tutor switch in the reader's script; the tag was then removed.
+Rollback: `gcloud run services update-traffic openpaper --region
+asia-southeast1 --to-revisions=openpaper-00029-jen=100`.
+
+What follows is the record as written at staging.
 
 Why two branches: the live service is not one commit. Its server is built from
 `fix/investigation-dated-papers` (`16a7f1b6`, image `dated-etag-16a7f1b6`) and
