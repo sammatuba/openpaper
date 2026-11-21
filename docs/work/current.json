@@ -547,7 +547,7 @@
     "origin": "https://papers.sammatuba.workers.dev",
     "papers_imported": 8,
     "papers_in_project": 9,
-    "investigation_revision": 6,
+    "investigation_revision": 7,
     "artifacts": ".meos/artifacts/tara-e2e (ignored): state, extracted text, exports, journey and capture reports, screenshots",
     "hotfix_branch": "fix/investigation-dated-papers (from c757bbf0; pushed; head 1cf4437d)",
     "fix_1": {
@@ -581,7 +581,7 @@
       "7ceb8241"
     ],
     "development_branch_pushed": false,
-    "owner_sessions_minted": 18,
+    "owner_sessions_minted": 19,
     "not_exercised": [
       "assistant drafting",
       "Discuss",
