@@ -36,7 +36,7 @@ const ORDINARY = 'An ordinary answer about the paper.';
     const browser = await chromium.launch({ headless: true, executablePath: process.env.OPENPAPER_CHROMIUM || undefined, args: ['--no-sandbox'] });
     try {
         for (const width of [1440, 390]) {
-            const page = await browser.newPage({ viewport: { width, height: 1000 }, colorScheme: width === 1440 ? 'light' : 'dark', permissions: ['clipboard-read', 'clipboard-write'] });
+            const page = await browser.newPage({ viewport: { width, height: 1000 }, colorScheme: width === 1440 ? 'light' : 'dark' });
             const errors = [];
             page.on('pageerror', error => errors.push(error.message));
 
@@ -157,14 +157,10 @@ const ORDINARY = 'An ordinary answer about the paper.';
             assert.equal(await input.inputValue(), 'It keeps the dot products from', 'the draft survives a command');
             await input.fill('');
 
-            // Save state copies the session. It does not have the tutor write its
-            // notes into the chat, which is what a shared paper shows.
-            await panel.getByRole('button', { name: 'Save state', exact: true }).click();
-            await page.getByText(/Session copied/).waitFor();
-            const copied = await page.evaluate(() => navigator.clipboard.readText());
-            assert.match(copied, /^resume from:\n\{/);
-            assert.match(copied, /treats path length and depth as the same thing/);
-            assert.equal(sent.length, 4, 'saving the state sends nothing');
+            // The session resumes by itself, so there is no way to export it: an
+            // export would be the tutor's notes on the learner, one paste from a
+            // chat that a shared paper shows. The notes are never on the page.
+            assert.equal(await panel.getByRole('button', { name: /save state|resume/i }).count(), 0);
             assert.doesNotMatch(await page.locator('body').innerText(), /treats path length/, 'the notes stay out of the page');
 
             // The map folds away and back.

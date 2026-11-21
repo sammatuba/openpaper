@@ -45,8 +45,11 @@ later.
    chat. It is stored only in the paper's own conversation, removed from the
    shared and project conversation responses, lifted out of a reply before
    anything reads that reply as evidence, and never written into the chat by
-   the tutor: the skill's "save state" is done by the reader, which copies the
-   stored session for the learner.
+   the tutor. The skill's "save state" and "resume from" are therefore not
+   offered: both pass the notes through the chat, and what they were for
+   (coming back later) the stored session already does. "The learner's" means
+   kept from other readers of the chat; the operator of the service can read
+   the stored session as they can read any message.
 6. **Tutor mode replaces the answering prompt, it does not extend it.** That
    prompt requires a direct answer with evidence; the tutor's first rule is not
    to give one. Citations remain, but only when the tutor explains, confirms or
