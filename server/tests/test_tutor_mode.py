@@ -553,7 +553,7 @@ class ChatWithPaperTest(unittest.IsolatedAsyncioTestCase):
         which would stop the panel matching its focus."""
         question = "Close. What does that cost as the sequence grows? [^1]\n\n"
         whole = f"{question}{EVIDENCE}\n\n{BLOCK}"
-        expected = {**TutorState.model_validate(STATE).model_dump(), "turn": 1}
+        expected = {**TutorState.model_validate(STATE).dump(), "turn": 1}
 
         for cut in range(0, len(whole)):
             pieces = [whole[:cut], whole[cut:]] if cut else [whole]
@@ -604,7 +604,7 @@ class ChatWithPaperTest(unittest.IsolatedAsyncioTestCase):
             '---EVIDENCE---\n@cite[1]\n"Self-attention layers are faster"\n\n'
             f"{BLOCK}"
         )
-        expected = {**TutorState.model_validate(STATE).model_dump(), "turn": 1}
+        expected = {**TutorState.model_validate(STATE).dump(), "turn": 1}
 
         for cut in range(0, len(whole)):
             pieces = [whole[:cut], whole[cut:]] if cut else [whole]
