@@ -252,7 +252,7 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
     await dialog.locator('.page[data-page-number="1"] canvas').first().waitFor();
     await closeTo(openPassage);
     failInspect = false;
-    await page.getByRole('button',{name:'Close research brief panel'}).click();
+    await page.getByRole('button',{name:'Back to workspace'}).click();
     assert.equal(puts,priorWrites);
     assert.equal(providerCalls,0);
    }
@@ -292,15 +292,56 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
   assert.equal(await workspace.getByLabel('Paragraph',{exact:true}).first().inputValue(),'Unsaved paragraph survives a conflict.');failSave=false;
   await page.evaluate(()=>{const a=document.createElement('a');a.href='/projects';a.id='leave-project-test';a.textContent='Leave project test';document.body.append(a);});
   page.once('dialog',dialog=>dialog.dismiss());await page.locator('#leave-project-test').click();assert.match(page.url(),new RegExp('/projects/'+projectId+'/draft'));
-  // The preview opens in the workspace's right panel (a full-screen sheet on a phone), as a map first.
-  const openPreview=async()=>{if(!await page.locator('[data-brief-panel="page"]').count())await workspace.getByRole('button',{name:'Open folded preview',exact:true}).click();const region=page.getByRole('region',{name:'Folded document preview',exact:true});await region.waitFor();if(await region.getAttribute('data-view')!=='read')await region.locator('[data-view-option="read"]').click();return region;};
-  const closePreview=async()=>{if(await page.locator('[data-brief-panel]').count())await page.getByRole('button',{name:'Close research brief panel',exact:true}).click();await page.locator('[data-brief-panel]').waitFor({state:'detached'});};
+  await page.locator("#leave-project-test").evaluate(link => link.remove());
+  // Open from the page heading, with the entire main area available for reading.
+  const launcher = workspace.locator('header').getByRole('button', {name:'Open folded preview',exact:true});
+  const openPreview = async () => {
+   if (!await page.locator('[data-brief-panel="page"]').count()) await launcher.click();
+   const region = page.getByRole('region',{name:'Folded document preview',exact:true});
+   await region.waitFor();
+   const readingView = page.locator('main [data-brief-panel="page"]');
+   const main = await readingView.locator('xpath=ancestor::main[1]').boundingBox();
+   const reader = await readingView.boundingBox();
+   assert.ok(main && reader && Math.abs(main.width-reader.width)<2, 'Reading view fills the main workspace');
+   if (await region.getAttribute('data-view')!=='read') await region.locator('[data-view-option="read"]').click();
+   return region;
+  };
+  const closePreview=async()=>{if(await page.locator('[data-brief-panel]').count())await page.getByRole('button',{name:'Back to workspace',exact:true}).click();await page.locator('[data-brief-panel]').waitFor({state:'detached'});};
   const storedKeys=()=>page.evaluate(()=>Object.keys(localStorage).filter(key=>key!=='darkMode').sort().join(',')+'|'+Object.keys(sessionStorage).sort().join(','));
   const storedBefore=await storedKeys();
   // Every request to the app counts except the reader's own code chunk and the destination
   // bar's prefetch of the page already open (its Write link, outside the reader). The
   // app-wide analytics beacon batches earlier page views on its own timer and is not the reader's.
   const requested=[];const watch=request=>{const url=new URL(request.url());if(url.origin===new URL(base).origin&&!url.pathname.startsWith('/_next/static/')&&!(url.pathname===new URL(page.url()).pathname&&url.searchParams.has('_rsc')))requested.push(request.method()+' '+request.url());};page.on('request',watch);
+  await launcher.scrollIntoViewIfNeeded();
+  const scrollPosition = () => launcher.evaluate(button => {
+   const offsets = [];
+   for (let node=button.parentElement; node; node=node.parentElement) offsets.push(node.scrollTop);
+   return offsets;
+  });
+  const beforeReading = await scrollPosition();
+  await openPreview();
+  await closePreview();
+  assert.ok(await launcher.evaluate(button => document.activeElement===button), 'Back returns focus to the page reader button');
+  assert.deepEqual(await scrollPosition(),beforeReading,'Back preserves the editor scroll position');
+  assert.equal(await workspace.getByLabel('Paragraph',{exact:true}).first().inputValue(),'Unsaved paragraph survives a conflict.');
+  await launcher.evaluate(button => {
+   for (let node=button.parentElement; node; node=node.parentElement) {
+    if (node.scrollHeight > node.clientHeight + 80 && /auto|scroll/.test(getComputedStyle(node).overflowY)) {
+     node.scrollTop = 80;
+     break;
+    }
+   }
+  });
+  const scrolled = await scrollPosition();
+  assert.ok(scrolled.some(offset => offset > 0), 'Draft is already scrolled before opening from the project header');
+  const projectBrief = page.getByRole('button',{name:'Toggle research brief panel',exact:true});
+  await projectBrief.click();
+  await page.locator('[data-brief-panel]').waitFor();
+  await page.keyboard.press('Escape');
+  await page.locator('[data-brief-panel]').waitFor({state:'detached'});
+  assert.ok(await projectBrief.evaluate(button => document.activeElement===button));
+  assert.deepEqual(await scrollPosition(), scrolled, 'Escape restores the scrolled editor');
   const preview=await openPreview();
   assert.equal(await page.locator('iframe').count(),0,'The folded preview is part of the page');
   const mount=await preview.elementHandle();await preview.scrollIntoViewIfNeeded();
@@ -321,7 +362,7 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
   await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`draft-fold-${width}.png`),fullPage:true});
   await page.evaluate(()=>{localStorage.setItem('darkMode','dark');document.documentElement.classList.add('dark');});
   await page.waitForFunction(()=>document.documentElement.classList.contains('dark'));
-  assert.equal(await workspace.getByLabel('Paragraph',{exact:true}).first().inputValue(),'Unsaved paragraph survives a conflict.');
+  assert.equal(await workspace.isVisible(), false, 'The editor stays out of the reading area');
   assert.equal(await mount.evaluate(el=>el.isConnected),true,'Theme change preserves the preview');
   assert.equal(await preview.getAttribute('data-level'),'full','Theme change keeps the reading level');
   assert.equal(await storedKeys(),storedBefore,'The preview stores nothing in the browser');
@@ -336,7 +377,7 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
   await nativeFinding.click();
   await page.waitForURL(url=>url.pathname.endsWith('/evidence')&&url.searchParams.get('finding')===saved.findings[0].id);
   assert.equal(await workspace.locator('#finding-'+saved.findings[0].id).locator('blockquote').innerText(),fixture.sources[0].quote);
-  if(width<768)assert.equal(await page.locator('[data-brief-panel]').count(),0,'On a phone, following a finding closes the sheet so the evidence is visible');
+  assert.equal(await page.locator('[data-brief-panel]').count(),0,'Following a finding shows the evidence at every width');
   await nav.getByRole('link',{name:'Write',exact:true}).click();
   assert.equal(await workspace.getByLabel('Paragraph',{exact:true}).first().inputValue(),'Unsaved paragraph survives a conflict.','Native source navigation retains unsaved prose');
   await page.getByRole('button',{name:'Save investigation',exact:true}).click();await page.locator('[role=status]').filter({hasText:/^Saved$/}).first().waitFor();

@@ -21,7 +21,7 @@ import PdfUploadTracker from "@/components/PdfUploadTracker";
 // on-demand reader panel on the right. Reader tabs, the artifacts drawer, and
 // in-flight uploads persist across navigation within the project.
 function WorkspaceShell({ children }: { children: ReactNode }) {
-    const { uploadJobs, refetchPapers, railCollapsed } = useProjectWorkspace();
+    const { project, uploadJobs, refetchPapers, railCollapsed, rightPanel } = useProjectWorkspace();
 
     return (
         // Full viewport height — the app-shell header hides itself on project routes.
@@ -40,11 +40,13 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
                             <PdfUploadTracker initialJobs={uploadJobs} onComplete={refetchPapers} />
                         </div>
                     )}
-                    {children}
+                    <div className={project && rightPanel === "brief" ? "hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
+                        {children}
+                    </div>
+                    <BriefPanel />
                 </main>
-                {/* Right slot: reader, artifacts and the folded brief share it, one visible at a time */}
+                {/* Right slot: reader and artifacts share it, one visible at a time */}
                 <ReaderPanel />
-                <BriefPanel />
                 <ArtifactsPanel />
             </div>
             <AddPapersSheet />
