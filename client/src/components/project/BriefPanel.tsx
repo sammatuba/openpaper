@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { FoldedReader } from "@/components/fold/FoldedReader";
 import { useProjectWorkspace } from "@/components/project/ProjectWorkspaceProvider";
 import { useInvestigation } from "@/components/project/InvestigationProvider";
+import { FindingPassage } from "./investigation/FindingPassage";
 import { EditProjectDialog } from "./EditProjectDialog";
 
 // The investigation views that have a folded preview, by route.
@@ -38,6 +39,8 @@ export function BriefPanel() {
         () => (shown && source === "page" && page ? investigationPreview(investigation, page.view, projectId) : null),
         [shown, source, page, investigation, projectId],
     );
+
+    const findingsById = useMemo(() => new Map(investigation.findings.map(finding => [finding.id, finding])), [investigation.findings]);
 
     // Opening moves focus into the panel; closing returns it to whatever opened it.
     const panel = useRef<HTMLElement>(null);
@@ -112,6 +115,11 @@ export function BriefPanel() {
                         key={`${projectId}:${page.view}`}
                         document={preview}
                         label="Folded document preview"
+                        literalText={page.view === "evidence"}
+                        sectionAction={page.view === "evidence" ? id => {
+                            const finding = findingsById.get(id);
+                            return finding && <FindingPassage finding={finding} />;
+                        } : undefined}
                         findingHref={id => investigation.findings.some(finding => finding.id === id) ? `/projects/${projectId}/evidence?finding=${id}` : null}
                     />
                 )}

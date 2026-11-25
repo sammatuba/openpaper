@@ -121,7 +121,7 @@ function sentences(source: string): string[] {
     return Array.from(segmenter.segment(source), s => s.segment.trim()).filter(Boolean);
 }
 
-function makeUnit(full: string, unitId: string, topic: string): TextFoldUnit {
+export function makeUnit(full: string, unitId: string, topic = ''): TextFoldUnit {
     const parts = sentences(full);
     const evidence = parts.slice(0, 2).map((_, i) => i);
     return { id: unitId, kind: 'paragraph', full, sentences: parts, evidence,

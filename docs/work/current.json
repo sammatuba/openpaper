@@ -1,6 +1,6 @@
 {
-  "intent": "docs/work/INTENT-investigation-workspace.md",
-  "phase": "First end-to-end run of a real project in the live account (TARA capstone, 2026-11-19, owner-authorized): two server defects found; fix 1 (dated papers) deployed as openpaper-00026-rum at 100%; fix 2 (version tag altered by the compressing proxy) deployed 2026-11-20 as openpaper-00029-jen at 100% on the owner's go (docs/work/REPORT-tara-e2e.md). Before that: AI-native platform P00-P02 implemented and accepted by the owner-approved stand-in gate review (2026-11-18, accept on 8370d19d..464d8a19; Codex reviewer out of credits); battery 184 required / 568 full, zero skips; pushed and PR #3 merged into feat/native-investigation-workspace; client deployed 2026-11-18 as openpaper-00017-lax at 100% (server and caddy images unchanged), public smoke passed, authenticated UI not exercised; investigation A25 acceptance still open; P03 slice 1 (guided shell on the v1 investigation: destination bar, Overview, Evidence, Write, Discuss) implemented on feat/guided-shell, client only, local checks and three browser journeys pass, Codex review round 1 rework addressed, round 2 incomplete (out of credits), stand-in review accept with findings addressed; pushed at fc39aa29; client image built (digest sha256:8283db3b57cd7e8246f738be1ab84009cb1695bd92b51b8f752d5867268b7a82, tag guided-); client deployed 2026-11-18 as openpaper-00017-lax at 100% (server and caddy images unchanged), public smoke passed, authenticated UI not exercised; native folded reader (embedded Textfold engine removed) committed b5d8661f on feat/native-fold-reader and client deployed 2026-11-18 as openpaper-00020-dus at 100%, public smoke passed, authenticated UI not exercised; spatial workspace strategy approved by the owner as recommended 2026-11-19; slices 0 and 1 (baseline, camera engine in the brief map) committed 3e8dccee on feat/spatial-workspace, pushed, PR #4 open against feat/native-fold-reader (docs/work/VERIFICATION-spatial-workspace.md); flow slice (panels on demand, project data through SWR with access rules, panel view transitions) implemented on the same branch, client only, committed and pushed to PR #4 on the owner's go; unit tests, four browser journeys, flow check at 1440, 390 and reduced motion pass (docs/work/VERIFICATION-spatial-workspace-flow.md); independent review rounds 1 to 3 rework (gpt-6.2-astra, Codex default), findings fixed; round 4 (Claude Opus 5.5 reviewer agent) accept with findings, the important one fixed after the verdict and not re-reviewed; project canvas slice (canvas as project home on a shared camera surface, Overview moved to /overview, last saved investigation kept in memory, provider scoped to the signed-in session) implemented on the same branch, client only, committed and pushed to PR #4 on the owner's go; unit tests (with a provider harness, scripts/test-investigation-provider.cjs) and six browser checks pass (docs/work/VERIFICATION-spatial-workspace-canvas.md); independent review rounds 1 to 5 rework (gpt-6.2-astra), every finding answered; round 6 (Claude Opus 5.5, owner's choice after Codex ran out of credits) accept with findings, all minor, folded in after the verdict and not re-reviewed",
+  "intent": "docs/work/INTENT-finding-passage.md",
+  "phase": "Finding passage implementation and independent review complete",
   "branch": "feat/spatial-workspace",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,11 +8,9 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Tutor mode in a project conversation (owner request 2026-11-21, with a hand-made study guide as the reference) is implemented in the working tree of feat/spatial-workspace: NOT committed, not built, not deployed. A Tutor switch in a project conversation the member owns, and 'Study these papers' on the Discuss page; the tutor lays out a study path across the project's papers, runs the diagnostic and keeps the skill map; other members of the project are not sent a member's tutoring turns. Three defects in existing code fixed on the way (a project conversation reachable through another project; lost, repeated and joined text after an evidence block in the project and library chat; a server error mid-stream shown as nothing on the project conversation page). Checks: server 690 tests (549 pass, 141 skipped), isolated PostgreSQL 204 of 204, client tsc, lint, build, three browser checks at 1440 and 390 px. Review: the Codex reviewer did not run (out of credits); a fresh Claude reviewer agent stood in and returned rework with one important and five minor findings and no route by which a tutoring turn or the session reaches another member; all six are fixed and the fixes are not re-reviewed. Never run against a real model. Intent: docs/work/INTENT-project-tutor.md; record: docs/work/VERIFICATION-project-tutor.md. Owner: say whether to commit; a release needs the owner's go and the two-branch cut used for the paper tutor (the files touched are identical on the live server base). Owner to decide: whether a member may post in another member's project conversation (the server allows it, the page does not). Open: the paper chat page swallows a mid-stream server error the same way the project page did. Before this: Tutor mode in the paper chat (owner request 2026-11-21) is committed and pushed (d9cd3ec5..9889c461 on feat/spatial-workspace; release branches feat/tutor-mode-server at d6b10239 on the live server base and feat/tutor-mode-client at a9c78382 on the live client commit) and LIVE: revision openpaper-00032-dox at 100% since 2026-11-21 on the owner's go, after staging with no traffic; public signed-out smoke passed; rollback is openpaper-00029-jen. Six review rounds (one Claude, five Codex); the last Codex verdict is rework and the commit that answers it (9889c461) is unreviewed, which the owner was told before releasing. Never run against a real model. Record, findings and dispositions: docs/work/VERIFICATION-socratic-tutor.md (Release record). Owner: try the tutor on a real paper (reader, Chat, Tutor switch) and say whether it asks one question at a time and keeps the skill map; that is the first real test of the prompt. Open: a Codex pass over 9889c461; the release worktrees ~/projects/ps/openpaper-tutor-server and -client and ten unused tutor-* images can be removed; the same duplicate-yield and strip defects remain in the project and library chat. feat/spatial-workspace is now pushed (it was 8 commits ahead). Owner: confirm one save from a real browser (fix 2 is live as openpaper-00029-jen; a note edit was checked at the API). Owner: decide on a client build and deploy from fix/investigation-dated-papers at 1cf4437d (assistant drafting behind the proxy needs it). Owner: open the TARA project (52bd2d45-c7b5-451c-ad58-1543524b8924) and judge the canvas with real content; read the ten design findings in REPORT-tara-e2e.md (extracted text of two-column papers is the largest). feat/spatial-workspace is 2+ commits ahead of origin, not pushed. Then, as before: Owner: sign in, open a real project and say whether the canvas is the right home (not deployed yet; deploy needs the owner's go). Owner to know: an account switch in another tab discards this tab's unsaved draft at once; the signed-in app loads a Google Ads tag (main layout). Next slice in the strategy's order: the jump palette; decision B (hand-placed positions) needs a server slice. Owner: look at the panel transition on a real project and decide its timing (160 ms now; design.md says 200 to 300 ms). Three minor review findings are open in docs/work/VERIFICATION-spatial-workspace-flow.md. Not deployed. Then the project canvas, which needs its own intent and must first settle the mount cost of large maps. Operator: sign in and use the Brief panel and map on a real project (header Brief button; Open folded preview on Overview, Evidence, Write). Operator: sign in and read a real brief in the new folded reader (Discuss, and Open folded preview on Overview, Evidence, Write). No PR is open for feat/guided-shell or feat/native-fold-reader; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
-  "blocked_on": [
-    "No current operator browser/session exposed for authenticated production UI acceptance."
-  ],
-  "updated": "2026-11-21T09:10:00+00:00",
+  "next_action": "Commit the reviewed finding-passage slice when requested. The next planned slice is a private understanding check on one verified passage.",
+  "blocked_on": [],
+  "updated": "2026-11-24T23:57:32+00:00",
   "done": [
     "bootstrap (project, billing, APIs, registry, SA, queue, GCS bucket+CORS+HMAC)",
     "Cloud Build 98fc719b: 5 images",
@@ -44,7 +42,7 @@
       "verdict": "accept; no findings. Prior runtime-evidence finding resolved. Independently passed typecheck, diff/JSON checks and exact viewer-move comparison; reviewer could not rerun browser/build in read-only sandbox."
     }
   },
-  "verification": "Frontend tsc, production build, desktop/mobile mocked Notes checks pass; locked Cloud Build all five images passes; corpus/operator14, Worker, shell and diff checks pass; focused recovery/CORS7 and isolated actual PostgreSQL PDF crash/replay pass. Full-review findings and importer User-Agent fix independently accepted. Live health, MCP discovery/auth boundaries, Google login/PDF/Notes, ChatGPT search and deployed Exa pass; pilot API readbacks pass.",
+  "verification": "docs/work/VERIFICATION-finding-passage.md",
   "strategy": {
     "record": "docs/work/STRATEGY-research-ecosystem.md",
     "status": "approved by operator; Terra implementation delegated",
@@ -600,8 +598,24 @@
   "project_tutor": {
     "intent": "docs/work/INTENT-project-tutor.md",
     "verification": "docs/work/VERIFICATION-project-tutor.md",
-    "status": "implemented in the working tree; not committed, not built, not deployed",
+    "status": "Committed at 5b9a5e8d with release status recorded at daec9f8f. Awaiting a release decision.",
     "follows": "docs/work/INTENT-socratic-tutor.md (paper tutor, live as openpaper-00032-dox)",
     "review": "Review: the Codex reviewer did not run (out of credits); a fresh Claude reviewer agent stood in and returned rework with one important and five minor findings and no route by which a tutoring turn or the session reaches another member; all six are fixed and the fixes are not re-reviewed."
-  }
+  },
+  "finding_passage": {
+    "strategy": "docs/work/STRATEGY-folded-reading-and-socratic-research.md",
+    "intent": "docs/work/INTENT-finding-passage.md",
+    "verification": "docs/work/VERIFICATION-finding-passage.md",
+    "review": ".meos/reviews/20261124T235613Z.md",
+    "verdict": "accept",
+    "status": "Verified locally, uncommitted and unreleased"
+  },
+  "work_id": "finding-passage",
+  "references": [
+    "docs/work/STRATEGY-folded-reading-and-socratic-research.md",
+    "docs/work/INTENT-finding-passage.md",
+    "docs/work/VERIFICATION-finding-passage.md"
+  ],
+  "status": "accepted in working tree",
+  "blockers": []
 }

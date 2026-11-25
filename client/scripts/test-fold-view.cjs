@@ -159,6 +159,36 @@ assert.deepEqual([dose.attribution, dose.findings, second.attribution, second.fi
 assert.equal(draft.sections.length, 1, 'block headings do not become manuscript sections');
 assert.equal(draft.provenance.ai_generated, true);
 
+// Identical labels and Markdown headings must never redirect a passage to a different finding.
+const evidenceDoc = { ...investigation, findings: investigation.findings.map(f => ({
+    ...f, label: 'Repeated label', observed_result: 'Observed.', author_interpretation: 'Authors.',
+    our_interpretation: 'Ours.', limitations: 'Two columns.', source: { ...f.source, quote: '# Measures\nLeftColumnRightColumn | result' },
+})) };
+const evidence = investigationPreview(evidenceDoc, 'evidence', 'p1');
+assert.deepEqual(evidence.sections.map(section => section.id), ['f1', 'f2']);
+for (const section of evidence.sections) {
+    assert.deepEqual(section.units.map(unit => unit.attribution), ['Observed result', 'Author interpretation', 'Our interpretation', 'Limitations', 'Captured quotation']);
+    assert.ok(section.units.every(unit => unit.finding_ids[0] === section.id));
+    assert.equal(section.units.at(-1).full, '# Measures\nLeftColumnRightColumn | result');
+}
+const { foldMap } = load('../src/lib/fold-map.ts');
+const identical = structuredClone(evidenceDoc);
+for (const finding of identical.findings) {
+    finding.observed_result = finding.author_interpretation = finding.our_interpretation = finding.source.quote = 'Same text.';
+}
+const literalFinding = identical.findings[0];
+literalFinding.source.quote = '[1]: https://example.org/study';
+const identicalPreview = investigationPreview(identical, 'evidence', 'p1');
+for (const level of LEVEL_ORDER) {
+    const { nodes } = foldMap(identicalPreview, { level, collapsed: new Set(), context: foldContext(identicalPreview, true), findings: true });
+    assert.ok(nodes.some(node => node.label === 'Captured quotation - ' + literalFinding.source.quote));
+    for (const field of ['Observed result', 'Author interpretation', 'Our interpretation', 'Captured quotation']) {
+        assert.ok(nodes.some(node => node.kind === 'unit' && node.label.startsWith(field + ' - ')), level + ' ' + field);
+    }
+}
+evidenceDoc.findings.reverse();
+assert.deepEqual(investigationPreview(evidenceDoc, 'evidence', 'p1').sections[0], evidence.sections[1]);
+
 // Origin of the summaries is always stated.
 assert.match(provenanceLine(doc), /^Local excerpts · first sentences, no new assessment\. Full and Brief preserve source wording\.$/);
 assert.match(provenanceLine({ ...doc, provenance: { ai_generated: true, local: false, model: 'm1' } }), /^AI-written summaries · m1\./);

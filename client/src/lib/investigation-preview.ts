@@ -1,4 +1,4 @@
-import {foldBlock,foldMarkdown,projectResearchBrief,researchQuestion} from './textfold';
+import {foldBlock,makeUnit,foldMarkdown,projectResearchBrief,researchQuestion} from './textfold';
 import type {Project} from './schema';
 import type {Investigation,Block} from './investigation';
 
@@ -18,7 +18,23 @@ export function quotation(doc:Investigation,block:Block){
 }
 export function investigationPreview(doc:Investigation,view:'case'|'evidence'|'draft',projectId:string){
  const title='Investigation '+view,id=projectId+':'+view;
- if(view!=='draft')return foldMarkdown(view==='evidence'?doc.findings.map(f=>`## ${f.label}\nObserved result: ${f.observed_result}\n\nAuthor interpretation: ${f.author_interpretation}\n\nOur interpretation: ${f.our_interpretation}\n\nLimitations: ${f.limitations}\n\nExact source quotation: ${f.source.kind==='anchored'?f.source.quote:'Unavailable or unbound.'}`).join('\n\n'):Object.entries(doc.case).filter(([key])=>key!=='search_date').map(([key,value])=>`## ${key.replaceAll('_',' ')}\n${value||'No entry yet.'}`).join('\n\n'),title,id);
+ if(view==='evidence'){
+  const preview=foldMarkdown('',title,id);
+  preview.sections=doc.findings.map(finding=>{
+   const fields=[
+    ['observed_result','Observed result',finding.observed_result],
+    ['author_interpretation','Author interpretation',finding.author_interpretation],
+    ['our_interpretation','Our interpretation',finding.our_interpretation],
+    ['limitations','Limitations',finding.limitations],
+   ];
+   if(finding.source.kind==='anchored')fields.push(['source','Captured quotation',finding.source.quote]);
+   const label=finding.label||'Untitled finding';
+   return {id:finding.id,title:label,depth:1,topic:label,takeaway:'',
+    units:fields.map(([key,attribution,value])=>({...makeUnit(value, finding.id+':'+key),attribution,finding_ids:[finding.id]}))};
+  });
+  return preview;
+ }
+ if(view==='case')return foldMarkdown(Object.entries(doc.case).filter(([key])=>key!=='search_date').map(([key,value])=>`## ${key.replaceAll('_',' ')}\n${value||'No entry yet.'}`).join('\n\n'),title,id);
  const result=foldMarkdown('',title,id);result.sections=[];
  result.provenance.ai_generated=doc.manuscript.sections.some(s=>s.blocks.some(b=>b.provenance.kind==='assistant'));
  result.provenance.model=result.provenance.ai_generated?'Mixed authorship; see each paragraph attribution':null;
