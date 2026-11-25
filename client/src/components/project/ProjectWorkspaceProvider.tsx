@@ -196,6 +196,7 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
     }, [openPaperIds.length]);
 
     const briefOpener = useRef<HTMLElement | null>(null);
+    const priorPanel = useRef<RightPanelMode>(null);
     const restoreBriefFocus = useRef(false);
     useEffect(() => {
         if (rightPanel !== "brief" && restoreBriefFocus.current) {
@@ -208,19 +209,27 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
     }, []);
     const [briefSource, setBriefSource] = useState<BriefSource>("brief");
     const openBrief = useCallback((source: BriefSource = "brief") => {
-        if (rightPanel !== "brief") briefOpener.current = document.activeElement as HTMLElement;
+        if (rightPanel !== "brief") {
+            briefOpener.current = document.activeElement as HTMLElement;
+            priorPanel.current = rightPanel;
+        }
         setBriefSource(source);
         setRightPanel("brief");
     }, [rightPanel]);
-    // Closing the brief gives the slot back to open paper tabs, as the artifacts panel does.
+    const previousPanel = useCallback(() => (
+        priorPanel.current === "reader" && !openPaperIds.length ? null : priorPanel.current
+    ), [openPaperIds.length]);
     const closeBrief = useCallback(() => {
         restoreBriefFocus.current = true;
-        setRightPanel((mode) => (mode !== "brief" ? mode : openPaperIds.length > 0 ? "reader" : null));
-    }, [openPaperIds.length]);
+        setRightPanel((mode) => (mode !== "brief" ? mode : previousPanel()));
+    }, [previousPanel]);
     const toggleBrief = useCallback(() => {
-        if (rightPanel !== "brief") briefOpener.current = document.activeElement as HTMLElement;
-        setRightPanel((mode) => (mode !== "brief" ? "brief" : openPaperIds.length > 0 ? "reader" : null));
-    }, [openPaperIds.length, rightPanel]);
+        if (rightPanel !== "brief") {
+            briefOpener.current = document.activeElement as HTMLElement;
+            priorPanel.current = rightPanel;
+        }
+        setRightPanel((mode) => (mode !== "brief" ? "brief" : previousPanel()));
+    }, [previousPanel, rightPanel]);
 
     const openAddPapers = useCallback((view: AddPapersView = "initial") => {
         setAddPapersInitialView(view);
