@@ -96,7 +96,10 @@ export function foldMap(doc: TextFoldDocument, options: Options): FoldMapLayout 
         section.units.forEach(unit => shownAs.set(unit.id, anchor));
         units.forEach((unit, index) => {
             if (hidden || tree.node.collapsed) return;
-            const text = plainText(withReferences(options.context, unitView(unit, textLevel).markdown)) || 'No text.';
+            const value = unitView(unit, textLevel).markdown;
+            const excerpt = (options.context.literal ? value : plainText(withReferences(options.context, value))) || 'No text.';
+            const text = options.findings && typeof unit.attribution === 'string' && unit.attribution
+                ? unit.attribution + ' - ' + excerpt : excerpt;
             const node = make('unit', unit.id, text.length > 220 ? `${text.slice(0, 217).trimEnd()}…` : text, `paragraph ${index + 1} of ${section.title}`, column + 1);
             tree.children.push({ node, children: [] });
             shownAs.set(unit.id, node.key);

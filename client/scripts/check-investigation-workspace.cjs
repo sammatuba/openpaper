@@ -10,6 +10,9 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
  const browser=await chromium.launch({executablePath:process.env.OPENPAPER_CHROMIUM,args:['--no-sandbox']});
  try{for(const width of [1440,390]){
   const page=await browser.newPage({viewport:{width,height:960},reducedMotion:width===390?'reduce':'no-preference'});const errors=[],unexpected=[];let saved=null,revision=0,forceConflict=false,providerCalls=0,sourceChanged=false,failSave=false,puts=0,failInspect=false,failProject=false;const requests=new Map();
+  const lineRequests = [];
+  let lineGate;
+  let missingRange = false, rejectLines = false, denyPdf = false, quoteChanged = false, longText;
   const blank=()=>({format:'openpaper/investigation',version:1,case:{question:'',why_it_matters:'',landscape:'',coverage_limits:'',provisional_answer:'',unresolved_tension:'',reconciliation:'',discriminating_experiment:'',update_criteria:''},claims:[],findings:[],relations:[],manuscript:{title:'',sections:[]}});
   page.setDefaultTimeout(10000);
   const legacyUnit={id:'legacy-u',kind:'paragraph',full:'Imported synthesis remains provisional.',sentences:['Imported synthesis remains provisional.'],evidence:[0],brief:['Imported synthesis remains provisional.'],key:'Imported synthesis',takeaway:'Imported synthesis',topic:'Synthesis'};
@@ -47,8 +50,27 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
    }
    else if(p===`/api/projects/${projectId}/investigation/sources/search`)body={coverage:'Indexed passages only; sources without an index remain inspectable by line.',results:[{paper_id:paperId,start_line:2,end_line:2,excerpt:'Search excerpt, deliberately not the quotation.',title:fixture.sources[0].title}]};
    else if(failInspect&&p.startsWith(`/api/projects/${projectId}/investigation/sources/`)){status=404;body={detail:'Extracted text unavailable'};}
-   else if(p.startsWith(`/api/projects/${projectId}/investigation/sources/`)){const source=fixture.sources.find(source=>p.endsWith('/'+source.id));if(!source)throw Error('Unknown source');body={start_line:2,end_line:2,text:source.quote,source_sha256:sha(source.raw_content),quote_sha256:sha(source.quote)};}
-   else if(p.startsWith(`/api/projects/papers/${projectId}/`)&&p.endsWith('/file-url'))body={file_url:base+'/synthetic-fixture.pdf'};
+   else if(p.startsWith(`/api/projects/${projectId}/investigation/sources/`)){
+    const source = fixture.sources.find(source => p.endsWith('/' + source.id));
+    if (!source) throw Error('Unknown source');
+    const first = Number(url.searchParams.get('start_line')), count = Number(url.searchParams.get('line_count'));
+    lineRequests.push([source.id, first, count]);
+    if (lineGate) await lineGate;
+    const raw = longText && source.id === paperId ? longText : source.raw_content;
+    const lines = raw.split('\n');
+    if (rejectLines) { status = 403; body = {detail:'Access refused'}; }
+    else if (missingRange || first > lines.length || count > 200) { status = 422; body = {detail:'Source range exceeds text'}; }
+    else {
+     const slice = lines.slice(first - 1, first - 1 + count), text = slice.join('\n');
+     if (text.length > 20000) { status = 413; body = {detail:'Request a smaller source range'}; }
+     else body = {paper_id:source.id,title:source.title,start_line:first,end_line:first + slice.length - 1,text,
+      source_sha256:sourceChanged ? '0'.repeat(64) : sha(raw),quote_sha256:quoteChanged ? '0'.repeat(64) : sha(text)};
+    }
+   }
+   else if(p.startsWith(`/api/projects/papers/${projectId}/`)&&p.endsWith('/file-url')){
+    if (denyPdf) { status = 403; body = {detail:'Access refused'}; }
+    else body={file_url:base+'/synthetic-fixture.pdf'};
+   }
    else if(p===`/api/projects/${projectId}`){if(failProject){status=500;body={detail:'Synthetic project failure'};}else body=project;}
    else if(p===`/api/projects/papers/${projectId}`)body={papers:fixture.sources.map(source=>({id:source.id,title:source.title,authors:[],status:'read',is_owner:true}))};
    else if(p===`/api/projects/conversations/${projectId}`||p==='/api/conversation/everything')body=[];
@@ -99,6 +121,7 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
    }else{
     await workspace.getByLabel('Project source').selectOption(item.paper_id);
     await workspace.getByLabel('Start line',{exact:true}).fill('2');
+    await workspace.getByLabel('Line count',{exact:true}).fill('1');
     await workspace.getByRole('button',{name:'Inspect source lines'}).click();
    }
    await workspace.getByRole('button',{name:'Attach as finding'}).click();
@@ -144,6 +167,95 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
    await page.waitForURL(url=>url.pathname.endsWith('/evidence')&&url.searchParams.get('finding')===item.id);assert.equal(new URL(page.url()).searchParams.get('finding'),item.id);
    const article=workspace.locator('#finding-'+item.id);
    assert.equal(await article.locator('blockquote').innerText(),item.source.quote);
+   if (item.id === saved.findings[0].id) {
+    const priorWrites = puts, firstRequest = lineRequests.length;
+    const cardPassage = article.getByRole('button', {name:'Open paper passage'});
+    const dialog = page.getByRole('dialog', {name:item.label});
+    const closeTo = async trigger => {
+     await page.keyboard.press('Escape');
+     await dialog.waitFor({state:'hidden'});
+     await page.waitForFunction(el => el === document.activeElement, await trigger.elementHandle());
+    };
+    let resumeLines;
+    lineGate = new Promise(resolve => { resumeLines = resolve; });
+    await cardPassage.click();
+    try {
+     await dialog.getByRole('status').filter({hasText:'Checking the paper passage'}).waitFor();
+     assert.equal(await dialog.locator('blockquote').count(),0);
+     await dialog.getByRole('button',{name:'View original PDF'}).click();
+     await dialog.locator('.page[data-page-number="1"] canvas').first().waitFor();
+     assert.equal(await dialog.locator('blockquote').count(),0);
+    } finally {
+     lineGate = undefined;
+     resumeLines();
+    }
+    assert.equal(await dialog.locator('blockquote').innerText(), item.source.quote);
+    await closeTo(cardPassage);
+    await workspace.getByRole('button', {name:'Open folded preview',exact:true}).click();
+    const folded = page.getByRole('region', {name:'Folded document preview'});
+    await folded.getByRole('radio', {name:'Key',exact:true}).click();
+    const node = folded.locator('[data-map-node="unit"]').filter({hasText:'Observed result'}).first();
+    await node.click();
+    const selectedDetail = folded.getByRole('group', {name:'Selected on the map'});
+    const mapPassage = selectedDetail.getByRole('button', {name:'Open paper passage'});
+    await mapPassage.click();
+    const mapDialog = page.getByRole('dialog', {name:item.label});
+    assert.equal(await mapDialog.locator('blockquote').innerText(), item.source.quote);
+    await mapDialog.getByRole('button', {name:'Close',exact:true}).click();
+    await page.waitForFunction(() => document.activeElement?.textContent === 'Open paper passage');
+    assert.equal(await mapPassage.evaluate(el => el === document.activeElement), true);
+    assert.equal(await node.getAttribute('aria-pressed'), 'true');
+    await folded.locator('[data-view-option="read"]').click();
+    const findingSection = folded.getByRole('region', {name:item.label, exact:true});
+    const openPassage = findingSection.getByRole('button', {name:'Open paper passage'});
+    await openPassage.click();
+    assert.equal(await dialog.locator('blockquote').innerText(), item.source.quote);
+    await dialog.getByRole('button', {name:'View original PDF'}).click();
+    await dialog.locator('.page[data-page-number="1"] canvas').first().waitFor();
+    await dialog.getByRole('button', {name:'Close',exact:true}).click();
+    await page.waitForFunction(() => document.activeElement?.textContent === 'Open paper passage');
+    assert.equal(await openPassage.evaluate(el=>el===document.activeElement),true);
+    assert.equal(await folded.getAttribute('data-level'),'key');
+    assert.deepEqual(lineRequests.slice(firstRequest),Array(3).fill([item.source.paper_id,item.source.start_line,1]));
+    sourceChanged = true;
+    await openPassage.click();
+    assert.match(await dialog.getByRole('alert').innerText(), /passage has changed/);
+    assert.equal(await dialog.locator('blockquote').count(),0);
+    await page.keyboard.press('Escape');
+    sourceChanged = false;
+    quoteChanged = true;
+    await openPassage.click();
+    assert.match(await dialog.getByRole('alert').innerText(), /passage has changed/);
+    await closeTo(openPassage);
+    quoteChanged = false;
+    longText = 'header\n' + 'x'.repeat(20001);
+    await openPassage.click();
+    assert.match(await dialog.getByRole('alert').innerText(), /passage has changed/);
+    assert.equal(await dialog.locator('blockquote').count(),0);
+    await closeTo(openPassage);
+    longText = undefined;
+    missingRange = true;
+    await openPassage.click();
+    assert.match(await dialog.getByRole('alert').innerText(), /passage has changed/);
+    await closeTo(openPassage);
+    missingRange = false;
+    rejectLines = true;
+    await openPassage.click();
+    assert.match(await dialog.getByRole('alert').innerText(), /unavailable/);
+    assert.equal(await dialog.locator('blockquote').count(),0);
+    await closeTo(openPassage);
+    rejectLines = false;
+    failInspect = true;
+    await openPassage.click();
+    assert.match(await dialog.getByRole('alert').innerText(), /unavailable/);
+    await dialog.getByRole('button', {name:'View original PDF'}).click();
+    await dialog.locator('.page[data-page-number="1"] canvas').first().waitFor();
+    await closeTo(openPassage);
+    failInspect = false;
+    await page.getByRole('button',{name:'Close research brief panel'}).click();
+    assert.equal(puts,priorWrites);
+    assert.equal(providerCalls,0);
+   }
    await article.getByRole('button',{name:'Open PDF source',exact:true}).click();
    await page.locator('.page[data-page-number="1"] canvas').first().waitFor({timeout:20000});
    await page.getByRole('button',{name:'Close reader',exact:true}).click();
@@ -240,6 +352,85 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
   }
   sourceChanged=true;await page.reload();await workspace.getByText('Evidence changed — review needed',{exact:false}).first().waitFor();assert.equal(await workspace.getByLabel('Paragraph',{exact:true}).first().inputValue(),'Unsaved paragraph survives a conflict.');await page.waitForTimeout(400);await page.screenshot({path:path.join(artifacts,`draft-source-changed-${width}.png`),fullPage:true});
   project.role='viewer';await page.goto(`${base}/projects/${projectId}/evidence`);await workspace.getByRole('heading',{name:'Evidence',exact:true}).waitFor();if(!(await workspace.getByLabel('Observed result',{exact:true}).first().isVisible().catch(()=>false)))await workspace.locator('article[id^="finding-"]').first().locator('button[aria-expanded]').first().click();assert.equal(await workspace.getByLabel('Observed result',{exact:true}).first().getAttribute('readonly'),'');assert.equal(await page.getByRole('button',{name:'Save investigation',exact:true}).count(),0,'Viewers are not offered Save');{const region=await openPreview();await region.getByRole('radio',{name:'Full',exact:true}).click();assert.equal(await region.getAttribute('data-level'),'full','Viewers can fold the preview');assert.equal(await region.locator('input,textarea,[contenteditable]').count(),0);await closePreview();}await workspace.getByLabel('Select for comparison').first().check();await workspace.getByText('Selected comparison',{exact:true}).waitFor();await workspace.getByRole('button',{name:'Open PDF source',exact:true}).first().click();await page.locator('.page[data-page-number="1"] canvas').first().waitFor();await page.getByRole('button',{name:'Close reader',exact:true}).click();assert.equal(await workspace.getByRole('button',{name:'Open PDF source',exact:true}).first().isEnabled(),true);
+  sourceChanged = false;
+  const [longFinding, unboundFinding] = saved.findings;
+  longText = Array.from({length:201}, (_, i) => 'LeftColumnRightColumn ' + i).join('\n');
+  Object.assign(longFinding.source,{start_line:1,end_line:201,quote:longText,source_sha256:sha(longText),quote_sha256:sha(longText)});
+  unboundFinding.source = {kind:'unbound'};
+  const openImported = async () => {
+   await page.reload();
+   await workspace.locator('#finding-'+longFinding.id).getByRole('button',{name:'Open paper passage'}).click();
+   return page.getByRole('dialog',{name:longFinding.label});
+  };
+  const firstChunk = lineRequests.length;
+  let imported = await openImported();
+  assert.equal(await imported.locator('blockquote').textContent(),longText);
+  assert.deepEqual(lineRequests.slice(firstChunk),[[paperId,1,200],[paperId,201,1]]);
+  await page.keyboard.press('Escape');
+  assert.equal(await workspace.locator('#finding-'+unboundFinding.id).getByRole('button',{name:'Open paper passage'}).count(),0);
+  const unboundPreview = await openPreview();
+  await unboundPreview.getByRole('region',{name:unboundFinding.label}).getByText('No paper passage attached').waitFor();
+  await closePreview();
+  longFinding.source.quote_sha256 = '0'.repeat(64);
+  imported = await openImported();
+  assert.match(await imported.getByRole('alert').innerText(),/passage has changed/);
+  assert.equal(await imported.locator('blockquote').count(),0);
+  await page.keyboard.press('Escape');
+  const literalQuote = '[1]: https://example.org/study';
+  longText = literalQuote;
+  Object.assign(longFinding.source,{start_line:1,end_line:1,quote:literalQuote,source_sha256:sha(literalQuote),quote_sha256:sha(literalQuote)});
+  await page.reload();
+  const literalPreview = await openPreview();
+  const literalSection = literalPreview.getByRole('region',{name:longFinding.label,exact:true});
+  const quoteUnit = literalSection.locator('[data-fold-unit]').filter({hasText:'Captured quotation'});
+  await literalPreview.getByRole('radio',{name:'Full',exact:true}).click();
+  await quoteUnit.getByText(literalQuote,{exact:true}).waitFor();
+  await literalPreview.locator('[data-view-option="map"]').click();
+  const quoteNode = literalPreview.locator('[data-map-node="unit"]').filter({hasText:'Captured quotation - '+literalQuote});
+  await quoteNode.click();
+  await literalPreview.getByRole('group',{name:'Selected on the map'}).getByText(literalQuote,{exact:true}).waitFor();
+  await closePreview();
+
+  longFinding.source = {kind:'redacted',paper_id:paperId};
+  await page.reload();
+  const redactedCard = workspace.locator('#finding-'+longFinding.id);
+  const redactedDialog = page.getByRole('dialog',{name:longFinding.label});
+  const firstRedactedRead = lineRequests.length;
+  const cardSource = redactedCard.getByRole('button',{name:'Inspect paper source'});
+  await cardSource.click();
+  assert.equal(await redactedDialog.locator('blockquote').count(),0);
+  await redactedDialog.getByRole('button',{name:'View original PDF'}).click();
+  await redactedDialog.locator('.page[data-page-number="1"] canvas').first().waitFor();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(el => el === document.activeElement, await cardSource.elementHandle());
+  const redactedPreview = await openPreview();
+  for (const [finding, status] of [[longFinding,'Paper passage unavailable'],[unboundFinding,'No paper passage attached']]) {
+   const section = redactedPreview.getByRole('region',{name:finding.label,exact:true});
+   await section.getByText(status,{exact:true}).waitFor();
+   assert.equal(await section.getByText('Captured quotation',{exact:true}).count(),0);
+  }
+  const readSource = redactedPreview.getByRole('region',{name:longFinding.label}).getByRole('button',{name:'Inspect paper source'});
+  await readSource.click();
+  denyPdf = true;
+  await redactedDialog.getByRole('button',{name:'View original PDF'}).click();
+  await redactedDialog.getByRole('alert').filter({hasText:'The PDF could not be opened'}).waitFor();
+  assert.equal(await redactedDialog.locator('canvas,blockquote').count(),0);
+  denyPdf = false;
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(el => el === document.activeElement, await readSource.elementHandle());
+  await redactedPreview.locator('[data-view-option="map"]').click();
+  assert.equal(await redactedPreview.locator('[data-map-node="unit"]').filter({hasText:'Captured quotation'}).count(),0);
+  const observations = redactedPreview.locator('[data-map-node="unit"]').filter({hasText:'Observed result'});
+  await observations.nth(1).click();
+  const mapDetail = redactedPreview.getByRole('group',{name:'Selected on the map'});
+  await mapDetail.getByText('No paper passage attached',{exact:true}).waitFor();
+  await observations.first().click();
+  await mapDetail.getByText('Paper passage unavailable',{exact:true}).waitFor();
+  await redactedPreview.getByRole('group',{name:'Selected on the map'}).getByRole('button',{name:'Inspect paper source'}).click();
+  await redactedDialog.getByText('The extracted passage is unavailable.').waitFor();
+  await page.keyboard.press('Escape');
+  await closePreview();
+  assert.equal(lineRequests.length,firstRedactedRead);
   project.role='admin';failProject=true;await page.goto(`${base}/projects/${projectId}`);await page.getByRole('main').getByRole('alert').filter({hasText:/./}).first().waitFor();assert.equal(await page.getByLabel('Question',{exact:true}).count(),0,'A failed project request does not render a read-only case');failProject=false;
   assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);await page.close();
  }console.log('Production desktop/mobile manual/assistant insertion-discard, reload/conflict, folded previews on Overview, Evidence and Write without requests or storage, AI/human/quotation attribution, finding link with unsaved prose, viewer preview and PDF, brief-only initialization and theme preservation passed.');}
