@@ -1,6 +1,6 @@
 {
   "intent": "docs/work/INTENT-finding-passage.md",
-  "phase": "Finding passage implementation and independent review complete",
+  "phase": "Finding passage released to production",
   "branch": "feat/spatial-workspace",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,9 +8,9 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Commit the reviewed finding-passage slice when requested. The next planned slice is a private understanding check on one verified passage.",
+  "next_action": "No release task remains. The next planned research slice is a private understanding check on one verified passage.",
   "blocked_on": [],
-  "updated": "2026-11-24T23:57:32+00:00",
+  "updated": "2026-11-25T05:21:49+00:00",
   "done": [
     "bootstrap (project, billing, APIs, registry, SA, queue, GCS bucket+CORS+HMAC)",
     "Cloud Build 98fc719b: 5 images",
@@ -608,7 +608,14 @@
     "verification": "docs/work/VERIFICATION-finding-passage.md",
     "review": ".meos/reviews/20261124T235613Z.md",
     "verdict": "accept",
-    "status": "Verified locally, uncommitted and unreleased"
+    "status": "Live at 100 percent",
+    "development_commit": "03a4be28",
+    "release_branch": "release/finding-passage-client",
+    "release_commit": "d0829efb",
+    "revision": "openpaper-00035-ziw",
+    "rollback_revision": "openpaper-00032-dox",
+    "build": "a993b527-883d-4e1d-babb-0a4b69f51cde",
+    "client_image": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/client@sha256:9d82666685c9aec16802045f9ada49c46c4d207f01e8a8822b099be8791fd343"
   },
   "work_id": "finding-passage",
   "references": [
@@ -616,6 +623,6 @@
     "docs/work/INTENT-finding-passage.md",
     "docs/work/VERIFICATION-finding-passage.md"
   ],
-  "status": "accepted in working tree",
+  "status": "closed",
   "blockers": []
 }
