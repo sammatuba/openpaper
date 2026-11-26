@@ -1,6 +1,6 @@
 {
   "intent": "docs/work/INTENT-textfold-reading-space.md",
-  "phase": "Textfold reader verification and TARA research refinement",
+  "phase": "Textfold reading space deployed and TARA brief verified",
   "branch": "feat/spatial-workspace",
   "gcp": {
     "project": "openpaper-sammatuba",
@@ -8,9 +8,9 @@
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Both browser sizes and live TARA read-back passed. Finish independent review, verify the production backport, and release the client.",
+  "next_action": "Release complete. The TARA owner can select the primary brief, development gate, decoding settings and reviewer roster before data collection.",
   "blocked_on": [],
-  "updated": "2026-11-25T23:04:21+00:00",
+  "updated": "2026-11-26T04:51:32+00:00",
   "done": [
     "bootstrap (project, billing, APIs, registry, SA, queue, GCS bucket+CORS+HMAC)",
     "Cloud Build 98fc719b: 5 images",
@@ -622,6 +622,6 @@
     "docs/work/INTENT-textfold-reading-space.md",
     "docs/work/VERIFICATION-textfold-reading-space.md"
   ],
-  "status": "active",
+  "status": "closed",
   "blockers": []
 }
