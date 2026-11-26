@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useRef, useState, useEffect } from "react";
+import { FormEvent, ReactNode, useCallback, useRef, useState, useEffect } from "react";
 import { useIsMobile } from "@/lib/useMobile";
 import { AnimatedMarkdown, CopyableTable } from "@/components/AnimatedMarkdown";
 import { Button } from "@/components/ui/button";
@@ -112,6 +112,12 @@ interface ConversationViewProps {
 	// Lets a chart card link to its viewer page. Everything-mode chat has no
 	// project to hang that route off, so its cards stay unlinked.
 	projectId?: string;
+	// Shown directly above the input (a project conversation's tutor panel).
+	composerAccessory?: ReactNode;
+	// Extra controls inside the input's toolbar (the Tutor switch).
+	inputToolbar?: ReactNode;
+	// Replaces the follow-up placeholder once a conversation is under way.
+	inputPlaceholder?: string;
 }
 
 export const ConversationView = ({
@@ -147,6 +153,9 @@ export const ConversationView = ({
 	onMentionSelectionChange,
 	mentionPapersOnly = false,
 	projectId,
+	composerAccessory,
+	inputToolbar,
+	inputPlaceholder,
 }: ConversationViewProps) => {
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -572,6 +581,7 @@ export const ConversationView = ({
 							What would you like to discover in your papers?
 						</AnimatedGradientText>
 					)}
+					{composerAccessory && <div className="mb-2 w-full">{composerAccessory}</div>}
 					<form onSubmit={handleNewSubmit} className="w-full transition-all duration-300 ease-in-out" ref={chatInputFormRef}>
 						<MentionInput
 							value={currentMessage}
@@ -582,12 +592,13 @@ export const ConversationView = ({
 							papersOnly={mentionPapersOnly}
 							selection={mentionSelection}
 							onSelectionChange={onMentionSelectionChange}
-							placeholder={isCentered ? "Look for a specific citation. Find a relevant paper. Collate evidence across your library." : "Ask a follow-up"}
+							placeholder={isCentered ? "Look for a specific citation. Find a relevant paper. Collate evidence across your library." : inputPlaceholder ?? "Ask a follow-up"}
 							disabled={isStreaming || (!isPapersLoading && papers.length === 0) || chatCreditLimitReached || !isOwner}
 							sendDisabled={!currentMessage.trim()}
 							busy={isStreaming}
 							autoFocus
 							textareaRef={inputMessageRef}
+							toolbarExtras={inputToolbar}
 						/>
 						{chatCreditLimitReached && (
 							<div className="text-center text-sm text-secondary-foreground mt-2">

@@ -95,8 +95,10 @@ class ConversationOperations(BaseLLMClient):
         if not conversation:
             raise ValueError(f"Conversation with ID {conversation_id} not found.")
 
+        # A title is returned with a shared paper, so it is made only from
+        # what a shared paper shows: not from the turns of a tutoring session.
         chat_history = message_crud.get_conversation_messages(
-            db, conversation_id=casted_uuid, current_user=user
+            db, conversation_id=casted_uuid, current_user=user, shareable_only=True
         )
 
         if not chat_history:

@@ -21,6 +21,12 @@ def text_hash(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def date_text(value):
+    """Papers store publish_date as a timestamp; documents and JSON answers carry it as ISO date text."""
+    if value is None: return None
+    return value.date().isoformat() if isinstance(value, datetime) else str(value)
+
+
 def access(db, project_id, actor_id, *, write=False, lock=False):
     query=db.query(Project).filter(Project.id==project_id)
     if lock: query=query.with_for_update()
@@ -59,7 +65,7 @@ def sources(db, project_id, document, *, lock=False):
                     selected=lines[source['start_line']-1:source['end_line']]
                     if sum(map(len,selected))+len(selected)-1<=20000:
                         quotations[finding['id']]='\n'.join(selected)
-        result[pid]=SimpleNamespace(id=row.id,title=row.title,authors=row.authors,publish_date=row.publish_date,doi=row.doi,
+        result[pid]=SimpleNamespace(id=row.id,title=row.title,authors=row.authors,publish_date=date_text(row.publish_date),doi=row.doi,
             source_sha256=text_hash(row.raw_content) if row.raw_content else None,quotations=quotations)
     return result
 
@@ -130,6 +136,8 @@ def save(db:Session, project_id, actor_id, request, if_match):
         row,old=read_document(db,project_id)
         current=etag(project_id,row.revision if row else 0)
         if if_match is None: raise HTTPException(428,'If-Match is required')
+        from app.helpers.etag import issued_tag
+        if_match=issued_tag(if_match)  # the proxy appends its encoding to the tag the browser received
         if not re.fullmatch(r'"investigation:[0-9a-fA-F-]{36}:[0-9]+"',if_match): raise HTTPException(400,'Malformed If-Match')
         try: UUID(if_match.split(':')[1])
         except ValueError as error:raise HTTPException(400,'Malformed If-Match') from error
@@ -227,7 +235,8 @@ def save(db:Session, project_id, actor_id, request, if_match):
                 if block['provenance']['kind']=='imported' and block['id'] in reviewed:block['provenance']['reviewed']=True
         try:InvestigationDocument.model_validate(document)
         except ValidationError as error:
-            if len(json.dumps(document,ensure_ascii=False,separators=(',',':')).encode())>2_000_000:raise HTTPException(413,'Canonical investigation exceeds byte limit') from error
+            # default=str: this size check must not itself fail on the value that failed validation.
+            if len(json.dumps(document,ensure_ascii=False,separators=(',',':'),default=str).encode())>2_000_000:raise HTTPException(413,'Canonical investigation exceeds byte limit') from error
             raise HTTPException(422,'Canonical source metadata violates document bounds') from error
         if row is None:
             row=ProjectInvestigation(project_id=project_id,schema_version=1,revision=1,document=document,updated_by=actor_id)

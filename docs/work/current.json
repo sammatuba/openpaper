@@ -1,18 +1,16 @@
 {
-  "intent": "docs/work/INTENT-investigation-workspace.md",
-  "phase": "AI-native platform P00-P02 implemented and accepted by the owner-approved stand-in gate review (2026-11-18, accept on 8370d19d..464d8a19; Codex reviewer out of credits); battery 184 required / 568 full, zero skips; pushed and PR #3 merged into feat/native-investigation-workspace; client deployed 2026-11-18 as openpaper-00017-lax at 100% (server and caddy images unchanged), public smoke passed, authenticated UI not exercised; investigation A25 acceptance still open; P03 slice 1 (guided shell on the v1 investigation: destination bar, Overview, Evidence, Write, Discuss) implemented on feat/guided-shell, client only, local checks and three browser journeys pass, Codex review round 1 rework addressed, round 2 incomplete (out of credits), stand-in review accept with findings addressed; pushed at fc39aa29; client image built (digest sha256:8283db3b57cd7e8246f738be1ab84009cb1695bd92b51b8f752d5867268b7a82, tag guided-); client deployed 2026-11-18 as openpaper-00017-lax at 100% (server and caddy images unchanged), public smoke passed, authenticated UI not exercised; native folded reader (embedded Textfold engine removed) committed b5d8661f on feat/native-fold-reader and client deployed 2026-11-18 as openpaper-00020-dus at 100%, public smoke passed, authenticated UI not exercised",
-  "branch": "feat/guided-shell",
+  "intent": "docs/work/INTENT-textfold-reading-space.md",
+  "phase": "Textfold reading space deployed and TARA brief verified",
+  "branch": "feat/spatial-workspace",
   "gcp": {
     "project": "openpaper-sammatuba",
     "number": "1061746501640",
     "region": "asia-southeast1",
     "public_url": "https://openpaper-1061746501640.asia-southeast1.run.app"
   },
-  "next_action": "Operator: sign in and use the Brief panel and map on a real project (header Brief button; Open folded preview on Overview, Evidence, Write). Operator: sign in and read a real brief in the new folded reader (Discuss, and Open folded preview on Overview, Evidence, Write). No PR is open for feat/guided-shell or feat/native-fold-reader; a Codex pass over the round 3 fixes is still owed (./meos review --base feat/guided-shell when credits return). Operator: sign in at https://papers.sammatuba.workers.dev and check a real project's Overview, Evidence, Write and Discuss. Then P03 slice 2: HTTP routes over the P02 records. Open owner questions on docs/work/RULES-review-versioning.md (rule 1; adjudication finality scope) and operator A25 acceptance remain open",
-  "blocked_on": [
-    "No current operator browser/session exposed for authenticated production UI acceptance."
-  ],
-  "updated": "2026-11-18T00:00:00+00:00",
+  "next_action": "Release complete. The TARA owner can select the primary brief, development gate, decoding settings and reviewer roster before data collection.",
+  "blocked_on": [],
+  "updated": "2026-11-26T04:51:32+00:00",
   "done": [
     "bootstrap (project, billing, APIs, registry, SA, queue, GCS bucket+CORS+HMAC)",
     "Cloud Build 98fc719b: 5 images",
@@ -44,7 +42,7 @@
       "verdict": "accept; no findings. Prior runtime-evidence finding resolved. Independently passed typecheck, diff/JSON checks and exact viewer-move comparison; reviewer could not rerun browser/build in read-only sandbox."
     }
   },
-  "verification": "Frontend tsc, production build, desktop/mobile mocked Notes checks pass; locked Cloud Build all five images passes; corpus/operator14, Worker, shell and diff checks pass; focused recovery/CORS7 and isolated actual PostgreSQL PDF crash/replay pass. Full-review findings and importer User-Agent fix independently accepted. Live health, MCP discovery/auth boundaries, Google login/PDF/Notes, ChatGPT search and deployed Exa pass; pilot API readbacks pass.",
+  "verification": "docs/work/VERIFICATION-textfold-reading-space.md",
   "strategy": {
     "record": "docs/work/STRATEGY-research-ecosystem.md",
     "status": "approved by operator; Terra implementation delegated",
@@ -526,5 +524,104 @@
       "live_revision": "openpaper-00023-wov",
       "rollback_revision": "openpaper-00020-dus"
     }
-  }
+  },
+  "spatial_workspace": {
+    "strategy": "docs/work/STRATEGY-spatial-workspace.md",
+    "intent": "docs/work/INTENT-spatial-workspace-camera.md",
+    "verification": "docs/work/VERIFICATION-spatial-workspace.md",
+    "owner_decisions": "2026-11-19: proceed as recommended (A canvas as project home; B no hand-placed positions; C desktop first)",
+    "camera_commit": "3e8dccee",
+    "pull_request": "https://github.com/sammatuba/openpaper/pull/4",
+    "flow_intent": "docs/work/INTENT-spatial-workspace-flow.md",
+    "flow_verification": "docs/work/VERIFICATION-spatial-workspace-flow.md",
+    "flow_review": "rounds 1 to 3 rework (gpt-6.2-astra, Codex default), findings fixed; round 4 (Claude Opus 5.5 reviewer agent) accept with findings, the important one fixed after the verdict and not re-reviewed",
+    "canvas_intent": "docs/work/INTENT-spatial-workspace-canvas.md",
+    "canvas_verification": "docs/work/VERIFICATION-spatial-workspace-canvas.md",
+    "canvas_review": "rounds 1 to 5 rework (.meos/reviews/20261119T074026Z to T090836Z, GPT); round 6 Claude Opus 5.5 accept with findings, minor, folded in, not re-reviewed"
+  },
+  "tara_e2e": {
+    "report": "docs/work/REPORT-tara-e2e.md",
+    "project_id": "52bd2d45-c7b5-451c-ad58-1543524b8924",
+    "origin": "https://papers.sammatuba.workers.dev",
+    "papers_imported": 8,
+    "papers_in_project": 9,
+    "investigation_revision": 7,
+    "artifacts": ".meos/artifacts/tara-e2e (ignored): state, extracted text, exports, journey and capture reports, screenshots",
+    "hotfix_branch": "fix/investigation-dated-papers (from c757bbf0; pushed; head 1cf4437d)",
+    "fix_1": {
+      "commit": "afbd6fee",
+      "cloud_build": "e6ce7ebb-5b12-49f2-8b73-3a3ffb078a0f",
+      "server_image": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/server@sha256:505d4e7b74f508565124872671b1d39ebfdebdac23d4c7c32b24f744911fcbaa",
+      "web_revision": "openpaper-00026-rum",
+      "traffic_percent": 100,
+      "rollback_revision": "openpaper-00023-wov",
+      "smoke": "staged URL then both public hosts: health, /, /login, /projects 200; unauthenticated investigation 401; unauthenticated MCP POST 401; signed-in source reads 9 of 9",
+      "review": "fresh Claude reviewer agent (same model family as the author): accept with findings; the three code findings addressed on the development branch"
+    },
+    "fix_2": {
+      "commit": "16a7f1b6",
+      "cloud_build": "4856ef9a-a153-4228-9dab-0f14eccc5457",
+      "server_image": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/server@sha256:1ddcd9557d38512bf6fbd1d169bd809fdc8f91cfceef166c87cc3e7ff6db1e8d",
+      "deployed": true,
+      "status": "live since 2026-11-20 on the owner's go",
+      "review": "fresh Claude reviewer agent (same model family as the author): accept with findings, safe to deploy as is; follow-ups in 032aa17b",
+      "web_revision": "openpaper-00029-jen",
+      "traffic_percent": 100,
+      "rollback_revision": "openpaper-00026-rum",
+      "smoke": "staged URL then both public hosts; a save with the proxy-suffixed tag answers 200 (staged, and through the public host); stale 412; nonsense 400"
+    },
+    "development_branch_commits": [
+      "cd09afcb",
+      "7091c036",
+      "032aa17b",
+      "b83b5dde",
+      "df8f6292",
+      "7ceb8241"
+    ],
+    "development_branch_pushed": false,
+    "owner_sessions_minted": 19,
+    "not_exercised": [
+      "assistant drafting",
+      "Discuss",
+      "audio",
+      "tables and charts",
+      "collaborators",
+      "MCP connector",
+      "viewer role",
+      "a real phone",
+      "the deployed client",
+      "a save from a real browser on the deployed client"
+    ],
+    "client_followup": "032aa17b (development branch) and 1cf4437d (hotfix branch, pushed 2026-11-21): the page read the revision by parsing the ETag; a suffixed tag gave NaN. No client image built; not deployed; not exercised in a browser.",
+    "note_edit_check": "2026-11-21, public host: unchanged note sent with the proxy-suffixed tag answered 200; wrong tag 412"
+  },
+  "project_tutor": {
+    "intent": "docs/work/INTENT-project-tutor.md",
+    "verification": "docs/work/VERIFICATION-project-tutor.md",
+    "status": "Committed at 5b9a5e8d with release status recorded at daec9f8f. Awaiting a release decision.",
+    "follows": "docs/work/INTENT-socratic-tutor.md (paper tutor, live as openpaper-00032-dox)",
+    "review": "Review: the Codex reviewer did not run (out of credits); a fresh Claude reviewer agent stood in and returned rework with one important and five minor findings and no route by which a tutoring turn or the session reaches another member; all six are fixed and the fixes are not re-reviewed."
+  },
+  "finding_passage": {
+    "strategy": "docs/work/STRATEGY-folded-reading-and-socratic-research.md",
+    "intent": "docs/work/INTENT-finding-passage.md",
+    "verification": "docs/work/VERIFICATION-finding-passage.md",
+    "review": ".meos/reviews/20261124T235613Z.md",
+    "verdict": "accept",
+    "status": "Live at 100 percent",
+    "development_commit": "03a4be28",
+    "release_branch": "release/finding-passage-client",
+    "release_commit": "d0829efb",
+    "revision": "openpaper-00035-ziw",
+    "rollback_revision": "openpaper-00032-dox",
+    "build": "a993b527-883d-4e1d-babb-0a4b69f51cde",
+    "client_image": "asia-southeast1-docker.pkg.dev/openpaper-sammatuba/openpaper/client@sha256:9d82666685c9aec16802045f9ada49c46c4d207f01e8a8822b099be8791fd343"
+  },
+  "work_id": "textfold-reading-space",
+  "references": [
+    "docs/work/INTENT-textfold-reading-space.md",
+    "docs/work/VERIFICATION-textfold-reading-space.md"
+  ],
+  "status": "closed",
+  "blockers": []
 }

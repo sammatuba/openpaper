@@ -375,3 +375,48 @@
 .pdf-align-left .pdfViewer .page {
 	margin-left: 0 !important;
 }
+
+/*
+ * Workspace panels open, close and swap inside a view transition (lib/transition.ts).
+ * The three right-slot panels share one name; only one is rendered at a time.
+ */
+.workspace-panel {
+	view-transition-name: workspace-panel;
+}
+
+::view-transition-group(*) {
+	animation-duration: 160ms;
+	animation-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+::view-transition-old(*),
+::view-transition-new(*) {
+	animation-duration: 160ms;
+}
+
+/* Clicks during the transition reach the page underneath. */
+::view-transition {
+	pointer-events: none;
+}
+
+@keyframes workspace-panel-in {
+	from {
+		opacity: 0;
+		transform: translateX(16px);
+	}
+}
+
+@keyframes workspace-panel-out {
+	to {
+		opacity: 0;
+		transform: translateX(16px);
+	}
+}
+
+::view-transition-new(workspace-panel):only-child {
+	animation: workspace-panel-in 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+::view-transition-old(workspace-panel):only-child {
+	animation: workspace-panel-out 120ms cubic-bezier(0.4, 0, 1, 1);
+}

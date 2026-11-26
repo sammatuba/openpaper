@@ -445,8 +445,9 @@ async def update_paper_note(
         )
 
     if if_match is not None:
+        from app.helpers.etag import issued_tag
         from app.mcp.notes import note_etag
-        if if_match != note_etag(paper_note.content):
+        if issued_tag(if_match) != note_etag(paper_note.content):
             raise HTTPException(status_code=412, detail="Paper note has changed")
 
     paper_note_to_update = PaperNoteUpdate(content=content)

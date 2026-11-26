@@ -88,6 +88,16 @@ export function DraftView() {
         }
     }, [params, sections]);
 
+    // A link to a section (from the canvas) can arrive before the investigation has loaded, when there is
+    // nothing to scroll to yet. It is honoured once, when the section first exists.
+    const sectionLinked = useRef(false);
+    useEffect(() => {
+        if (sectionLinked.current || !sections.length) return;
+        sectionLinked.current = true;
+        const id = window.location.hash.startsWith("#section-") ? window.location.hash.slice("#section-".length) : "";
+        if (id && sections.some(section => section.id === id)) window.document.getElementById("section-" + id)?.scrollIntoView({ block: "start" });
+    }, [sections]);
+
     // Keep selections in document order, as the manuscript stores them.
     const toggleFinding = (id: string, on: boolean) =>
         setSelected(previous => doc.findings.map(finding => finding.id).filter(item => (item === id ? on : previous.includes(item))));
@@ -126,7 +136,10 @@ export function DraftView() {
     return (
         <ViewFrame>
             <header className="space-y-2">
-                <h1 className="text-2xl font-bold tracking-tight">Write</h1>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h1 className="text-2xl font-bold tracking-tight">Write</h1>
+                    <FoldedPreview />
+                </div>
                 <p className="text-sm leading-6 text-muted-foreground">
                     The manuscript, written section by section. Every paragraph keeps its authorship and the evidence it cites.
                 </p>
@@ -296,7 +309,7 @@ export function DraftView() {
                                                     options={doc.claims.map(claim => ({ id: claim.id, label: claim.statement || "Untitled claim" }))}
                                                     selected={draftClaims}
                                                     onToggle={toggleClaim}
-                                                    empty={<>No claims yet. Add them in the <Link className="underline underline-offset-2" href={`/projects/${projectId}`}>overview</Link>.</>}
+                                                    empty={<>No claims yet. Add them in the <Link className="underline underline-offset-2" href={`/projects/${projectId}/overview`}>overview</Link>.</>}
                                                 />
                                                 <CheckGroup
                                                     legend="Evidence for the next paragraph"
@@ -417,7 +430,6 @@ export function DraftView() {
                 )}
             </fieldset>
 
-            <FoldedPreview />
         </ViewFrame>
     );
 }

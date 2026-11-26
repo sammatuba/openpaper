@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Finding, Relation, Source, investigationRequest } from "@/lib/investigation";
+import { FindingPassage } from "./FindingPassage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -275,17 +276,20 @@ export function EvidenceView() {
                         </p>
                     )}
                 </div>
-                {!noPapers && (
-                    <Button
-                        variant={captureOpen ? "outline" : "default"}
-                        aria-expanded={captureOpen}
-                        disabled={!loaded}
-                        onClick={() => setCaptureToggle(!captureOpen)}
-                    >
-                        {canEdit ? <Plus aria-hidden className="h-4 w-4" /> : <FileSearch aria-hidden className="h-4 w-4" />}
-                        {canEdit ? "Add finding" : "Inspect source text"}
-                    </Button>
-                )}
+                <div className="flex flex-wrap items-center gap-2">
+                    <FoldedPreview />
+                    {!noPapers && (
+                        <Button
+                            variant={captureOpen ? "outline" : "default"}
+                            aria-expanded={captureOpen}
+                            disabled={!loaded}
+                            onClick={() => setCaptureToggle(!captureOpen)}
+                        >
+                            {canEdit ? <Plus aria-hidden className="h-4 w-4" /> : <FileSearch aria-hidden className="h-4 w-4" />}
+                            {canEdit ? "Add finding" : "Inspect source text"}
+                        </Button>
+                    )}
+                </div>
             </header>
 
             {!loaded && (
@@ -663,7 +667,6 @@ export function EvidenceView() {
                 )}
             </fieldset>
 
-            <FoldedPreview />
         </ViewFrame>
     );
 }
@@ -764,6 +767,7 @@ function FindingCard({ finding, expanded, fresh, selected, inspected, onToggle, 
                                 {source.quote}
                             </blockquote>
                             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                <FindingPassage finding={finding} />
                                 <Button type="button" variant="outline" size="sm" disabled={!paper} onClick={() => paper && openPaper(paper, source.quote)}>
                                     <ExternalLink aria-hidden className="h-4 w-4" />
                                     Open PDF source
@@ -776,7 +780,7 @@ function FindingCard({ finding, expanded, fresh, selected, inspected, onToggle, 
                     ) : (
                         <div className="space-y-1">
                             <SourceStatus status={validation.findings[finding.id]} />
-                            <p className="text-sm text-muted-foreground">Source unavailable or awaiting binding.</p>
+                            <FindingPassage finding={finding} />
                         </div>
                     )}
 

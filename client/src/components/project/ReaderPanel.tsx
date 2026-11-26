@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { FileText, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -34,15 +34,6 @@ export function ReaderPanel() {
         }
     }, [activePaper, refreshPaperUrl]);
 
-    const opener = useRef<HTMLElement | null>(null);
-    const wasReading = useRef(false);
-    useEffect(() => {
-        const reading = rightPanel === "reader" && openPaperIds.length > 0;
-        if (reading && !wasReading.current) opener.current = document.activeElement as HTMLElement;
-        if (!reading && wasReading.current && opener.current?.isConnected) opener.current.focus();
-        wasReading.current = reading;
-    }, [rightPanel, openPaperIds.length]);
-
     if (openPapers.length === 0) {
         return null;
     }
@@ -52,7 +43,7 @@ export function ReaderPanel() {
         // PDF scroll position survives switching back.
         <div
             className={cn(
-                "flex-col bg-background",
+                "workspace-panel flex-col bg-background",
                 rightPanel === "reader" ? "flex" : "hidden",
                 "fixed inset-0 z-40 md:static md:z-auto md:w-[46%] md:min-w-[420px] md:max-w-[760px] md:shrink-0 md:border-l",
             )}

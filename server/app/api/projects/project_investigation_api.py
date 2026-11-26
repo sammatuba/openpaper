@@ -71,7 +71,7 @@ def get_source(project_id:UUID,paper_id:UUID,start_line:int=Query(1,ge=1),line_c
     selected=lines[start_line-1:start_line-1+line_count]
     text='\n'.join(selected)
     if len(text)>20000: raise HTTPException(413,'Request a smaller source range')
-    return JSONResponse({'paper_id':str(paper_id),'title':paper.title,'authors':paper.authors or [],'publish_date':paper.publish_date,'doi':paper.doi,'start_line':start_line,'end_line':start_line+len(selected)-1,'text':text,'source_sha256':service.text_hash(paper.raw_content),'quote_sha256':service.text_hash(text),'page_span':None,'total_lines':len(lines)},headers={'Cache-Control':'private, no-store'})
+    return JSONResponse({'paper_id':str(paper_id),'title':paper.title,'authors':paper.authors or [],'publish_date':service.date_text(paper.publish_date),'doi':paper.doi,'start_line':start_line,'end_line':start_line+len(selected)-1,'text':text,'source_sha256':service.text_hash(paper.raw_content),'quote_sha256':service.text_hash(text),'page_span':None,'total_lines':len(lines)},headers={'Cache-Control':'private, no-store'})
 
 
 @investigation_router.get("/export")

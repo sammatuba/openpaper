@@ -25,8 +25,14 @@ from app.llm.base import LLMProvider
 from app.llm.citation_handler import CitationHandler
 from app.llm.operations import operations
 from app.llm.paper_operations import PaperNotFoundError
+from app.llm.tutor import (
+    build_tutor_gathering_question,
+    scrub_citations,
+    scrub_unmarked_state,
+)
 from app.schemas.artifact import artifact_payload_adapter
 from app.schemas.message import EvidenceCollection, ResponseStyle
+from app.schemas.tutor import tutor_turn_trace
 from app.schemas.user import CurrentUser
 from app.tasks.chart_generation import generate_chart
 from dotenv import load_dotenv
@@ -175,7 +181,16 @@ async def _stream_chat_chunks(
             # this stream opened, and are still valid.
             content_chunks.clear()
             evidence_container["evidence"] = None
+            evidence_container.pop("tutor_state", None)
             yield f"{json.dumps({'type': 'reset', 'content': ''})}{END_DELIMITER}"
+            continue
+
+        if chunk_type == "tutor_state":
+            # A tutor turn's session state: kept for the caller to store with
+            # the message. Not forwarded from here. The caller sends it once
+            # the message is saved, so the progress panel never shows a state
+            # the server did not keep.
+            evidence_container["tutor_state"] = chunk_content
             continue
 
         if chunk_type == "artifact":
@@ -246,6 +261,20 @@ class MultiPaperChatRequest(BaseModel):
     mentioned_paper_ids: Optional[List[str]] = None
     mentioned_project_ids: Optional[List[str]] = None
     mentioned_highlight_ids: Optional[List[str]] = None
+    # Only 'tutor' means anything here: the model teaches the project's
+    # papers by asking instead of answering. See TUTOR_REFUSED for where
+    # it is allowed. The paper chat's other styles have no multi-paper
+    # counterpart and are read as an ordinary turn.
+    style: Optional[ResponseStyle] = None
+
+
+# A tutoring session holds notes on what the learner gets wrong, and a
+# project conversation is read by the project's members. The turns are kept
+# from them by who owns the conversation (see
+# message_crud.get_project_conversation_messages), so a tutor turn is only
+# taken in a project conversation that is the learner's own. The library-wide
+# chat has no tutor: its subject is whatever the user happens to hold.
+TUTOR_REFUSED = "Tutor mode works in a project conversation of your own."
 
 
 def _resolve_mention_scope(
@@ -374,6 +403,11 @@ async def chat_message_multipaper(
 
     This searches over the entire corpus of papers and returns a response based on the user's query.
     The response includes both the content and any relevant evidence gathered.
+
+    With `style: "tutor"`, in a project conversation the caller owns, the model
+    teaches the project's papers by asking instead of answering. The stream
+    then ends with a `tutor_state` chunk, sent once that state is stored on the
+    assistant message.
     """
     try:
 
@@ -427,25 +461,67 @@ async def chat_message_multipaper(
                 ):
                     raise ValueError("Conversation is not of type PROJECT.")
 
+                is_tutor_turn = request.style == ResponseStyle.TUTOR
+                # Where the tutoring session stood before this turn, or None.
+                session_before: Optional[dict] = None
+
+                if is_tutor_turn:
+                    # Refused before any model is called. See TUTOR_REFUSED.
+                    if not request.project_id or str(conversation.user_id) != str(
+                        current_user.id
+                    ):
+                        raise ValueError(TUTOR_REFUSED)
+
+                    # The session does not live in the transcript — only the
+                    # last few messages are replayed — so it is read back from
+                    # where the last tutor turn stored it.
+                    session_before = message_crud.get_latest_tutor_state(
+                        db,
+                        conversation_id=uuid.UUID(request.conversation_id),
+                        current_user=current_user,
+                    )
+
                 # @-mention scoping: resolve mentioned papers/projects/highlights
                 # into a flat set of in-scope paper ids (None == no scoping), a
                 # denormalized snapshot to persist on the user message, and the
                 # highlight passages to inject into the answer.
-                (
-                    scoped_paper_ids,
-                    scope_snapshot,
-                    mentioned_highlights,
-                ) = _resolve_mention_scope(db, current_user, request)
+                #
+                # A tutor turn is not scoped. The reader's open tabs ride along
+                # as mentions, and the tutor sends the learner to open papers:
+                # scoped, each paper opened would narrow what the next question
+                # could be about.
+                if is_tutor_turn:
+                    scoped_paper_ids, scope_snapshot, mentioned_highlights = (
+                        None,
+                        None,
+                        None,
+                    )
+                else:
+                    (
+                        scoped_paper_ids,
+                        scope_snapshot,
+                        mentioned_highlights,
+                    ) = _resolve_mention_scope(db, current_user, request)
 
                 async for chunk in operations.gather_evidence(
                     conversation_id=request.conversation_id,
-                    question=request.user_query,
+                    # A learner's reply to a question is not something to
+                    # search for. On a tutor turn the gathering model is told
+                    # what the tutor needs instead.
+                    question=(
+                        build_tutor_gathering_question(
+                            session_before, request.user_query
+                        )
+                        if is_tutor_turn
+                        else request.user_query
+                    ),
                     current_user=current_user,
                     llm_provider=LLMProvider.GEMINI,
                     user_references=request.user_references,
                     db=db,
                     project_id=request.project_id,
                     restrict_to_paper_ids=scoped_paper_ids,
+                    for_tutor=is_tutor_turn,
                 ):
                     # Parse the chunk as a dictionary
                     if isinstance(chunk, dict):
@@ -469,10 +545,20 @@ async def chat_message_multipaper(
                 # chart request in particular can gather no passages at all and
                 # still be the whole point of the turn, and bailing here would
                 # strand its job as permanently pending.
-                if evidence_collection is None or (
-                    len(evidence_collection.evidence) == 0
-                    and len(evidence_collection.artifacts) == 0
-                    and len(evidence_collection.chart_jobs) == 0
+                #
+                # A tutor turn goes on regardless. "Easier", "show progress" and
+                # "I don't know" need no passage, and the tutor has the session
+                # and the conversation to answer from.
+                if is_tutor_turn and evidence_collection is None:
+                    evidence_collection = EvidenceCollection()
+
+                if not is_tutor_turn and (
+                    evidence_collection is None
+                    or (
+                        len(evidence_collection.evidence) == 0
+                        and len(evidence_collection.artifacts) == 0
+                        and len(evidence_collection.chart_jobs) == 0
+                    )
                 ):
                     json_response = json.dumps(
                         {
@@ -482,6 +568,10 @@ async def chat_message_multipaper(
                     )
                     yield f"{json_response}{END_DELIMITER}"
                     return
+
+                # Not None past this point: an ordinary turn returned above
+                # and a tutor turn was given an empty one.
+                assert evidence_collection is not None
 
                 if request.project_id:
                     all_papers = project_paper_crud.get_all_papers_by_project_id(
@@ -521,6 +611,8 @@ async def chat_message_multipaper(
                     mentioned_highlights=mentioned_highlights,
                     project_title=str(project.title) if project else None,
                     is_mention_scoped=scoped_paper_ids is not None,
+                    is_tutor_turn=is_tutor_turn,
+                    tutor_state=session_before,
                     db=db,
                 )
                 async for stream_chunk in _stream_chat_chunks(
@@ -534,9 +626,38 @@ async def chat_message_multipaper(
                     yield stream_chunk
 
                 evidence = evidence_container["evidence"]
+                # Present only on a tutor turn whose state block parsed. A turn
+                # without one is still saved as a tutoring turn, and the
+                # session carries on from the last state that was stored.
+                tutor_state = evidence_container.get("tutor_state")
 
                 # Save the complete message to the database
                 full_content = "".join(content_chunks)
+
+                if is_tutor_turn:
+                    # The state is supposed to arrive between its markers,
+                    # where it never becomes reply text. This is the check for
+                    # when the model got the markers wrong: nothing shaped like
+                    # a state is stored in the message or its citations.
+                    scrubbed_content = scrub_unmarked_state(full_content)
+                    scrubbed_evidence = scrub_citations(evidence)
+                    if (
+                        scrubbed_content != full_content
+                        or scrubbed_evidence != evidence
+                    ):
+                        logger.warning(
+                            "Tutor reply for conversation %s carried session "
+                            "state outside its markers; removed before saving.",
+                            request.conversation_id,
+                        )
+                        full_content, evidence = scrubbed_content, scrubbed_evidence
+                        # The reader has already been sent the original. Replace
+                        # it the way a restarted answer is replaced.
+                        yield f"{json.dumps({'type': 'reset', 'content': ''})}{END_DELIMITER}"
+                        if full_content.strip():
+                            yield f"{json.dumps({'type': 'content', 'content': full_content})}{END_DELIMITER}"
+                        if evidence:
+                            yield f"{json.dumps({'type': 'references', 'content': evidence})}{END_DELIMITER}"
 
                 # An answer that produced no text is a failure, not a turn.
                 # Persisting it puts a blank bubble in the thread and — worse —
@@ -575,6 +696,7 @@ async def chat_message_multipaper(
                             "question_chars": len(request.user_query),
                             "type": conversation.conversable_type,
                             "project_id": request.project_id,
+                            "response_style": "tutor" if is_tutor_turn else "normal",
                         },
                         user_id=str(current_user.id),
                         db=db,
@@ -586,6 +708,15 @@ async def chat_message_multipaper(
                 assistant_trace = (
                     evidence_collection.to_trace_dict() if evidence_collection else None
                 )
+                if is_tutor_turn and assistant_trace:
+                    # The learner can open this trace beside the question the
+                    # tutor has just asked, and part of what was read was read
+                    # for that question. Which tools ran is kept; what they
+                    # searched for, and which lines they read, is not.
+                    assistant_trace["tool_calls"] = [
+                        {"name": call.get("name")}
+                        for call in assistant_trace.get("tool_calls") or []
+                    ]
                 # Fold in the live status messages (the "thinking trace") so it
                 # survives reloads, even when there were no tool calls.
                 if status_messages:
@@ -605,6 +736,17 @@ async def chat_message_multipaper(
                     else None
                 )
 
+                # Both halves of a tutoring turn carry the mark that keeps
+                # them from the project's other members, and the tutor's half
+                # carries the session. The mark goes on whether or not a state
+                # was parsed: what decides that a turn is the learner's is that
+                # it was a tutoring turn, not what the model wrote in it.
+                if is_tutor_turn:
+                    assistant_trace = {
+                        **(assistant_trace or {}),
+                        **tutor_turn_trace(tutor_state),
+                    }
+
                 # Save user message, with the @-mention scope snapshot attached.
                 message_crud.create(
                     db,
@@ -614,6 +756,7 @@ async def chat_message_multipaper(
                         content=request.user_query,
                         references=formatted_references,
                         scope=scope_snapshot,
+                        trace=tutor_turn_trace() if is_tutor_turn else None,
                     ),
                     user=current_user,
                 )
@@ -676,20 +819,30 @@ async def chat_message_multipaper(
                             user=current_user,
                         )
 
+                # Only now, with the turn saved, is the session state the
+                # panel's to show.
+                if tutor_state:
+                    yield f"{json.dumps({'type': 'tutor_state', 'content': tutor_state})}{END_DELIMITER}"
+
                 # The turn is saved. Renaming is cosmetic and must not turn a
                 # delivered answer into an error for the user.
-                try:
-                    operations.rename_conversation(
-                        db=db,
-                        conversation_id=request.conversation_id,
-                        user=current_user,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to rename conversation %s",
-                        request.conversation_id,
-                        exc_info=True,
-                    )
+                #
+                # A tutoring turn does not rename: a title is shown to the
+                # project's members, so it is made only from turns they can
+                # read, and this one added none.
+                if not is_tutor_turn:
+                    try:
+                        operations.rename_conversation(
+                            db=db,
+                            conversation_id=request.conversation_id,
+                            user=current_user,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to rename conversation %s",
+                            request.conversation_id,
+                            exc_info=True,
+                        )
 
                 # @-mention scoping usage: whether the client asked to scope,
                 # what actually resolved (by entity type), and the effective
@@ -732,6 +885,7 @@ async def chat_message_multipaper(
                         ).total_seconds(),
                         "type": conversation.conversable_type,
                         "project_id": request.project_id,
+                        "response_style": "tutor" if is_tutor_turn else "normal",
                         **mention_scope_props,
                     },
                     user_id=str(current_user.id),
@@ -787,6 +941,9 @@ async def chat_message_stream(
     - normal: Standard balanced response
     - concise: Short and to the point
     - detailed: Comprehensive and thorough
+    - tutor: Teaches the paper by asking instead of answering. Only in the
+      paper's own conversation. The stream then ends with a `tutor_state`
+      chunk, sent once that state is stored on the assistant message.
     """
     try:
 
@@ -817,9 +974,40 @@ async def chat_message_stream(
                     yield chunk
 
                 evidence = evidence_container["evidence"]
+                # Present only on a tutor turn whose state block parsed. A turn
+                # without one is saved as an ordinary message, and the session
+                # carries on from the last state that was stored.
+                tutor_state = evidence_container.get("tutor_state")
+                is_tutor_turn = request.style == ResponseStyle.TUTOR
 
                 # Save the complete message to the database
                 full_content = "".join(content_chunks)
+
+                if is_tutor_turn:
+                    # The tutor's state is supposed to arrive between its
+                    # markers, where it never becomes reply text. This is the
+                    # check for when the model got the markers wrong: nothing
+                    # shaped like a state is stored in the message or its
+                    # citations, which is what a shared paper shows.
+                    scrubbed_content = scrub_unmarked_state(full_content)
+                    scrubbed_evidence = scrub_citations(evidence)
+                    if (
+                        scrubbed_content != full_content
+                        or scrubbed_evidence != evidence
+                    ):
+                        logger.warning(
+                            "Tutor reply for conversation %s carried session "
+                            "state outside its markers; removed before saving.",
+                            request.conversation_id,
+                        )
+                        full_content, evidence = scrubbed_content, scrubbed_evidence
+                        # The reader has already been sent the original. Replace
+                        # it the way a restarted answer is replaced.
+                        yield f"{json.dumps({'type': 'reset', 'content': ''})}{END_DELIMITER}"
+                        if full_content.strip():
+                            yield f"{json.dumps({'type': 'content', 'content': full_content})}{END_DELIMITER}"
+                        if evidence:
+                            yield f"{json.dumps({'type': 'references', 'content': evidence})}{END_DELIMITER}"
 
                 # An answer that produced no text is a failure, not a turn.
                 # Persisting it puts a blank bubble in the thread and — worse —
@@ -863,6 +1051,9 @@ async def chat_message_stream(
                         role="user",
                         content=request.user_query,
                         references=formatted_references,
+                        # Both halves of a tutoring turn are marked as one, so
+                        # a shared paper shows neither. See TUTOR_TURN_KEY.
+                        trace=tutor_turn_trace() if is_tutor_turn else None,
                     ),
                     user=current_user,
                 )
@@ -875,9 +1066,17 @@ async def chat_message_stream(
                         role="assistant",
                         content=full_content,
                         references=evidence if evidence else None,
+                        trace=(
+                            tutor_turn_trace(tutor_state) if is_tutor_turn else None
+                        ),
                     ),
                     user=current_user,
                 )
+
+                # Only now, with the turn saved, is the session state the
+                # reader's to show.
+                if tutor_state:
+                    yield f"{json.dumps({'type': 'tutor_state', 'content': tutor_state})}{END_DELIMITER}"
 
                 # Track chat message event
                 track_event(

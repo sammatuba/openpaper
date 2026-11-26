@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, CircleDot, Compass, Download, FileUp, Loader2, MessagesSquare, MoreHorizontal, PenLine, Scale } from "lucide-react";
+import { AlertTriangle, Check, CircleDot, Compass, Download, FileUp, Loader2, MessagesSquare, MoreHorizontal, Network, PenLine, Scale } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -17,7 +17,8 @@ import { useInvestigation } from "@/components/project/InvestigationProvider";
 import { useCanEdit } from "./shared";
 
 const DESTINATIONS: { key: string; label: string; path: string; icon: LucideIcon }[] = [
-    { key: "overview", label: "Overview", path: "", icon: Compass },
+    { key: "canvas", label: "Canvas", path: "", icon: Network },
+    { key: "overview", label: "Overview", path: "/overview", icon: Compass },
     { key: "evidence", label: "Evidence", path: "/evidence", icon: Scale },
     { key: "write", label: "Write", path: "/draft", icon: PenLine },
     { key: "discuss", label: "Discuss", path: "/discuss", icon: MessagesSquare },
@@ -48,8 +49,15 @@ function SaveState({ status }: { status: string }) {
 export function WorkspaceBar() {
     const pathname = usePathname();
     const params = useSearchParams();
-    const { projectId } = useProjectWorkspace();
+    const previousPath = useRef(pathname);
+    const { projectId, projectDenied: cutOff, rightPanel, leaveBrief } = useProjectWorkspace();
     const { document: doc, save, reload, dirty, status, loaded, update } = useInvestigation();
+    useEffect(() => {
+        if (previousPath.current !== pathname && rightPanel === "brief") leaveBrief();
+        previousPath.current = pathname;
+    }, [pathname, rightPanel, leaveBrief]);
+
+    // Access to the project is gone: the server will refuse an export, so recovery uses what is in memory.
     const canEdit = useCanEdit();
     const [importPreview, setImportPreview] = useState<Investigation | null>(null);
     const [confirmReload, setConfirmReload] = useState(false);
@@ -122,16 +130,17 @@ export function WorkspaceBar() {
     return (
         <div className="shrink-0 border-b">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 md:px-4">
-                <nav aria-label="Project destinations" className="flex min-w-0 items-center gap-0.5">
+                <nav aria-label="Project destinations" className="flex min-w-0 items-center gap-0.5 overflow-x-auto">
                     {DESTINATIONS.map(item => {
                         const active = isActive(item.path);
                         return (
                             <Link
                                 key={item.key}
+                                onNavigate={() => { if (rightPanel === "brief") leaveBrief(); }}
                                 href={base + item.path + (item.key === "write" ? blockQuery : "")}
                                 aria-current={active ? "page" : undefined}
                                 className={cn(
-                                    "inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+                                    "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm transition-colors sm:px-2.5 focus-visible:outline-2 focus-visible:outline-ring",
                                     active ? "bg-blue-50 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" : "text-muted-foreground hover:bg-accent hover:text-foreground",
                                 )}
                             >
@@ -161,7 +170,7 @@ export function WorkspaceBar() {
                             <DropdownMenuItem disabled={dirty || !loaded} onSelect={() => void exportSaved("bibtex")}>
                                 <Download className="h-4 w-4" />Export saved BibTeX
                             </DropdownMenuItem>
-                            <DropdownMenuItem disabled={!loaded} onSelect={() => (dirty ? downloadInvestigation(doc, false) : void exportSaved("bundle"))}>
+                            <DropdownMenuItem disabled={!loaded} onSelect={() => (dirty || cutOff ? downloadInvestigation(doc, !dirty) : void exportSaved("bundle"))}>
                                 <Download className="h-4 w-4" />Download {dirty ? "unsaved" : "saved"} bundle
                             </DropdownMenuItem>
                             {canEdit && (

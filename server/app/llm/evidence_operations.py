@@ -125,6 +125,7 @@ class EvidenceOperations(BaseLLMClient):
         user_references: Optional[Sequence[str]] = None,
         project_id: Optional[str] = None,
         restrict_to_paper_ids: Optional[List[str]] = None,
+        for_tutor: bool = False,
         db: Session = Depends(get_db),
     ) -> AsyncGenerator[
         Mapping[str, Union[str, Dict[str, List[str]], EvidenceCollection]], None
@@ -133,6 +134,11 @@ class EvidenceOperations(BaseLLMClient):
         Gather evidence from multiple papers based on the user's question.
         This function will interact with the LLM to gather relevant information
         and citations from the user's knowledge base.
+
+        `for_tutor` is set on a tutor turn, where `question` is the tutor's
+        brief (see app.llm.tutor.build_tutor_gathering_question) and what is
+        gathered is for the tutor to teach from. Charts and citation cards
+        are then not offered: neither is something a tutoring turn shows.
         """
         from app.llm.citation_handler import CitationHandler
 
@@ -142,11 +148,16 @@ class EvidenceOperations(BaseLLMClient):
             else None
         )
 
+        # What this model does on an ordinary turn is kept with the answer
+        # (its searches are the turn's trace), and a project's members read
+        # that. So only a tutor turn is gathered with the conversation's
+        # tutoring turns in view.
         conversation_history = (
             message_crud.get_conversation_messages(
                 db,
                 conversation_id=uuid.UUID(conversation_id),
                 current_user=current_user,
+                shareable_only=not for_tutor,
             )
             if conversation_id
             else []
@@ -225,11 +236,15 @@ class EvidenceOperations(BaseLLMClient):
             "stop": lambda: None,
         }
 
+        if for_tutor:
+            function_declarations.remove(find_citation_function)
+            del function_maps["find_citation"]
+
         # Charts are offered only inside a project, because a generation job is
         # a row against one. Withholding the declaration rather than refusing
         # the call keeps a library-wide thread from spending a turn on a tool
         # that could never have worked.
-        if project_id:
+        if project_id and not for_tutor:
             chart_roster = [
                 (paper_id, str(options.get("title") or "Untitled"))
                 for paper_id, options in formatted_paper_options.items()
@@ -358,7 +373,13 @@ class EvidenceOperations(BaseLLMClient):
                             )
                             continue
 
-                        display_query = f" '{query_arg}'" if query_arg else ""
+                        # On a tutor turn the learner watches these lines
+                        # arrive with the tutor's next question. What is being
+                        # searched for is where its answer is, so only the
+                        # paper is named.
+                        display_query = (
+                            f" '{query_arg}'" if query_arg and not for_tutor else ""
+                        )
                         pretty_fn_name = fn_name.replace("_", " ").title()
 
                         yield {

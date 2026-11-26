@@ -39,6 +39,8 @@ type Props = {
      * never get this, so their extension fields are kept for export, not shown.
      */
     findingHref?: (id: string) => string | null;
+    literalText?: boolean;
+    sectionAction?: (sectionId: string) => ReactNode;
     /** Which view opens first. */
     initialView?: FoldViewMode;
     /** Shown after the text in the reading view. */
@@ -89,7 +91,7 @@ function scrollParent(element: HTMLElement): Element {
     return window.document.scrollingElement || window.document.documentElement;
 }
 
-export function FoldedReader({ document: doc, label = "Folded reading", initialLevel = "takeaway", exportable = false, findingHref, initialView = "map", footer }: Props) {
+export function FoldedReader({ document: doc, label = "Folded reading", initialLevel = "takeaway", exportable = false, findingHref, sectionAction, literalText = false, initialView = "map", footer }: Props) {
     const [level, setLevel] = useState<FoldLevel>(initialLevel);
     const [view, setView] = useState<FoldViewMode>(initialView);
     const [selected, setSelected] = useState<MapSelection>(null);
@@ -123,7 +125,7 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
     const body = useRef<HTMLDivElement>(null);
     const anchor = useRef<{ element: HTMLElement; top: number } | null>(null);
     const prefix = useId();
-    const context = useMemo(() => foldContext(doc), [doc]);
+    const context = useMemo(() => foldContext(doc, literalText), [doc, literalText]);
     const silent = context.silent;
     const links = useMemo(() => linksFrom(doc), [doc]);
     const domIds = useMemo(() => {
@@ -281,6 +283,7 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
                                         <button type="button" className={action} aria-label="Close paragraph" onClick={() => select(null)}><X aria-hidden className="h-3.5 w-3.5" /></button>
                                     </div>
                                 </div>
+                                {sectionAction?.(picked.section.id)}
                                 <FoldUnit
                                     key={picked.unit.id}
                                     unit={picked.unit}
@@ -312,7 +315,7 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
             )}
 
             {view === "read" && (
-                <div ref={body} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                <div ref={body} className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-8 sm:py-6 [&>*]:mx-auto [&>*]:max-w-[76ch]">
                     <p className="text-xs leading-5 text-muted-foreground">{provenanceLine(doc)}</p>
                     {hasText && (
                         <div className={cn("mt-5", compact ? "space-y-5" : "space-y-8")}>
@@ -324,6 +327,7 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
                                 return (
                                     <section key={section.id} id={domIds.get(section.id)} aria-label={section.title} className="scroll-mt-2">
                                         <Heading className={cn("font-semibold leading-snug [overflow-wrap:anywhere]", section.depth > 1 ? "text-sm" : "text-base")}>{section.title}</Heading>
+                                        {sectionAction?.(section.id)}
                                         {(links.get(section.id) || []).length > 0 && (
                                             <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                                                 {links.get(section.id)!.map((link, index) => <a key={index} className={action} href={`#${domIds.get(link.to)}`}>{link.rel} → {link.title}</a>)}
@@ -400,7 +404,9 @@ function FoldUnit({ unit, domId, path, name, documentLevel, openedTo, context, l
     return (
         <div id={domId} data-fold-unit={path} data-shown={shown.level} className="min-w-0 scroll-mt-2">
             {attribution && <p className="text-xs font-medium text-muted-foreground">{attribution}</p>}
-            {shown.markdown.trim() ? (
+            {context.literal && shown.markdown ? (
+                <p className="whitespace-pre-wrap break-words text-sm">{shown.markdown}</p>
+            ) : shown.markdown.trim() ? (
                 <FoldMarkdown
                     text={withReferences(context, shown.markdown)}
                     prefix={domId}

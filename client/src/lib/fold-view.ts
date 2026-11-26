@@ -76,6 +76,7 @@ export function plainText(markdown: string): string {
 // Markdown, first definition winning as in CommonMark, so a paragraph can be
 // rendered with exactly the definitions it uses.
 export type FoldContext = {
+    literal: boolean;
     definitions: Map<string, string>;
     footnotes: Map<string, string>;
     /** Paragraphs that only define references or footnotes and so render no words. */
@@ -87,8 +88,9 @@ export type FoldContext = {
 const identifier = (label: string) => label.replace(/[\t\n\r ]+/g, ' ').trim().toLowerCase().toUpperCase().toLowerCase();
 const LABEL = /\[((?:\\[\s\S]|[^\[\]\\])+)\]/g;
 
-export function foldContext(doc: TextFoldDocument): FoldContext {
-    const context: FoldContext = { definitions: new Map(), footnotes: new Map(), silent: new Set() };
+export function foldContext(doc: TextFoldDocument, literal = false): FoldContext {
+    const context: FoldContext = { literal, definitions: new Map(), footnotes: new Map(), silent: new Set() };
+    if (literal) return context;
     const wordless = (node: Nodes): boolean => node.type === 'definition' || node.type === 'footnoteDefinition' ||
         ((node.type === 'root' || node.type === 'blockquote') && node.children.every(wordless));
     for (const section of doc.sections) for (const unit of section.units) {
