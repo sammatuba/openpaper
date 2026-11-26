@@ -134,7 +134,20 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
     const [hasCollaborators, setHasCollaborators] = useState(false);
     const [uploadJobs, setUploadJobs] = useState<MinimalJob[]>([]);
 
+    const paperOpener = useRef<HTMLElement | null>(null);
+    const wasReadingPaper = useRef(false);
+    useEffect(() => {
+        if (!openPaperIds.length) {
+            if (wasReadingPaper.current && rightPanel === null && paperOpener.current?.isConnected) {
+                paperOpener.current.focus({ preventScroll: true });
+            }
+            paperOpener.current = null;
+        }
+        wasReadingPaper.current = rightPanel === "reader" && openPaperIds.length > 0;
+    }, [rightPanel, openPaperIds.length]);
+
     const openPaper = useCallback((paper: PaperItem, searchTerm: string | null = null) => {
+        if (!wasReadingPaper.current) paperOpener.current = document.activeElement as HTMLElement;
         setOpenPaperIds((prev) => (prev.includes(paper.id) ? prev : [...prev, paper.id]));
         setActivePaperId(paper.id);
         setReaderSearchTerm(searchTerm);

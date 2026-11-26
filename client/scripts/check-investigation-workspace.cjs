@@ -258,6 +258,20 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
    }
    await article.getByRole('button',{name:'Open PDF source',exact:true}).click();
    await page.locator('.page[data-page-number="1"] canvas').first().waitFor({timeout:20000});
+   if(width>=768) {
+    const briefToggle=page.getByRole('button',{name:'Toggle research brief panel',exact:true});
+    const artifactToggle=page.getByRole('button',{name:'Toggle artifacts panel',exact:true});
+    await artifactToggle.click();
+    await page.getByRole('button',{name:'Close artifacts',exact:true}).waitFor();
+    await artifactToggle.click();
+    await page.getByRole('button',{name:'Close reader',exact:true}).waitFor();
+    await briefToggle.click();
+    const reading=page.getByRole('region',{name:'Folded reading view',exact:true});
+    await reading.waitFor();
+    await page.keyboard.press('Escape');
+    await reading.waitFor({state:'detached'});
+    await page.getByRole('button',{name:'Close reader',exact:true}).waitFor();
+   }
    await page.getByRole('button',{name:'Close reader',exact:true}).click();
    assert.equal(await article.getByRole('button',{name:'Open PDF source',exact:true}).evaluate(el=>el===document.activeElement),true,'Reader close restores focus');
    await nav.getByRole('link',{name:'Write',exact:true}).click();
