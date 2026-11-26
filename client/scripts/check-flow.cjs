@@ -124,11 +124,22 @@ function fixturePdf() {
             assert.equal(await page.locator('.workspace-panel').count(), 0, 'no panel is mounted before it is asked for');
 
             // 2. Panel code that fails to load: a notice, the page still works, retry recovers.
+            const destinations = page.getByRole('navigation',{name:'Project destinations'});
+            await destinations.getByRole('link',{name:'Write',exact:true}).click();
+            const pageLauncher = page.getByRole('button',{name:'Open folded preview',exact:true});
+            await pageLauncher.waitFor();
             control.blockChunks = true;
-            await briefButton.click();
+            await pageLauncher.press('Enter');
             await failed.waitFor();
             assert.match(await failed.innerText(), /research brief could not be loaded/);
             assert.ok(await title.isVisible(), 'the workspace stays usable when a panel fails to load');
+            await failed.getByRole('button', {name:'Dismiss'}).press('Enter');
+            await failed.waitFor({state:'detached'});
+            assert.ok(await pageLauncher.evaluate(button => document.activeElement === button), 'Failed reader dismissal restores the page launcher');
+            await page.goBack();
+            await page.waitForURL(`${base}/projects/${ID}`);
+            await briefButton.press('Enter');
+            await failed.waitFor();
             control.blockChunks = false;
             await resetTransitions();
             await failed.getByRole('button', { name: 'Try again' }).click();
@@ -136,14 +147,14 @@ function fixturePdf() {
             await expectTransition('a panel whose code arrives after the click');
             assert.equal(await failed.count(), 0, 'the notice goes once the panel loads');
             await resetTransitions();
-            await page.getByRole('button', { name: 'Close research brief panel' }).click();
+            await page.getByRole('button', { name: 'Back to workspace' }).click();
             await page.locator('[data-brief-panel]').waitFor({ state: 'detached' });
             await expectTransition('closing the brief');
             await resetTransitions();
             await briefButton.click();
             await page.locator('[data-brief-panel]').waitFor();
             await expectTransition('opening a loaded panel');
-            await page.getByRole('button', { name: 'Close research brief panel' }).click();
+            await page.getByRole('button', { name: 'Back to workspace' }).click();
             await page.locator('[data-brief-panel]').waitFor({ state: 'detached' });
 
             // 3. Dismissing a failed load closes the request; asking again is a fresh attempt.
@@ -185,6 +196,23 @@ function fixturePdf() {
                 assert.equal(await page.locator('.pdfViewer .page[data-flow-mark="kept"]').count(), 1, 'the rendered PDF page was not remounted by the refetch');
                 assert.equal(await page.locator('.pdfViewer canvas[data-flow-mark="canvas"]').count(), 1, 'the rendered canvas is the same element');
                 assert.equal(count(`/api/projects/papers/${ID}/p1/file-url`), 1, 'the file URL was not requested again');
+                await briefButton.click();
+                await page.locator('[data-brief-panel]').waitFor();
+                await page.setViewportSize({width:390,height:900});
+                await page.getByRole('navigation',{name:'Project destinations'}).getByRole('link',{name:'Evidence',exact:true}).click();
+                await page.getByRole('heading',{name:'Evidence',exact:true}).waitFor();
+                assert.ok(await pane.isHidden(), 'Navigating to Evidence leaves the previously opened PDF out of the way');
+                const evidenceLauncher = page.getByRole('button',{name:'Open folded preview',exact:true});
+                await evidenceLauncher.click();
+                await page.getByRole('button',{name:'Back to workspace',exact:true}).click();
+                await page.locator('[data-brief-panel]').waitFor({state:'detached'});
+                assert.ok(await pane.isHidden(), 'Back leaves a previously hidden PDF out of the way');
+                assert.ok(await evidenceLauncher.evaluate(button => document.activeElement === button));
+                await page.setViewportSize({width,height:900});
+                await page.getByRole('complementary').getByText('Source dependence study',{exact:true}).click();
+                await pane.waitFor();
+                await page.goBack();
+                await page.waitForURL(`${base}/projects/${ID}`);
                 await resetTransitions();
                 await page.getByRole('button', { name: 'Close Source dependence study', exact: true }).click();
                 await page.locator(".pdfViewer").first().waitFor({ state: "detached" });
@@ -217,6 +245,8 @@ function fixturePdf() {
             await page.getByRole('main').last().getByRole('heading').first().waitFor();
             assert.equal(await page.locator('[data-project-error]').count(), 0, 'a first-load failure does not replace the workspace');
             assert.equal(await artifactsButton.count(), 1, 'the header keeps its controls on a first-load failure');
+            assert.ok(await briefButton.isDisabled(), 'The reader needs a loaded project');
+            assert.ok(await page.getByRole('button',{name:'Open folded preview',exact:true}).isDisabled());
             control.projectStatus = 200;
             await page.goto(`${base}/projects/${ID}/evidence`);
             await title.waitFor();

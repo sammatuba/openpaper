@@ -136,7 +136,10 @@ export function DraftView() {
     return (
         <ViewFrame>
             <header className="space-y-2">
-                <h1 className="text-2xl font-bold tracking-tight">Write</h1>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h1 className="text-2xl font-bold tracking-tight">Write</h1>
+                    <FoldedPreview />
+                </div>
                 <p className="text-sm leading-6 text-muted-foreground">
                     The manuscript, written section by section. Every paragraph keeps its authorship and the evidence it cites.
                 </p>
@@ -427,7 +430,6 @@ export function DraftView() {
                 )}
             </fieldset>
 
-            <FoldedPreview />
         </ViewFrame>
     );
 }

@@ -315,7 +315,7 @@ export function FoldedReader({ document: doc, label = "Folded reading", initialL
             )}
 
             {view === "read" && (
-                <div ref={body} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                <div ref={body} className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-8 sm:py-6 [&>*]:mx-auto [&>*]:max-w-[76ch]">
                     <p className="text-xs leading-5 text-muted-foreground">{provenanceLine(doc)}</p>
                     {hasText && (
                         <div className={cn("mt-5", compact ? "space-y-5" : "space-y-8")}>

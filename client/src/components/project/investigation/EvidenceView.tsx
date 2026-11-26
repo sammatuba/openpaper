@@ -276,17 +276,20 @@ export function EvidenceView() {
                         </p>
                     )}
                 </div>
-                {!noPapers && (
-                    <Button
-                        variant={captureOpen ? "outline" : "default"}
-                        aria-expanded={captureOpen}
-                        disabled={!loaded}
-                        onClick={() => setCaptureToggle(!captureOpen)}
-                    >
-                        {canEdit ? <Plus aria-hidden className="h-4 w-4" /> : <FileSearch aria-hidden className="h-4 w-4" />}
-                        {canEdit ? "Add finding" : "Inspect source text"}
-                    </Button>
-                )}
+                <div className="flex flex-wrap items-center gap-2">
+                    <FoldedPreview />
+                    {!noPapers && (
+                        <Button
+                            variant={captureOpen ? "outline" : "default"}
+                            aria-expanded={captureOpen}
+                            disabled={!loaded}
+                            onClick={() => setCaptureToggle(!captureOpen)}
+                        >
+                            {canEdit ? <Plus aria-hidden className="h-4 w-4" /> : <FileSearch aria-hidden className="h-4 w-4" />}
+                            {canEdit ? "Add finding" : "Inspect source text"}
+                        </Button>
+                    )}
+                </div>
             </header>
 
             {!loaded && (
@@ -664,7 +667,6 @@ export function EvidenceView() {
                 )}
             </fieldset>
 
-            <FoldedPreview />
         </ViewFrame>
     );
 }

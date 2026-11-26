@@ -16,11 +16,12 @@ interface DeferredProps {
     // Used in the notices, e.g. "research brief".
     label: string;
     onDismiss: () => void;
+    inline?: boolean;
 }
 
 // A workspace panel whose code is fetched the first time it is needed. Until
 // then it costs nothing; afterwards it behaves as if it had always been mounted.
-export function Deferred({ load, wanted, shown, label, onDismiss }: DeferredProps) {
+export function Deferred({ load, wanted, shown, label, onDismiss, inline = false }: DeferredProps) {
     const [{ Panel, failed }, setState] = useState<State>({});
     const waiting = useRef(shown);
     waiting.current = shown;
@@ -47,9 +48,10 @@ export function Deferred({ load, wanted, shown, label, onDismiss }: DeferredProp
 
     if (Panel) return <Panel />;
     if (!shown) return null;
+    const placement = inline ? "mx-auto my-8 w-fit self-start" : "fixed bottom-4 right-4 z-50 shadow-lg";
     if (failed) {
         return (
-            <div role="alert" data-panel-notice="failed" className="fixed bottom-4 right-4 z-50 max-w-sm rounded-lg border bg-background p-4 text-sm shadow-lg">
+            <div role="alert" data-panel-notice="failed" className={`${placement} max-w-sm rounded-lg border bg-background p-4 text-sm`}>
                 <p>The {label} could not be loaded. Check your connection and try again.</p>
                 <div className="mt-3 flex gap-2">
                     <Button size="sm" onClick={() => setState({})}>Try again</Button>
@@ -59,7 +61,7 @@ export function Deferred({ load, wanted, shown, label, onDismiss }: DeferredProp
         );
     }
     return (
-        <div role="status" data-panel-notice="loading" className="fixed bottom-4 right-4 z-50 rounded-lg border bg-background px-4 py-2 text-sm text-muted-foreground shadow-lg">
+        <div role="status" data-panel-notice="loading" className={`${placement} rounded-lg border bg-background px-4 py-2 text-sm text-muted-foreground`}>
             Loading the {label}…
         </div>
     );

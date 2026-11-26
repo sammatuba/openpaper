@@ -56,6 +56,7 @@ export function ProjectHeader() {
         rightPanel,
         toggleArtifacts,
         toggleBrief,
+        leaveBrief,
         railCollapsed,
         toggleRail,
         setHasCollaborators,
@@ -111,7 +112,7 @@ export function ProjectHeader() {
                             // reader tabs survive breadcrumb navigation.
                             <TitleWithDescription description={project?.description}>
                                 <BreadcrumbLink asChild className="truncate">
-                                    <Link href={`/projects/${projectId}`}>{project?.title}</Link>
+                                    <Link onNavigate={leaveBrief} href={`/projects/${projectId}`}>{project?.title}</Link>
                                 </BreadcrumbLink>
                             </TitleWithDescription>
                         ) : (
@@ -147,6 +148,7 @@ export function ProjectHeader() {
                         "h-7 gap-1.5 px-2.5 text-xs",
                         rightPanel === "brief" && "border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/30",
                     )}
+                    disabled={!project}
                     onClick={toggleBrief}
                     aria-label="Toggle research brief panel"
                     aria-pressed={rightPanel === "brief"}

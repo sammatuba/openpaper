@@ -66,6 +66,7 @@ interface ProjectWorkspaceValue {
     setCrumb: (crumb: string | null) => void;
     rightPanel: RightPanelMode;
     briefSource: BriefSource;
+    leaveBrief: () => void;
     openBrief: (source?: BriefSource) => void;
     toggleBrief: () => void;
     closeBrief: () => void;
@@ -176,7 +177,20 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
         });
     }, []);
 
+    const paperOpener = useRef<HTMLElement | null>(null);
+    const wasReadingPaper = useRef(false);
+    useEffect(() => {
+        if (!openPaperIds.length) {
+            if (wasReadingPaper.current && rightPanel === null && paperOpener.current?.isConnected) {
+                paperOpener.current.focus({ preventScroll: true });
+            }
+            paperOpener.current = null;
+        }
+        wasReadingPaper.current = rightPanel === "reader" && openPaperIds.length > 0;
+    }, [rightPanel, openPaperIds.length]);
+
     const openPaper = useCallback((paper: PaperItem, searchTerm: string | null = null) => {
+        if (!wasReadingPaper.current) paperOpener.current = document.activeElement as HTMLElement;
         withTransition(() => {
             setOpenPaperIds((prev) => (prev.includes(paper.id) ? prev : [...prev, paper.id]));
             setActivePaperId(paper.id);
@@ -246,20 +260,43 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
         });
     }, [openPaperIds.length]);
 
+    const briefOpener = useRef<HTMLElement | null>(null);
+    const priorPanel = useRef<RightPanelMode>(null);
+    const restoreBriefFocus = useRef(false);
+    useEffect(() => {
+        if (rightPanel !== "brief" && restoreBriefFocus.current) {
+            restoreBriefFocus.current = false;
+            briefOpener.current?.focus({ preventScroll: true });
+        }
+    }, [rightPanel]);
+    const leaveBrief = useCallback(() => {
+        setRightPanel(mode => mode === "brief" ? null : mode);
+    }, []);
     const [briefSource, setBriefSource] = useState<BriefSource>("brief");
     const openBrief = useCallback((source: BriefSource = "brief") => {
+        if (shownPanel.current !== "brief") {
+            briefOpener.current = document.activeElement as HTMLElement;
+            priorPanel.current = shownPanel.current;
+        }
         withTransition(() => {
             setBriefSource(source);
             setRightPanel("brief");
         });
     }, []);
-    // Closing the brief gives the slot back to open paper tabs, as the artifacts panel does.
+    const previousPanel = useCallback(() => (
+        priorPanel.current === "reader" && !openPaperIds.length ? null : priorPanel.current
+    ), [openPaperIds.length]);
     const closeBrief = useCallback(() => {
-        movePanel((mode) => (mode !== "brief" ? mode : openPaperIds.length > 0 ? "reader" : null));
-    }, [openPaperIds.length]);
+        restoreBriefFocus.current = true;
+        movePanel((mode) => (mode !== "brief" ? mode : previousPanel()));
+    }, [previousPanel]);
     const toggleBrief = useCallback(() => {
-        movePanel((mode) => (mode !== "brief" ? "brief" : openPaperIds.length > 0 ? "reader" : null));
-    }, [openPaperIds.length]);
+        if (shownPanel.current !== "brief") {
+            briefOpener.current = document.activeElement as HTMLElement;
+            priorPanel.current = shownPanel.current;
+        }
+        movePanel((mode) => (mode !== "brief" ? "brief" : previousPanel()));
+    }, [previousPanel]);
 
     const openAddPapers = useCallback((view: AddPapersView = "initial") => {
         setAddPapersInitialView(view);
@@ -357,6 +394,7 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
         setCrumb,
         rightPanel: shown.rightPanel,
         briefSource,
+        leaveBrief,
         openBrief,
         toggleBrief,
         closeBrief,
@@ -380,7 +418,7 @@ export function ProjectWorkspaceProvider({ projectId, children }: ProjectWorkspa
         conversations, isConversationsLoading, refetchConversations,
         openPaperIds, activePaperId, readerSearchTerm,
         openPaper, activatePaper, closePaper, closeReader, refreshPaperUrl,
-        crumb, rightPanel, briefSource, openBrief, toggleBrief, closeBrief, toggleArtifacts, closeArtifacts, collapseArtifacts, railCollapsed, toggleRail,
+        crumb, rightPanel, briefSource, leaveBrief, openBrief, toggleBrief, closeBrief, toggleArtifacts, closeArtifacts, collapseArtifacts, railCollapsed, toggleRail,
         addPapersOpen, addPapersInitialView, openAddPapers, hasCollaborators,
         uploadJobs, addUploadJobs, shown,
     ]);

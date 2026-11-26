@@ -140,6 +140,7 @@ export function ProjectRail({ onNavigate }: ProjectRailProps) {
         conversations,
         isConversationsLoading,
         openAddPapers,
+        leaveBrief,
     } = useProjectWorkspace();
     const [paperSearchQuery, setPaperSearchQuery] = useState("");
 
@@ -227,7 +228,7 @@ export function ProjectRail({ onNavigate }: ProjectRailProps) {
                     {!isViewer && (
                         <Link
                             href={`/projects/${projectId}/discuss#research-session`}
-                            onClick={onNavigate}
+                            onNavigate={() => { leaveBrief(); onNavigate?.(); }}
                             className={cn(
                                 "flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors",
                                 pathname === `/projects/${projectId}/discuss`
@@ -268,7 +269,7 @@ export function ProjectRail({ onNavigate }: ProjectRailProps) {
                                     <Link
                                         key={convo.id}
                                         href={`/projects/${projectId}/conversations/${convo.id}`}
-                                        onClick={onNavigate}
+                                        onNavigate={() => { leaveBrief(); onNavigate?.(); }}
                                         className={cn(
                                             "flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors",
                                             isActive ? "bg-blue-50 dark:bg-blue-900/30" : "hover:bg-accent",
@@ -297,7 +298,7 @@ export function ProjectRail({ onNavigate }: ProjectRailProps) {
                             {/* Sole route to chat management (rename/delete on /past) — always visible */}
                             <Link
                                 href={`/projects/${projectId}/past`}
-                                onClick={onNavigate}
+                                onNavigate={() => { leaveBrief(); onNavigate?.(); }}
                                 className={cn(
                                     "block rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
                                     pathname.endsWith("/past") && "bg-blue-50 font-medium dark:bg-blue-900/30",

@@ -26,7 +26,7 @@ Randomize isolated versus interacting execution with matched computation and a f
 If violations disappear under correctly enforced end-to-end authorization, shift toward policy expressiveness and utility costs.
 
 ## Sources and limitations
-This is a scoping dossier; novelty and comprehensive coverage have not been assessed.
+This is a scoping dossier; novelty and comprehensive coverage have not been assessed. See [companion paper](/paper/relative-source).
 
 [primary]:
 https://example.org/source?q=&amp;copy; "Literal &amp;amp;"`;
@@ -77,7 +77,7 @@ https://example.org/source?q=&amp;copy; "Literal &amp;amp;"`;
             await panel.waitFor();
         };
         const closePanel = async () => {
-            if (await panel.count()) await page.getByRole('button', {name:'Close research brief panel',exact:true}).click();
+            if (await panel.count()) await page.getByRole('button', {name:'Back to workspace',exact:true}).click();
             await panel.waitFor({state:'detached'});
         };
         const readerReady = async (view = 'read') => {
@@ -304,6 +304,11 @@ https://example.org/source?q=&amp;copy; "Literal &amp;amp;"`;
         const doc = JSON.parse(await fs.readFile(await download.path(), 'utf8'));
         assert.equal(doc.source_text, fixture);
         assert.equal(doc.provenance.ai_generated, false);
+        await levelButton('Full').click();
+        const popup = page.waitForEvent('popup');
+        await reader.getByRole('link',{name:'companion paper',exact:true}).click();
+        await (await popup).close();
+        assert.ok(await panel.isVisible(), 'Opening a citation in its own tab keeps the reader open');
         await closePanel();
         await page.getByRole('button', {name:'Assess relevance & novelty',exact:false}).click();
         await page.getByText('Review discussion instructions', {exact:true}).click();
@@ -333,7 +338,8 @@ https://example.org/source?q=&amp;copy; "Literal &amp;amp;"`;
         await page.getByLabel('Import Textfold JSON file', {exact:true}).setInputFiles({name:'fold.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(ai))});
         await dialog.getByText(/AI-written summaries/).waitFor();
         await dialog.getByRole('button', {name:'Save brief',exact:true}).click();
-        await page.getByRole('heading', {name:'Draft survives failure',exact:true}).waitFor();
+        await dialog.waitFor({state:'hidden'});
+        await page.getByRole('link', {name:'Draft survives failure',exact:true}).waitFor();
         await page.getByText(/AI-written summaries · fixture-model/).waitFor();
         await readerReady();
         const imported = page.getByRole('region', {name:'Folded research brief',exact:true});

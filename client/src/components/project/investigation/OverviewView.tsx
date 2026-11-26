@@ -201,6 +201,7 @@ export function OverviewView() {
                     <p className="text-xs font-medium text-muted-foreground">
                         <span className="[overflow-wrap:anywhere]">{project?.title}</span> · {papers.length} {papers.length === 1 ? "paper" : "papers"} · {activeFindings} {activeFindings === 1 ? "finding" : "findings"} · {doc.claims.length - archivedCount} {doc.claims.length - archivedCount === 1 ? "claim" : "claims"}
                     </p>
+                    <div className="mt-2"><FoldedPreview /></div>
                     <h1 className="sr-only">{doc.case.question.trim() || "The case: no question yet"}</h1>
                     <ProseField id="case-question" label="Question" hideLabel size="title" className="mt-2" value={doc.case.question}
                         placeholder="What disputed question should this project resolve?"
@@ -259,7 +260,6 @@ export function OverviewView() {
                     )}
                 </section>
             </fieldset>
-            <FoldedPreview />
         </ViewFrame>
     );
 }

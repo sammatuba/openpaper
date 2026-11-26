@@ -49,8 +49,14 @@ function SaveState({ status }: { status: string }) {
 export function WorkspaceBar() {
     const pathname = usePathname();
     const params = useSearchParams();
-    const { projectId, projectDenied: cutOff } = useProjectWorkspace();
+    const previousPath = useRef(pathname);
+    const { projectId, projectDenied: cutOff, rightPanel, leaveBrief } = useProjectWorkspace();
     const { document: doc, save, reload, dirty, status, loaded, update } = useInvestigation();
+    useEffect(() => {
+        if (previousPath.current !== pathname && rightPanel === "brief") leaveBrief();
+        previousPath.current = pathname;
+    }, [pathname, rightPanel, leaveBrief]);
+
     // Access to the project is gone: the server will refuse an export, so recovery uses what is in memory.
     const canEdit = useCanEdit();
     const [importPreview, setImportPreview] = useState<Investigation | null>(null);
@@ -130,6 +136,7 @@ export function WorkspaceBar() {
                         return (
                             <Link
                                 key={item.key}
+                                onNavigate={() => { if (rightPanel === "brief") leaveBrief(); }}
                                 href={base + item.path + (item.key === "write" ? blockQuery : "")}
                                 aria-current={active ? "page" : undefined}
                                 className={cn(

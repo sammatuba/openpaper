@@ -155,10 +155,10 @@ export function ViewFrame({ children, wide }: { children: ReactNode; wide?: bool
 // Opens the folded view of the current (possibly unsaved) document in the
 // project's brief panel. It makes no request and no model call.
 export function FoldedPreview() {
-    const { rightPanel, briefSource, openBrief, closeBrief } = useProjectWorkspace();
+    const { project, rightPanel, briefSource, openBrief, closeBrief } = useProjectWorkspace();
     const open = rightPanel === "brief" && briefSource === "page";
     return (
-        <Button variant="outline" size="sm" aria-expanded={open} onClick={() => (open ? closeBrief() : openBrief("page"))}>
+        <Button variant="outline" size="sm" disabled={!project} aria-expanded={open} onClick={() => (open ? closeBrief() : openBrief("page"))}>
             <Layers aria-hidden className="h-4 w-4" />
             {open ? "Close folded preview" : "Open folded preview"}
         </Button>

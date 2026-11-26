@@ -72,12 +72,18 @@ function WorkspaceShell({ children }: { children: ReactNode }) {
                     {/* A project that cannot be shown replaces every view. The bar above stays, so unsaved work can still be downloaded. */}
                     {denied
                         ? <div role="alert" data-project-error className="p-4 text-destructive">{projectError?.message}</div>
-                        : children}
+                        : (
+                            <div className={project && rightPanel === "brief" ? "hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
+                                {children}
+                            </div>
+                        )}
+                    {!denied && (
+                        <Deferred inline load={loadBrief} wanted={rightPanel === "brief"} shown={rightPanel === "brief"} label="research brief" onDismiss={closeBrief} />
+                    )}
                 </main>
-                {/* Right slot: reader, artifacts and the folded brief share it, one visible at a time */}
+                {/* Right slot: reader and artifacts share it, one visible at a time */}
                 {!denied && <>
                 <Deferred load={loadReader} wanted={openPaperIds.length > 0} shown={rightPanel === "reader" && openPaperIds.length > 0} label="paper reader" onDismiss={closeReader} />
-                <Deferred load={loadBrief} wanted={rightPanel === "brief"} shown={rightPanel === "brief"} label="research brief" onDismiss={closeBrief} />
                 <Deferred load={loadArtifacts} wanted={rightPanel === "artifacts"} shown={rightPanel === "artifacts"} label="artifacts panel" onDismiss={closeArtifacts} />
                 </>}
             </div>
